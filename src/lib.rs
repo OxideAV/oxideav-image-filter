@@ -43,6 +43,7 @@
 use oxideav_core::{Error, VideoFrame};
 
 pub mod blur;
+pub mod brightness_contrast;
 pub mod edge;
 pub mod flip;
 pub mod flop;
@@ -55,6 +56,7 @@ pub mod threshold;
 pub(crate) mod tonal_lut;
 
 pub use blur::Blur;
+pub use brightness_contrast::BrightnessContrast;
 pub use edge::Edge;
 pub use flip::Flip;
 pub use flop::Flop;
