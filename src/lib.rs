@@ -34,6 +34,8 @@
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Normalize`](normalize::Normalize) — auto-levels: stretch the
 //!   observed luma range to fill `[0, 255]` (ImageMagick `-normalize`).
+//! - [`Posterize`](posterize::Posterize) — reduce each channel to `N`
+//!   intensity levels (ImageMagick `-posterize`).
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
 //!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear.
 //! - [`Rotate`](rotate::Rotate) — arbitrary-angle rotation with bilinear
@@ -69,6 +71,7 @@ pub mod level;
 pub mod modulate;
 pub mod negate;
 pub mod normalize;
+pub mod posterize;
 pub mod resize;
 pub mod rotate;
 pub mod sepia;
@@ -89,6 +92,7 @@ pub use level::Level;
 pub use modulate::Modulate;
 pub use negate::Negate;
 pub use normalize::Normalize;
+pub use posterize::Posterize;
 pub use resize::{Interpolation, Resize};
 pub use rotate::Rotate;
 pub use sepia::Sepia;
