@@ -35,6 +35,8 @@
 //!   background colour.
 //! - [`Sepia`](sepia::Sepia) — warm-brown colour remap (ImageMagick
 //!   `-sepia-tone`); threshold controls the mix with the original.
+//! - [`Sharpen`](sharpen::Sharpen) — unsharp-mask sharpening with
+//!   `radius`/`sigma`/`amount`; YUV touches only luma.
 //! - [`Threshold`](threshold::Threshold) — binarise each sample to
 //!   black/white against a cut-off (YUV sets chroma to neutral 128).
 //!
@@ -59,6 +61,7 @@ pub mod negate;
 pub mod resize;
 pub mod rotate;
 pub mod sepia;
+pub mod sharpen;
 pub mod threshold;
 pub(crate) mod tonal_lut;
 
@@ -75,6 +78,7 @@ pub use negate::Negate;
 pub use resize::{Interpolation, Resize};
 pub use rotate::Rotate;
 pub use sepia::Sepia;
+pub use sharpen::Sharpen;
 pub use threshold::Threshold;
 
 /// A filter that transforms a single video frame without any external
