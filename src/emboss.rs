@@ -82,9 +82,9 @@ fn emboss_plane(src: &VideoPlane, w: usize, h: usize, bpp: usize) -> VideoPlane 
         for x in 0..w as i32 {
             for ch in 0..bpp {
                 let mut acc: i32 = 0;
-                for ky in 0..3 {
-                    for kx in 0..3 {
-                        acc += KERNEL[ky][kx] * at(x + kx as i32 - 1, y + ky as i32 - 1, ch);
+                for (ky, row) in KERNEL.iter().enumerate() {
+                    for (kx, k) in row.iter().enumerate() {
+                        acc += k * at(x + kx as i32 - 1, y + ky as i32 - 1, ch);
                     }
                 }
                 let v = (acc + BIAS).clamp(0, 255) as u8;
@@ -154,7 +154,7 @@ mod tests {
         // = 1, so value = 200 + 128 = 328 → clamped to 255.
         assert_eq!(out.planes[0].data[4 * 8 + 7], 255);
         // Interior pixel on dark side: 0*1 + 128 = 128.
-        assert_eq!(out.planes[0].data[4 * 8 + 0], 128);
+        assert_eq!(out.planes[0].data[4 * 8], 128);
     }
 
     #[test]
