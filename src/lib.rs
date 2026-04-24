@@ -16,12 +16,17 @@
 //!   and returns a single-plane luma-ish intensity image.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
 //! - [`Flop`](flop::Flop) — mirror horizontally (left col ↔ right col).
+//! - [`Gamma`](gamma::Gamma) — power-law gamma curve applied per tone
+//!   channel (LUT-based; YUV only touches luma).
 //! - [`Modulate`](modulate::Modulate) — adjust brightness, saturation,
 //!   and hue via HSL round-trip (ImageMagick `-modulate`).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
 //!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear.
+//! - [`Rotate`](rotate::Rotate) — arbitrary-angle rotation with bilinear
+//!   resampling; grows the canvas and fills gaps with a configurable
+//!   background colour.
 //! - [`Threshold`](threshold::Threshold) — binarise each sample to
 //!   black/white against a cut-off (YUV sets chroma to neutral 128).
 //!
@@ -37,15 +42,18 @@ pub mod blur;
 pub mod edge;
 pub mod flip;
 pub mod flop;
+pub mod gamma;
 pub mod modulate;
 pub mod negate;
 pub mod resize;
 pub mod threshold;
+pub(crate) mod tonal_lut;
 
 pub use blur::Blur;
 pub use edge::Edge;
 pub use flip::Flip;
 pub use flop::Flop;
+pub use gamma::Gamma;
 pub use modulate::Modulate;
 pub use negate::Negate;
 pub use resize::{Interpolation, Resize};
