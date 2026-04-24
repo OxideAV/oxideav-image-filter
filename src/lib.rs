@@ -12,6 +12,8 @@
 //! - [`Blur`](blur::Blur) — separable Gaussian blur with configurable
 //!   radius + sigma, optional plane selector (luma only / chroma only /
 //!   specific plane / all).
+//! - [`BrightnessContrast`](brightness_contrast::BrightnessContrast) —
+//!   linear brightness + contrast adjustment (LUT-based).
 //! - [`Edge`](edge::Edge) — Sobel edge magnitude; accepts colour input
 //!   and returns a single-plane luma-ish intensity image.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
@@ -27,6 +29,8 @@
 //! - [`Rotate`](rotate::Rotate) — arbitrary-angle rotation with bilinear
 //!   resampling; grows the canvas and fills gaps with a configurable
 //!   background colour.
+//! - [`Sepia`](sepia::Sepia) — warm-brown colour remap (ImageMagick
+//!   `-sepia-tone`); threshold controls the mix with the original.
 //! - [`Threshold`](threshold::Threshold) — binarise each sample to
 //!   black/white against a cut-off (YUV sets chroma to neutral 128).
 //!
@@ -46,6 +50,7 @@ pub mod gamma;
 pub mod modulate;
 pub mod negate;
 pub mod resize;
+pub mod sepia;
 pub mod threshold;
 pub(crate) mod tonal_lut;
 
@@ -57,6 +62,7 @@ pub use gamma::Gamma;
 pub use modulate::Modulate;
 pub use negate::Negate;
 pub use resize::{Interpolation, Resize};
+pub use sepia::Sepia;
 pub use threshold::Threshold;
 
 /// A filter that transforms a single video frame without any external
