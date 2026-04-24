@@ -22,6 +22,8 @@
 //!   channel (LUT-based; YUV only touches luma).
 //! - [`Grayscale`](grayscale::Grayscale) — desaturate RGB/RGBA with
 //!   Rec. 601 luma weights; optional Gray8 collapse.
+//! - [`Level`](level::Level) — remap `[black, white]` to `[0, 255]`
+//!   with optional mid-tone gamma (ImageMagick `-level`).
 //! - [`Modulate`](modulate::Modulate) — adjust brightness, saturation,
 //!   and hue via HSL round-trip (ImageMagick `-modulate`).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
@@ -51,9 +53,11 @@ pub mod flip;
 pub mod flop;
 pub mod gamma;
 pub mod grayscale;
+pub mod level;
 pub mod modulate;
 pub mod negate;
 pub mod resize;
+pub mod rotate;
 pub mod sepia;
 pub mod threshold;
 pub(crate) mod tonal_lut;
@@ -65,9 +69,11 @@ pub use flip::Flip;
 pub use flop::Flop;
 pub use gamma::Gamma;
 pub use grayscale::Grayscale;
+pub use level::Level;
 pub use modulate::Modulate;
 pub use negate::Negate;
 pub use resize::{Interpolation, Resize};
+pub use rotate::Rotate;
 pub use sepia::Sepia;
 pub use threshold::Threshold;
 
