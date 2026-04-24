@@ -30,6 +30,8 @@
 //!   with optional mid-tone gamma (ImageMagick `-level`).
 //! - [`Modulate`](modulate::Modulate) — adjust brightness, saturation,
 //!   and hue via HSL round-trip (ImageMagick `-modulate`).
+//! - [`MotionBlur`](motion_blur::MotionBlur) — directional 1-D Gaussian
+//!   blur along `angle_degrees` (ImageMagick `-motion-blur RxS+A`).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Normalize`](normalize::Normalize) — auto-levels: stretch the
@@ -71,6 +73,7 @@ pub mod gamma;
 pub mod grayscale;
 pub mod level;
 pub mod modulate;
+pub mod motion_blur;
 pub mod negate;
 pub mod normalize;
 pub mod posterize;
@@ -93,6 +96,7 @@ pub use gamma::Gamma;
 pub use grayscale::Grayscale;
 pub use level::Level;
 pub use modulate::Modulate;
+pub use motion_blur::MotionBlur;
 pub use negate::Negate;
 pub use normalize::Normalize;
 pub use posterize::Posterize;
