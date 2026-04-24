@@ -15,6 +15,7 @@
 //! - [`Edge`](edge::Edge) — Sobel edge magnitude; accepts colour input
 //!   and returns a single-plane luma-ish intensity image.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
+//! - [`Flop`](flop::Flop) — mirror horizontally (left col ↔ right col).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
@@ -33,6 +34,7 @@ use oxideav_core::{Error, VideoFrame};
 pub mod blur;
 pub mod edge;
 pub mod flip;
+pub mod flop;
 pub mod negate;
 pub mod resize;
 pub mod threshold;
@@ -40,6 +42,7 @@ pub mod threshold;
 pub use blur::Blur;
 pub use edge::Edge;
 pub use flip::Flip;
+pub use flop::Flop;
 pub use negate::Negate;
 pub use resize::{Interpolation, Resize};
 pub use threshold::Threshold;
