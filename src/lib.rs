@@ -20,6 +20,8 @@
 //! - [`Flop`](flop::Flop) — mirror horizontally (left col ↔ right col).
 //! - [`Gamma`](gamma::Gamma) — power-law gamma curve applied per tone
 //!   channel (LUT-based; YUV only touches luma).
+//! - [`Grayscale`](grayscale::Grayscale) — desaturate RGB/RGBA with
+//!   Rec. 601 luma weights; optional Gray8 collapse.
 //! - [`Modulate`](modulate::Modulate) — adjust brightness, saturation,
 //!   and hue via HSL round-trip (ImageMagick `-modulate`).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
@@ -48,6 +50,7 @@ pub mod edge;
 pub mod flip;
 pub mod flop;
 pub mod gamma;
+pub mod grayscale;
 pub mod modulate;
 pub mod negate;
 pub mod resize;
@@ -61,6 +64,7 @@ pub use edge::Edge;
 pub use flip::Flip;
 pub use flop::Flop;
 pub use gamma::Gamma;
+pub use grayscale::Grayscale;
 pub use modulate::Modulate;
 pub use negate::Negate;
 pub use resize::{Interpolation, Resize};
