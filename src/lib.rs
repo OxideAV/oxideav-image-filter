@@ -28,6 +28,8 @@
 //!   and hue via HSL round-trip (ImageMagick `-modulate`).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
+//! - [`Normalize`](normalize::Normalize) — auto-levels: stretch the
+//!   observed luma range to fill `[0, 255]` (ImageMagick `-normalize`).
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
 //!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear.
 //! - [`Rotate`](rotate::Rotate) — arbitrary-angle rotation with bilinear
@@ -39,6 +41,8 @@
 //!   `radius`/`sigma`/`amount`; YUV touches only luma.
 //! - [`Threshold`](threshold::Threshold) — binarise each sample to
 //!   black/white against a cut-off (YUV sets chroma to neutral 128).
+//! - [`Unsharp`](unsharp::Unsharp) — threshold-gated unsharp-mask
+//!   (ImageMagick `-unsharp RxS+A+T`).
 //!
 //! # Pixel formats
 //!
@@ -58,11 +62,13 @@ pub mod grayscale;
 pub mod level;
 pub mod modulate;
 pub mod negate;
+pub mod normalize;
 pub mod resize;
 pub mod rotate;
 pub mod sepia;
 pub mod sharpen;
 pub mod threshold;
+pub mod unsharp;
 pub(crate) mod tonal_lut;
 
 pub use blur::Blur;
@@ -80,6 +86,7 @@ pub use rotate::Rotate;
 pub use sepia::Sepia;
 pub use sharpen::Sharpen;
 pub use threshold::Threshold;
+pub use unsharp::Unsharp;
 
 /// A filter that transforms a single video frame without any external
 /// state. Calling [`apply`](Self::apply) twice with the same input

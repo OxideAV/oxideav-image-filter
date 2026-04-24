@@ -8,7 +8,7 @@
 //! plane on YUV inputs (chroma is left alone) and every RGB channel on
 //! RGB/RGBA inputs.
 
-use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, gaussian_kernel, plane_dims};
+use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
 use crate::{is_supported, Blur, ImageFilter, Planes};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
@@ -134,14 +134,6 @@ pub(crate) fn unsharp_mask_plane(
         stride: row_bytes,
         data: out,
     }
-}
-
-/// Use the shared Gaussian kernel math from `blur.rs` — exposed here
-/// for tests only.
-#[cfg(test)]
-#[allow(dead_code)]
-fn kernel(radius: u32, sigma: f32) -> Vec<f32> {
-    gaussian_kernel(radius, sigma)
 }
 
 #[cfg(test)]
