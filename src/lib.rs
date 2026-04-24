@@ -14,6 +14,8 @@
 //!   specific plane / all).
 //! - [`BrightnessContrast`](brightness_contrast::BrightnessContrast) —
 //!   linear brightness + contrast adjustment (LUT-based).
+//! - [`Crop`](crop::Crop) — extract a rectangular subregion
+//!   `(x, y, width, height)` (ImageMagick `-crop WxH+X+Y`).
 //! - [`Edge`](edge::Edge) — Sobel edge magnitude; accepts colour input
 //!   and returns a single-plane luma-ish intensity image.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
@@ -54,6 +56,7 @@ use oxideav_core::{Error, VideoFrame};
 
 pub mod blur;
 pub mod brightness_contrast;
+pub mod crop;
 pub mod edge;
 pub mod flip;
 pub mod flop;
@@ -81,6 +84,7 @@ pub use grayscale::Grayscale;
 pub use level::Level;
 pub use modulate::Modulate;
 pub use negate::Negate;
+pub use normalize::Normalize;
 pub use resize::{Interpolation, Resize};
 pub use rotate::Rotate;
 pub use sepia::Sepia;
