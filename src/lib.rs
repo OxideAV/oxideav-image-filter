@@ -43,6 +43,8 @@
 //!   background colour.
 //! - [`Sepia`](sepia::Sepia) — warm-brown colour remap (ImageMagick
 //!   `-sepia-tone`); threshold controls the mix with the original.
+//! - [`Solarize`](solarize::Solarize) — invert samples above a
+//!   threshold (ImageMagick `-solarize N%`).
 //! - [`Sharpen`](sharpen::Sharpen) — unsharp-mask sharpening with
 //!   `radius`/`sigma`/`amount`; YUV touches only luma.
 //! - [`Threshold`](threshold::Threshold) — binarise each sample to
@@ -76,6 +78,7 @@ pub mod resize;
 pub mod rotate;
 pub mod sepia;
 pub mod sharpen;
+pub mod solarize;
 pub mod threshold;
 pub mod unsharp;
 pub(crate) mod tonal_lut;
@@ -97,6 +100,7 @@ pub use resize::{Interpolation, Resize};
 pub use rotate::Rotate;
 pub use sepia::Sepia;
 pub use sharpen::Sharpen;
+pub use solarize::Solarize;
 pub use threshold::Threshold;
 pub use unsharp::Unsharp;
 
