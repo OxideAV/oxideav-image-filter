@@ -1,0 +1,17 @@
+[package]
+name = "oxideav-image-filter"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/OxideAV/oxideav-image-filter"
+authors = ["Mark Karpeles"]
+description = "Pure-Rust single-frame image filters (blur, edge, resize, ...) for oxideav"
+
+readme = "README.md"
+homepage = "https://github.com/OxideAV/oxideav-image-filter"
+keywords = ["multimedia", "video", "image", "filter", "effects"]
+categories = ["multimedia::video"]
+
+[dependencies]
+oxideav-core = "0.1"
