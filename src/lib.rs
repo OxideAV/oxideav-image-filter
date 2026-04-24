@@ -18,6 +18,8 @@
 //!   `(x, y, width, height)` (ImageMagick `-crop WxH+X+Y`).
 //! - [`Edge`](edge::Edge) — Sobel edge magnitude; accepts colour input
 //!   and returns a single-plane luma-ish intensity image.
+//! - [`Emboss`](emboss::Emboss) — 3×3 relief convolution; luma-only
+//!   on YUV, every channel on RGB.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
 //! - [`Flop`](flop::Flop) — mirror horizontally (left col ↔ right col).
 //! - [`Gamma`](gamma::Gamma) — power-law gamma curve applied per tone
@@ -58,6 +60,7 @@ pub mod blur;
 pub mod brightness_contrast;
 pub mod crop;
 pub mod edge;
+pub mod emboss;
 pub mod flip;
 pub mod flop;
 pub mod gamma;
@@ -77,6 +80,7 @@ pub(crate) mod tonal_lut;
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
 pub use edge::Edge;
+pub use emboss::Emboss;
 pub use flip::Flip;
 pub use flop::Flop;
 pub use gamma::Gamma;
