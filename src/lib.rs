@@ -19,6 +19,8 @@
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
 //!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear.
+//! - [`Threshold`](threshold::Threshold) — binarise each sample to
+//!   black/white against a cut-off (YUV sets chroma to neutral 128).
 //!
 //! # Pixel formats
 //!
@@ -33,12 +35,14 @@ pub mod edge;
 pub mod flip;
 pub mod negate;
 pub mod resize;
+pub mod threshold;
 
 pub use blur::Blur;
 pub use edge::Edge;
 pub use flip::Flip;
 pub use negate::Negate;
 pub use resize::{Interpolation, Resize};
+pub use threshold::Threshold;
 
 /// A filter that transforms a single video frame without any external
 /// state. Calling [`apply`](Self::apply) twice with the same input
