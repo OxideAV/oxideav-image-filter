@@ -14,6 +14,9 @@
 //!   specific plane / all).
 //! - [`Edge`](edge::Edge) — Sobel edge magnitude; accepts colour input
 //!   and returns a single-plane luma-ish intensity image.
+//! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
+//! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
+//!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
 //!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear.
 //!
@@ -27,10 +30,14 @@ use oxideav_core::{Error, VideoFrame};
 
 pub mod blur;
 pub mod edge;
+pub mod flip;
+pub mod negate;
 pub mod resize;
 
 pub use blur::Blur;
 pub use edge::Edge;
+pub use flip::Flip;
+pub use negate::Negate;
 pub use resize::{Interpolation, Resize};
 
 /// A filter that transforms a single video frame without any external
@@ -48,9 +55,10 @@ pub trait ImageFilter: Send {
 /// 2 = Cr. For `Rgba` the planes are a single 4-channel packed plane
 /// (index 0) — use `All` to touch every channel, or let the per-filter
 /// documentation describe how it handles packed layouts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Planes {
     /// Apply to every plane of the input frame.
+    #[default]
     All,
     /// Apply only to the luma / Y plane (index 0). For packed RGB
     /// formats this is the whole image.
@@ -62,12 +70,6 @@ pub enum Planes {
     /// [`Error::invalid`] if the index is out of range for the input
     /// frame.
     Index(usize),
-}
-
-impl Default for Planes {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 impl Planes {
