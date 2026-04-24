@@ -83,8 +83,8 @@ pub mod sepia;
 pub mod sharpen;
 pub mod solarize;
 pub mod threshold;
-pub mod unsharp;
 pub(crate) mod tonal_lut;
+pub mod unsharp;
 
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;

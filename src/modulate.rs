@@ -263,7 +263,9 @@ mod tests {
     fn alpha_is_preserved() {
         let w = 2;
         let h = 2;
-        let data: Vec<u8> = vec![200, 100, 50, 77, 50, 80, 120, 200, 10, 20, 30, 40, 0, 0, 0, 99];
+        let data: Vec<u8> = vec![
+            200, 100, 50, 77, 50, 80, 120, 200, 10, 20, 30, 40, 0, 0, 0, 99,
+        ];
         let input = VideoFrame {
             format: PixelFormat::Rgba,
             width: w,

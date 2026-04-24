@@ -72,10 +72,7 @@ fn scan_range(frame: &VideoFrame, low_clip: f32, high_clip: f32) -> (u8, u8) {
     let mut total: u32 = 0;
 
     match frame.format {
-        PixelFormat::Gray8
-        | PixelFormat::Yuv420P
-        | PixelFormat::Yuv422P
-        | PixelFormat::Yuv444P => {
+        PixelFormat::Gray8 | PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
             let p = &frame.planes[0];
             for y in 0..h {
                 for v in &p.data[y * p.stride..y * p.stride + w] {
@@ -211,10 +208,12 @@ mod tests {
 
     #[test]
     fn normalize_rgba_preserves_alpha() {
-        let data: Vec<u8> = (0..16).flat_map(|i| {
-            let v = 64 + (i as u8) * 2;
-            [v, v, v, 77]
-        }).collect();
+        let data: Vec<u8> = (0..16)
+            .flat_map(|i| {
+                let v = 64 + (i as u8) * 2;
+                [v, v, v, 77]
+            })
+            .collect();
         let input = VideoFrame {
             format: PixelFormat::Rgba,
             width: 4,

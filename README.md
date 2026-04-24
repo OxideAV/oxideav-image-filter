@@ -67,6 +67,56 @@ let half = Resize::new(input.width / 2, input.height / 2)
 For planar YUV the chroma planes are resized to the matching subsampled
 output dimensions (e.g. 4:2:0 halves both chroma axes).
 
+### Geometric
+
+- **`Flip`** — mirror vertically (top ↔ bottom).
+- **`Flop`** — mirror horizontally (left ↔ right).
+- **`Rotate`** — arbitrary-degree rotation with bilinear resampling and
+  canvas grow; configurable background colour. 90°-multiples use an
+  exact axis-aligned fast path. IM: `-rotate N`.
+- **`Crop`** — `(x, y, width, height)` subregion extraction; chroma
+  rects are ceil/floor-aligned for YUV subsampling. IM: `-crop WxH+X+Y`.
+
+### Tonal (LUT-based, typically fast)
+
+- **`Negate`** — invert pixel values. On YUV inverts only Y so
+  chroma (hue/saturation) is preserved. IM: `-negate`.
+- **`Threshold`** — binarise at a per-channel threshold; chroma →
+  neutral 128 for YUV. IM: `-threshold N`.
+- **`Gamma`** — power-law gamma correction. IM: `-gamma G`.
+- **`BrightnessContrast`** — linear brightness + contrast in the IM
+  range `−100..100`. IM: `-brightness-contrast BxC`.
+- **`Level`** — remap `[black, white]` to `[0, 255]` with optional
+  mid-tone gamma. IM: `-level LOW,MID,HIGH`.
+- **`Normalize`** — two-pass auto-level stretch to use the full
+  range. IM: `-normalize`.
+- **`Posterize`** — reduce each channel to `N` intensity levels. IM:
+  `-posterize N`.
+- **`Solarize`** — invert pixels above a threshold. IM: `-solarize N%`.
+
+### Colour
+
+- **`Modulate`** — brightness / saturation / hue via HSL round-trip.
+  RGB / RGBA only (YUV returns `Unsupported`). IM: `-modulate B,S,H`.
+- **`Sepia`** — sepia-tone matrix with optional `threshold` mix back
+  to grayscale. IM: `-sepia-tone N%`.
+- **`Grayscale`** — Rec. 601 desaturate; optional `Gray8` collapse.
+  IM: `-colorspace Gray`.
+
+### Sharpening + artistic
+
+- **`Sharpen`** — unsharp-mask (Gaussian-blurred subtract +
+  re-addition). IM: `-sharpen RxS`.
+- **`Unsharp`** — explicit unsharp-mask with `threshold` gate: only
+  high-contrast regions are sharpened. IM: `-unsharp RxS+A+T`.
+- **`Emboss`** — 3×3 relief convolution with `+128` bias. IM: `-emboss R`.
+- **`MotionBlur`** — 1-D Gaussian blur along `angle_degrees`. IM:
+  `-motion-blur RxS+A`.
+
+All filters listed here share the `ImageFilter` trait — chain them
+manually with repeated `.apply()` calls, or feed them through
+`oxideav-pipeline` as `video.<name>` filter nodes in a JSON job.
+
 ## Pixel formats
 
 Supported in v0:

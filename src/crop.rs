@@ -49,12 +49,14 @@ impl ImageFilter for Crop {
                 "oxideav-image-filter: Crop width/height must be > 0",
             ));
         }
-        let x_end = self.x.checked_add(self.width).ok_or_else(|| {
-            Error::invalid("oxideav-image-filter: Crop x + width overflows u32")
-        })?;
-        let y_end = self.y.checked_add(self.height).ok_or_else(|| {
-            Error::invalid("oxideav-image-filter: Crop y + height overflows u32")
-        })?;
+        let x_end = self
+            .x
+            .checked_add(self.width)
+            .ok_or_else(|| Error::invalid("oxideav-image-filter: Crop x + width overflows u32"))?;
+        let y_end = self
+            .y
+            .checked_add(self.height)
+            .ok_or_else(|| Error::invalid("oxideav-image-filter: Crop y + height overflows u32"))?;
         if x_end > input.width || y_end > input.height {
             return Err(Error::invalid(format!(
                 "oxideav-image-filter: Crop ({},{})+{}x{} exceeds frame {}x{}",
@@ -66,8 +68,7 @@ impl ImageFilter for Crop {
         let rect = (self.x, self.y, self.width, self.height);
         let mut new_planes: Vec<VideoPlane> = Vec::with_capacity(input.planes.len());
         for (idx, plane) in input.planes.iter().enumerate() {
-            let (plane_x, plane_y, plane_w, plane_h) =
-                plane_rect(input.format, idx, chroma, rect);
+            let (plane_x, plane_y, plane_w, plane_h) = plane_rect(input.format, idx, chroma, rect);
             let bpp = crate::blur::bytes_per_plane_pixel(input.format, idx);
             new_planes.push(crop_plane(plane, plane_x, plane_y, plane_w, plane_h, bpp));
         }
@@ -119,8 +120,7 @@ fn crop_plane(src: &VideoPlane, x: u32, y: u32, w: u32, h: u32, bpp: usize) -> V
     for row in 0..h {
         let src_off = (y + row) * src.stride + x * bpp;
         let dst_off = row * row_bytes;
-        out[dst_off..dst_off + row_bytes]
-            .copy_from_slice(&src.data[src_off..src_off + row_bytes]);
+        out[dst_off..dst_off + row_bytes].copy_from_slice(&src.data[src_off..src_off + row_bytes]);
     }
     VideoPlane {
         stride: row_bytes,

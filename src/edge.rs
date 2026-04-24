@@ -188,7 +188,11 @@ mod tests {
         let out = Edge::new().apply(&input).unwrap();
         // Interior pixel on the edge column must have large response.
         let idx = 8 * 16 + 8;
-        assert!(out.planes[0].data[idx] > 200, "edge response weak: {}", out.planes[0].data[idx]);
+        assert!(
+            out.planes[0].data[idx] > 200,
+            "edge response weak: {}",
+            out.planes[0].data[idx]
+        );
         // Far from the edge → should be close to zero.
         assert!(out.planes[0].data[8 * 16 + 1] < 20);
         assert!(out.planes[0].data[8 * 16 + 14] < 20);

@@ -170,8 +170,14 @@ mod tests {
             time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane { stride: 4, data: y },
-                VideoPlane { stride: 2, data: vec![200u8; 4] },
-                VideoPlane { stride: 2, data: vec![50u8; 4] },
+                VideoPlane {
+                    stride: 2,
+                    data: vec![200u8; 4],
+                },
+                VideoPlane {
+                    stride: 2,
+                    data: vec![50u8; 4],
+                },
             ],
         };
         let out = Threshold::new(64).apply(&input).unwrap();

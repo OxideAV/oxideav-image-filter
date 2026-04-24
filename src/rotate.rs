@@ -84,8 +84,7 @@ impl ImageFilter for Rotate {
         for (idx, plane) in input.planes.iter().enumerate() {
             let (src_pw, src_ph) =
                 crate::blur::plane_dims(input.width, input.height, input.format, idx, cx, cy);
-            let (dst_pw, dst_ph) =
-                crate::blur::plane_dims(new_w, new_h, input.format, idx, cx, cy);
+            let (dst_pw, dst_ph) = crate::blur::plane_dims(new_w, new_h, input.format, idx, cx, cy);
             let bpp = crate::blur::bytes_per_plane_pixel(input.format, idx);
             let fill = plane_fill(input.format, idx, &bg);
             new_planes.push(rotate_plane(
@@ -150,15 +149,14 @@ fn quarter_turn(input: &VideoFrame, degrees: f32) -> Option<VideoFrame> {
             for x in 0..pw {
                 let (nx, ny) = match d as u32 {
                     0 => (x, y),
-                    90 => (ph - 1 - y, x),     // clockwise
+                    90 => (ph - 1 - y, x), // clockwise
                     180 => (pw - 1 - x, ph - 1 - y),
-                    270 => (y, pw - 1 - x),    // counter-clockwise 90
+                    270 => (y, pw - 1 - x), // counter-clockwise 90
                     _ => unreachable!(),
                 };
                 let src_off = y * plane.stride + x * bpp;
                 let dst_off = ny * row_bytes + nx * bpp;
-                out[dst_off..dst_off + bpp]
-                    .copy_from_slice(&plane.data[src_off..src_off + bpp]);
+                out[dst_off..dst_off + bpp].copy_from_slice(&plane.data[src_off..src_off + bpp]);
             }
         }
         new_planes.push(VideoPlane {
@@ -368,8 +366,7 @@ mod tests {
         assert_eq!(one_eighty.height, one_eighty_via_two.height);
         // Multiples of 90° are handled via the axis-aligned fast path,
         // so pixels must match exactly (no interpolation).
-        for (a, b) in one_eighty
-            .planes[0]
+        for (a, b) in one_eighty.planes[0]
             .data
             .iter()
             .zip(one_eighty_via_two.planes[0].data.iter())

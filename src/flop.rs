@@ -123,10 +123,7 @@ mod tests {
             height: 1,
             pts: None,
             time_base: TimeBase::new(1, 1),
-            planes: vec![VideoPlane {
-                stride: 6,
-                data,
-            }],
+            planes: vec![VideoPlane { stride: 6, data }],
         };
         let out = Flop::new().apply(&input).unwrap();
         // After flop: (200, 210, 220) | (10, 20, 30) — channel order inside a

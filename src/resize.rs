@@ -53,18 +53,18 @@ impl ImageFilter for Resize {
 
         let mut new_planes: Vec<VideoPlane> = Vec::with_capacity(input.planes.len());
         for (idx, plane) in input.planes.iter().enumerate() {
-            let (src_w, src_h) = crate::blur::plane_dims(
-                input.width,
-                input.height,
-                input.format,
-                idx,
-                cx,
-                cy,
-            );
+            let (src_w, src_h) =
+                crate::blur::plane_dims(input.width, input.height, input.format, idx, cx, cy);
             let (dst_w, dst_h) = crate::blur::plane_dims(new_w, new_h, input.format, idx, cx, cy);
             let bpp = crate::blur::bytes_per_plane_pixel(input.format, idx);
             new_planes.push(resize_plane(
-                plane, src_w, src_h, dst_w, dst_h, bpp, self.interp,
+                plane,
+                src_w,
+                src_h,
+                dst_w,
+                dst_h,
+                bpp,
+                self.interp,
             ));
         }
 
@@ -212,7 +212,10 @@ mod tests {
             pts: None,
             time_base: TimeBase::new(1, 1),
             planes: vec![
-                VideoPlane { stride: 16, data: y },
+                VideoPlane {
+                    stride: 16,
+                    data: y,
+                },
                 VideoPlane { stride: 8, data: u },
                 VideoPlane { stride: 8, data: v },
             ],

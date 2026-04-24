@@ -72,7 +72,10 @@ impl ImageFilter for Grayscale {
                     height: input.height,
                     pts: input.pts,
                     time_base: input.time_base,
-                    planes: vec![VideoPlane { stride: w, data: out }],
+                    planes: vec![VideoPlane {
+                        stride: w,
+                        data: out,
+                    }],
                 });
             }
             other => {
@@ -100,7 +103,10 @@ impl ImageFilter for Grayscale {
                 height: input.height,
                 pts: input.pts,
                 time_base: input.time_base,
-                planes: vec![VideoPlane { stride: w, data: out }],
+                planes: vec![VideoPlane {
+                    stride: w,
+                    data: out,
+                }],
             });
         }
 
@@ -180,7 +186,10 @@ mod tests {
     #[test]
     fn gray8_mode_returns_single_plane_gray() {
         let input = rgb(2, 2, |_, _| (255, 255, 255));
-        let out = Grayscale::new().with_output_gray8(true).apply(&input).unwrap();
+        let out = Grayscale::new()
+            .with_output_gray8(true)
+            .apply(&input)
+            .unwrap();
         assert_eq!(out.format, PixelFormat::Gray8);
         assert_eq!(out.planes.len(), 1);
         for b in &out.planes[0].data {
@@ -232,7 +241,10 @@ mod tests {
             height: 4,
             pts: None,
             time_base: TimeBase::new(1, 1),
-            planes: vec![VideoPlane { stride: 4, data: data.clone() }],
+            planes: vec![VideoPlane {
+                stride: 4,
+                data: data.clone(),
+            }],
         };
         let out = Grayscale::default().apply(&input).unwrap();
         assert_eq!(out.format, PixelFormat::Gray8);

@@ -191,7 +191,10 @@ mod tests {
             pts: None,
             time_base: TimeBase::new(1, 1),
             planes: vec![
-                VideoPlane { stride: 16, data: y },
+                VideoPlane {
+                    stride: 16,
+                    data: y,
+                },
                 VideoPlane { stride: 8, data: u },
                 VideoPlane { stride: 8, data: v },
             ],

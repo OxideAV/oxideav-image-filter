@@ -248,14 +248,8 @@ mod tests {
                     stride: 16,
                     data: y,
                 },
-                VideoPlane {
-                    stride: 8,
-                    data: u,
-                },
-                VideoPlane {
-                    stride: 8,
-                    data: v,
-                },
+                VideoPlane { stride: 8, data: u },
+                VideoPlane { stride: 8, data: v },
             ],
         };
 

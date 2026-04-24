@@ -182,9 +182,18 @@ mod tests {
             pts: None,
             time_base: TimeBase::new(1, 1),
             planes: vec![
-                VideoPlane { stride: 4, data: y.clone() },
-                VideoPlane { stride: 2, data: u.clone() },
-                VideoPlane { stride: 2, data: v.clone() },
+                VideoPlane {
+                    stride: 4,
+                    data: y.clone(),
+                },
+                VideoPlane {
+                    stride: 2,
+                    data: u.clone(),
+                },
+                VideoPlane {
+                    stride: 2,
+                    data: v.clone(),
+                },
             ],
         };
         let out = Negate::new().apply(&input).unwrap();
