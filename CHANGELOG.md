@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/OxideAV/oxideav-image-filter/compare/v0.0.2...v0.0.3) - 2026-04-25
+
+### Other
+
+- don't commit Cargo.lock for library crates
+- drop Cargo.lock — library crate, lock causes CI drift
+- add `register(&mut RuntimeContext)` + adopt image-filter factories
+
 ## [0.0.2](https://github.com/OxideAV/oxideav-image-filter/compare/v0.0.1...v0.0.2) - 2026-04-24
 
 ### Other
