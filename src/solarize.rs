@@ -11,7 +11,7 @@
 //! ImageMagick spells this `-solarize N%`; the CLI is responsible for
 //! mapping percent syntax to the `u8` threshold taken here.
 
-use crate::{is_supported, tonal_lut::apply_tone_lut, ImageFilter};
+use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Invert every sample above `threshold` ("solarise" effect).
@@ -39,16 +39,16 @@ impl Solarize {
 }
 
 impl ImageFilter for Solarize {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Solarize does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
         let lut = build_solarize_lut(self.threshold);
         let mut out = input.clone();
-        apply_tone_lut(&mut out, &lut);
+        apply_tone_lut(&mut out, &lut, params.format, params.width, params.height);
         Ok(out)
     }
 }
@@ -75,11 +75,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -91,7 +87,7 @@ mod tests {
     fn solarize_below_threshold_is_identity() {
         let input = gray(4, 1, |x, _| x as u8 * 30);
         // All samples < 128 with threshold 128 → identity.
-        let out = Solarize::new(128).apply(&input).unwrap();
+        let out = Solarize::new(128).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 1 }).unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
@@ -102,7 +98,7 @@ mod tests {
             1 => 128,
             _ => 200,
         });
-        let out = Solarize::new(128).apply(&input).unwrap();
+        let out = Solarize::new(128).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 3, height: 1 }).unwrap();
         assert_eq!(out.planes[0].data[0], 50); // below threshold → unchanged
         assert_eq!(out.planes[0].data[1], 127); // 255 - 128
         assert_eq!(out.planes[0].data[2], 55); // 255 - 200
@@ -111,7 +107,7 @@ mod tests {
     #[test]
     fn solarize_threshold_zero_is_full_negate() {
         let input = gray(4, 1, |x, _| x as u8 * 60);
-        let out = Solarize::new(0).apply(&input).unwrap();
+        let out = Solarize::new(0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 1 }).unwrap();
         for (i, v) in out.planes[0].data.iter().enumerate() {
             assert_eq!(*v, 255 - input.planes[0].data[i]);
         }
@@ -120,7 +116,7 @@ mod tests {
     #[test]
     fn solarize_threshold_255_is_almost_identity() {
         let input = gray(4, 1, |x, _| x as u8 * 60);
-        let out = Solarize::new(255).apply(&input).unwrap();
+        let out = Solarize::new(255).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 1 }).unwrap();
         for i in 0..3 {
             assert_eq!(out.planes[0].data[i], input.planes[0].data[i]);
         }
@@ -130,14 +126,10 @@ mod tests {
     fn solarize_rgba_preserves_alpha() {
         let data: Vec<u8> = (0..16).flat_map(|_| [200u8, 50, 200, 77]).collect();
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = Solarize::new(128).apply(&input).unwrap();
+        let out = Solarize::new(128).apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
         for i in 0..16 {
             let px = &out.planes[0].data[i * 4..i * 4 + 4];
             assert_eq!(px[0], 55); // 255 - 200

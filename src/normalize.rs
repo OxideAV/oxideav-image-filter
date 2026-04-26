@@ -9,7 +9,7 @@
 //! `high_clip` knobs are explicit here because IM's defaults aren't
 //! universally useful and letting callers pick is clearer.
 
-use crate::{is_supported, level::build_level_lut, tonal_lut::apply_tone_lut, ImageFilter};
+use crate::{is_supported_format, level::build_level_lut, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Two-pass auto-levels.
@@ -50,28 +50,33 @@ impl Normalize {
 }
 
 impl ImageFilter for Normalize {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Normalize does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
-        let (lo, hi) = scan_range(input, self.low_clip, self.high_clip);
+        let (lo, hi) = scan_range(input, params, self.low_clip, self.high_clip);
         let lut = build_level_lut(lo, hi, 1.0);
         let mut out = input.clone();
-        apply_tone_lut(&mut out, &lut);
+        apply_tone_lut(&mut out, &lut, params.format, params.width, params.height);
         Ok(out)
     }
 }
 
-fn scan_range(frame: &VideoFrame, low_clip: f32, high_clip: f32) -> (u8, u8) {
+fn scan_range(
+    frame: &VideoFrame,
+    params: VideoStreamParams,
+    low_clip: f32,
+    high_clip: f32,
+) -> (u8, u8) {
     let mut hist = [0u32; 256];
-    let w = frame.width as usize;
-    let h = frame.height as usize;
+    let w = params.width as usize;
+    let h = params.height as usize;
     let mut total: u32 = 0;
 
-    match frame.format {
+    match params.format {
         PixelFormat::Gray8 | PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
             let p = &frame.planes[0];
             for y in 0..h {
@@ -167,11 +172,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -184,7 +185,7 @@ mod tests {
         // Samples sit in [64, 192]; after normalize the min must be 0
         // and the max must be 255 (approx).
         let input = gray(8, 8, |x, y| 64 + (x * 16 + y * 16) as u8 / 2);
-        let out = Normalize::default().apply(&input).unwrap();
+        let out = Normalize::default().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
         let min = *out.planes[0].data.iter().min().unwrap();
         let max = *out.planes[0].data.iter().max().unwrap();
         assert_eq!(min, 0, "min = {min}");
@@ -194,8 +195,8 @@ mod tests {
     #[test]
     fn normalize_is_idempotent_on_already_stretched() {
         let input = gray(4, 4, |x, y| ((x + y * 4) * 17) as u8);
-        let once = Normalize::default().apply(&input).unwrap();
-        let twice = Normalize::default().apply(&once).unwrap();
+        let once = Normalize::default().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let twice = Normalize::default().apply(&once, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
         assert_eq!(once.planes[0].data, twice.planes[0].data);
     }
 
@@ -203,7 +204,7 @@ mod tests {
     fn normalize_flat_image_safe() {
         // Flat input → no useful range; result should still build without panic.
         let input = gray(4, 4, |_, _| 120);
-        let _ = Normalize::default().apply(&input).unwrap();
+        let _ = Normalize::default().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
     }
 
     #[test]
@@ -215,14 +216,10 @@ mod tests {
             })
             .collect();
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = Normalize::default().apply(&input).unwrap();
+        let out = Normalize::default().apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
         for i in 0..16 {
             assert_eq!(out.planes[0].data[i * 4 + 3], 77);
         }

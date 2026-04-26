@@ -11,7 +11,7 @@
 //!
 //! Matches ImageMagick's `-posterize N` parameter semantics.
 
-use crate::{is_supported, tonal_lut::apply_tone_lut, ImageFilter};
+use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Posterise each channel to `levels` intensity buckets.
@@ -44,16 +44,16 @@ impl Posterize {
 }
 
 impl ImageFilter for Posterize {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Posterize does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
         let lut = build_posterize_lut(self.levels);
         let mut out = input.clone();
-        apply_tone_lut(&mut out, &lut);
+        apply_tone_lut(&mut out, &lut, params.format, params.width, params.height);
         Ok(out)
     }
 }
@@ -82,11 +82,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -97,7 +93,7 @@ mod tests {
     #[test]
     fn posterize_two_levels_is_binary() {
         let input = gray(4, 4, |x, y| (x * 32 + y * 32) as u8);
-        let out = Posterize::new(2).apply(&input).unwrap();
+        let out = Posterize::new(2).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
         for v in &out.planes[0].data {
             assert!(*v == 0 || *v == 255, "got {v}");
         }
@@ -112,7 +108,7 @@ mod tests {
             2 => 180,
             _ => 250,
         });
-        let out = Posterize::new(4).apply(&input).unwrap();
+        let out = Posterize::new(4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 1 }).unwrap();
         let vs = &out.planes[0].data;
         let allowed = [0u8, 85, 170, 255];
         for v in vs {
@@ -126,7 +122,7 @@ mod tests {
     #[test]
     fn posterize_256_levels_is_identity() {
         let input = gray(4, 4, |x, y| ((x + y * 4) * 15) as u8);
-        let out = Posterize::new(256).apply(&input).unwrap();
+        let out = Posterize::new(256).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
@@ -134,14 +130,10 @@ mod tests {
     fn posterize_rgba_preserves_alpha() {
         let data: Vec<u8> = (0..16).flat_map(|_| [100u8, 100, 100, 200]).collect();
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = Posterize::new(3).apply(&input).unwrap();
+        let out = Posterize::new(3).apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
         for i in 0..16 {
             assert_eq!(out.planes[0].data[i * 4 + 3], 200);
         }

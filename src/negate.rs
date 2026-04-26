@@ -8,7 +8,7 @@
 //! negative; parameter syntax mirrors ImageMagick's `-negate` flag so
 //! the CLI layer can forward user input directly.
 
-use crate::{is_supported, ImageFilter};
+use crate::{is_supported_format, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Invert pixel values ("photo negative").
@@ -30,20 +30,20 @@ impl Negate {
 }
 
 impl ImageFilter for Negate {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Negate does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
         let mut out = input.clone();
-        match input.format {
+        match params.format {
             PixelFormat::Gray8 => {
                 let p = &mut out.planes[0];
                 let stride = p.stride;
-                let w = input.width as usize;
-                let h = input.height as usize;
+                let w = params.width as usize;
+                let h = params.height as usize;
                 for y in 0..h {
                     let row = &mut p.data[y * stride..y * stride + w];
                     for v in row.iter_mut() {
@@ -54,8 +54,8 @@ impl ImageFilter for Negate {
             PixelFormat::Rgb24 => {
                 let p = &mut out.planes[0];
                 let stride = p.stride;
-                let w = input.width as usize;
-                let h = input.height as usize;
+                let w = params.width as usize;
+                let h = params.height as usize;
                 for y in 0..h {
                     let row = &mut p.data[y * stride..y * stride + 3 * w];
                     for x in 0..w {
@@ -68,8 +68,8 @@ impl ImageFilter for Negate {
             PixelFormat::Rgba => {
                 let p = &mut out.planes[0];
                 let stride = p.stride;
-                let w = input.width as usize;
-                let h = input.height as usize;
+                let w = params.width as usize;
+                let h = params.height as usize;
                 for y in 0..h {
                     let row = &mut p.data[y * stride..y * stride + 4 * w];
                     for x in 0..w {
@@ -83,8 +83,8 @@ impl ImageFilter for Negate {
             PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
                 let y_plane = &mut out.planes[0];
                 let stride = y_plane.stride;
-                let w = input.width as usize;
-                let h = input.height as usize;
+                let w = params.width as usize;
+                let h = params.height as usize;
                 for y in 0..h {
                     let row = &mut y_plane.data[y * stride..y * stride + w];
                     for v in row.iter_mut() {
@@ -112,11 +112,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -127,8 +123,7 @@ mod tests {
     #[test]
     fn negate_gray_inverts_every_pixel() {
         let input = gray(4, 4, |x, y| (x * 10 + y) as u8);
-        let out = Negate::new().apply(&input).unwrap();
-        assert_eq!(out.format, PixelFormat::Gray8);
+        let out = Negate::new().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
         for (i, v) in out.planes[0].data.iter().enumerate() {
             let orig = input.planes[0].data[i];
             assert_eq!(*v, 255 - orig);
@@ -137,9 +132,10 @@ mod tests {
 
     #[test]
     fn negate_twice_is_identity() {
+        let p = VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 };
         let input = gray(4, 4, |x, y| ((x + y * 4) * 7) as u8);
-        let once = Negate::new().apply(&input).unwrap();
-        let twice = Negate::new().apply(&once).unwrap();
+        let once = Negate::new().apply(&input, p).unwrap();
+        let twice = Negate::new().apply(&once, p).unwrap();
         assert_eq!(twice.planes[0].data, input.planes[0].data);
     }
 
@@ -149,17 +145,18 @@ mod tests {
             .flat_map(|i| [i as u8, (i + 10) as u8, (i + 20) as u8, 200u8])
             .collect();
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: 4 * 4,
                 data,
             }],
         };
-        let out = Negate::new().apply(&input).unwrap();
+        let out = Negate::new()
+            .apply(
+                &input,
+                VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 },
+            )
+            .unwrap();
         for x in 0..16 {
             let src = &input.planes[0].data[x * 4..x * 4 + 4];
             let dst = &out.planes[0].data[x * 4..x * 4 + 4];
@@ -176,11 +173,7 @@ mod tests {
         let u = vec![77u8; 2 * 2];
         let v = vec![128u8; 2 * 2];
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane {
                     stride: 4,
@@ -196,7 +189,12 @@ mod tests {
                 },
             ],
         };
-        let out = Negate::new().apply(&input).unwrap();
+        let out = Negate::new()
+            .apply(
+                &input,
+                VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 },
+            )
+            .unwrap();
         for (i, b) in out.planes[0].data.iter().enumerate() {
             assert_eq!(*b, 255 - y[i]);
         }

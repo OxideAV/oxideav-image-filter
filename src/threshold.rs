@@ -5,7 +5,7 @@
 //! parameter syntax mirrors ImageMagick's `-threshold N` flag (the CLI
 //! is responsible for mapping percent syntax to a `u8`).
 
-use crate::{is_supported, ImageFilter};
+use crate::{is_supported_format, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Binary threshold.
@@ -35,19 +35,19 @@ impl Threshold {
 }
 
 impl ImageFilter for Threshold {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Threshold does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
         let t = self.threshold;
         let mut out = input.clone();
-        let w = input.width as usize;
-        let h = input.height as usize;
+        let w = params.width as usize;
+        let h = params.height as usize;
 
-        match input.format {
+        match params.format {
             PixelFormat::Gray8 => {
                 let p = &mut out.planes[0];
                 let stride = p.stride;
@@ -115,11 +115,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -130,7 +126,7 @@ mod tests {
     #[test]
     fn threshold_gray_snaps_to_black_or_white() {
         let input = gray(4, 4, |x, y| (x * 32 + y * 32) as u8);
-        let out = Threshold::new(100).apply(&input).unwrap();
+        let out = Threshold::new(100).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
         for (i, v) in out.planes[0].data.iter().enumerate() {
             let orig = input.planes[0].data[i];
             let expected = if orig >= 100 { 255 } else { 0 };
@@ -142,14 +138,10 @@ mod tests {
     fn threshold_rgba_preserves_alpha() {
         let data: Vec<u8> = (0..16).flat_map(|i| [50u8, 150, 200, i as u8]).collect();
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = Threshold::new(128).apply(&input).unwrap();
+        let out = Threshold::new(128).apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
         for i in 0..16 {
             let px = &out.planes[0].data[i * 4..i * 4 + 4];
             assert_eq!(px[0], 0);
@@ -163,11 +155,7 @@ mod tests {
     fn threshold_yuv_sets_chroma_neutral() {
         let y: Vec<u8> = (0..16).map(|i| i as u8 * 16).collect();
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane { stride: 4, data: y },
                 VideoPlane {
@@ -180,7 +168,7 @@ mod tests {
                 },
             ],
         };
-        let out = Threshold::new(64).apply(&input).unwrap();
+        let out = Threshold::new(64).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap();
         for v in &out.planes[0].data {
             assert!(*v == 0 || *v == 255);
         }

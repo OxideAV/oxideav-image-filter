@@ -10,7 +10,7 @@
 //! with endpoints clamped at 0 and 255 to avoid divide-by-zero when
 //! `white == black`. Mirrors ImageMagick's `-level LOW,MID,HIGH`.
 
-use crate::{is_supported, tonal_lut::apply_tone_lut, ImageFilter};
+use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Linear/gamma levels adjustment.
@@ -57,16 +57,16 @@ impl Level {
 }
 
 impl ImageFilter for Level {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Level does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
         let lut = build_level_lut(self.black, self.white, self.gamma);
         let mut out = input.clone();
-        apply_tone_lut(&mut out, &lut);
+        apply_tone_lut(&mut out, &lut, params.format, params.width, params.height);
         Ok(out)
     }
 }
@@ -104,11 +104,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -119,21 +115,21 @@ mod tests {
     #[test]
     fn identity_levels() {
         let input = gray(4, 4, |x, y| ((x + y * 4) * 15) as u8);
-        let out = Level::new(0, 255, 1.0).apply(&input).unwrap();
+        let out = Level::new(0, 255, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
     #[test]
     fn level_clips_below_black() {
         let input = gray(1, 1, |_, _| 20);
-        let out = Level::new(50, 200, 1.0).apply(&input).unwrap();
+        let out = Level::new(50, 200, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 1, height: 1 }).unwrap();
         assert_eq!(out.planes[0].data[0], 0);
     }
 
     #[test]
     fn level_clips_above_white() {
         let input = gray(1, 1, |_, _| 220);
-        let out = Level::new(50, 200, 1.0).apply(&input).unwrap();
+        let out = Level::new(50, 200, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 1, height: 1 }).unwrap();
         assert_eq!(out.planes[0].data[0], 255);
     }
 
@@ -141,7 +137,7 @@ mod tests {
     fn level_midpoint_remap() {
         // black=50, white=200 → midpoint 125 should map to ≈ 127 with gamma=1.
         let input = gray(1, 1, |_, _| 125);
-        let out = Level::new(50, 200, 1.0).apply(&input).unwrap();
+        let out = Level::new(50, 200, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 1, height: 1 }).unwrap();
         let v = out.planes[0].data[0];
         assert!(v > 120 && v < 135, "v = {v}");
     }
@@ -150,8 +146,8 @@ mod tests {
     fn level_gamma_biases_midtones() {
         // With gamma 2.0, midpoint of the remapped range should rise.
         let input = gray(1, 1, |_, _| 125);
-        let plain = Level::new(50, 200, 1.0).apply(&input).unwrap().planes[0].data[0];
-        let gamma = Level::new(50, 200, 2.0).apply(&input).unwrap().planes[0].data[0];
+        let plain = Level::new(50, 200, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 1, height: 1 }).unwrap().planes[0].data[0];
+        let gamma = Level::new(50, 200, 2.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 1, height: 1 }).unwrap().planes[0].data[0];
         assert!(gamma > plain, "gamma={gamma} plain={plain}");
     }
 
@@ -159,14 +155,10 @@ mod tests {
     fn level_rgba_preserves_alpha() {
         let data: Vec<u8> = (0..16).flat_map(|_| [120u8, 120, 120, 77]).collect();
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = Level::new(30, 220, 1.0).apply(&input).unwrap();
+        let out = Level::new(30, 220, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
         for i in 0..16 {
             assert_eq!(out.planes[0].data[i * 4 + 3], 77);
         }

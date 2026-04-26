@@ -5,7 +5,7 @@
 //! standard formulas from the HSL Wikipedia article. `B=S=100, H=0`
 //! is identity.
 
-use crate::ImageFilter;
+use crate::{ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Adjusts brightness, saturation, and hue of an RGB or RGBA frame.
@@ -50,8 +50,8 @@ impl Modulate {
 }
 
 impl ImageFilter for Modulate {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        let (bpp, has_alpha) = match input.format {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),
             other => {
@@ -61,8 +61,8 @@ impl ImageFilter for Modulate {
             }
         };
 
-        let w = input.width as usize;
-        let h = input.height as usize;
+        let w = params.width as usize;
+        let h = params.height as usize;
         let src = &input.planes[0];
         let row_bytes = w * bpp;
         let mut out = vec![0u8; row_bytes * h];
@@ -95,11 +95,7 @@ impl ImageFilter for Modulate {
         }
 
         Ok(VideoFrame {
-            format: input.format,
-            width: input.width,
-            height: input.height,
             pts: input.pts,
-            time_base: input.time_base,
             planes: vec![VideoPlane {
                 stride: row_bytes,
                 data: out,
@@ -175,11 +171,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Rgb24,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: (w * 3) as usize,
                 data,
@@ -190,7 +182,7 @@ mod tests {
     #[test]
     fn identity_preserves_colours() {
         let input = rgb(4, 4, |x, y| ((x * 40) as u8, (y * 40) as u8, 128));
-        let out = Modulate::default().apply(&input).unwrap();
+        let out = Modulate::default().apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 4, height: 4 }).unwrap();
         // Identity = very small rounding drift allowed.
         for (a, b) in out.planes[0].data.iter().zip(input.planes[0].data.iter()) {
             let diff = (*a as i16 - *b as i16).abs();
@@ -201,7 +193,7 @@ mod tests {
     #[test]
     fn brightness_zero_gives_black() {
         let input = rgb(2, 2, |_, _| (200, 100, 50));
-        let out = Modulate::new(0.0, 100.0, 0.0).apply(&input).unwrap();
+        let out = Modulate::new(0.0, 100.0, 0.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 0);
         }
@@ -211,7 +203,7 @@ mod tests {
     fn saturation_zero_gives_gray() {
         // Pure red → grey when S=0.
         let input = rgb(2, 2, |_, _| (255, 0, 0));
-        let out = Modulate::new(100.0, 0.0, 0.0).apply(&input).unwrap();
+        let out = Modulate::new(100.0, 0.0, 0.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
         // L for pure red = 0.5 → grey = 127 or 128.
         for chunk in out.planes[0].data.chunks(3) {
             assert_eq!(chunk[0], chunk[1]);
@@ -223,7 +215,7 @@ mod tests {
     #[test]
     fn hue_rotation_120_swaps_red_to_green() {
         let input = rgb(2, 2, |_, _| (255, 0, 0));
-        let out = Modulate::new(100.0, 100.0, 120.0).apply(&input).unwrap();
+        let out = Modulate::new(100.0, 100.0, 120.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
         // After +120° rotation, red should rotate to green.
         for chunk in out.planes[0].data.chunks(3) {
             assert!(chunk[0] < 5, "r = {}", chunk[0]);
@@ -235,11 +227,7 @@ mod tests {
     #[test]
     fn rejects_yuv() {
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane {
                     stride: 4,
@@ -255,7 +243,7 @@ mod tests {
                 },
             ],
         };
-        let err = Modulate::default().apply(&input).unwrap_err();
+        let err = Modulate::default().apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap_err();
         assert!(format!("{err}").contains("Modulate"));
     }
 
@@ -267,17 +255,18 @@ mod tests {
             200, 100, 50, 77, 50, 80, 120, 200, 10, 20, 30, 40, 0, 0, 0, 99,
         ];
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: (w * 4) as usize,
                 data,
             }],
         };
-        let out = Modulate::new(120.0, 110.0, 10.0).apply(&input).unwrap();
+        let out = Modulate::new(120.0, 110.0, 10.0)
+            .apply(
+                &input,
+                VideoStreamParams { format: PixelFormat::Rgba, width: 2, height: 2 },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data[3], 77);
         assert_eq!(out.planes[0].data[7], 200);
         assert_eq!(out.planes[0].data[11], 40);

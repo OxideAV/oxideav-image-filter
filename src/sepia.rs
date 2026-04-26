@@ -12,7 +12,7 @@
 //! A `threshold` parameter in `0.0..=1.0` blends between the original
 //! (0) and the full sepia conversion (1).
 
-use crate::ImageFilter;
+use crate::{ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Sepia-tone colour remap for RGB/RGBA frames.
@@ -40,8 +40,8 @@ impl Sepia {
 }
 
 impl ImageFilter for Sepia {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        let (bpp, has_alpha) = match input.format {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),
             other => {
@@ -51,8 +51,8 @@ impl ImageFilter for Sepia {
             }
         };
 
-        let w = input.width as usize;
-        let h = input.height as usize;
+        let w = params.width as usize;
+        let h = params.height as usize;
         let src = &input.planes[0];
         let row_bytes = w * bpp;
         let t = self.threshold.clamp(0.0, 1.0);
@@ -84,11 +84,7 @@ impl ImageFilter for Sepia {
         }
 
         Ok(VideoFrame {
-            format: input.format,
-            width: input.width,
-            height: input.height,
             pts: input.pts,
-            time_base: input.time_base,
             planes: vec![VideoPlane {
                 stride: row_bytes,
                 data: out,
@@ -111,11 +107,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Rgb24,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: (w * 3) as usize,
                 data,
@@ -126,7 +118,7 @@ mod tests {
     #[test]
     fn pure_red_to_warm_brown() {
         let input = rgb(2, 2, |_, _| (255, 0, 0));
-        let out = Sepia::default().apply(&input).unwrap();
+        let out = Sepia::default().apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
         // 0.393*255 = 100.215 -> 100
         // 0.349*255 =  88.995 ->  89
         // 0.272*255 =  69.36  ->  69
@@ -140,14 +132,14 @@ mod tests {
     #[test]
     fn threshold_zero_is_identity() {
         let input = rgb(4, 4, |x, y| ((x * 40) as u8, (y * 40) as u8, 77));
-        let out = Sepia::new(0.0).apply(&input).unwrap();
+        let out = Sepia::new(0.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 4, height: 4 }).unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
     #[test]
     fn threshold_half_interpolates() {
         let input = rgb(1, 1, |_, _| (255, 0, 0));
-        let out = Sepia::new(0.5).apply(&input).unwrap();
+        let out = Sepia::new(0.5).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 1, height: 1 }).unwrap();
         // Halfway between (255, 0, 0) and (100, 89, 69) ≈ (177, 44, 34).
         assert!((out.planes[0].data[0] as i16 - 178).abs() <= 2);
         assert!((out.planes[0].data[1] as i16 - 45).abs() <= 2);
@@ -158,14 +150,15 @@ mod tests {
     fn rgba_alpha_passes_through() {
         let data = vec![100, 50, 25, 200, 0, 255, 0, 77];
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: 2,
-            height: 1,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane { stride: 8, data }],
         };
-        let out = Sepia::default().apply(&input).unwrap();
+        let out = Sepia::default()
+            .apply(
+                &input,
+                VideoStreamParams { format: PixelFormat::Rgba, width: 2, height: 1 },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data[3], 200);
         assert_eq!(out.planes[0].data[7], 77);
     }
@@ -173,11 +166,7 @@ mod tests {
     #[test]
     fn rejects_yuv() {
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane {
                     stride: 4,
@@ -193,7 +182,7 @@ mod tests {
                 },
             ],
         };
-        let err = Sepia::default().apply(&input).unwrap_err();
+        let err = Sepia::default().apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap_err();
         assert!(format!("{err}").contains("Sepia"));
     }
 }

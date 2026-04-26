@@ -12,7 +12,7 @@ use oxideav_core::{
 };
 use serde_json::Value;
 
-use crate::{ImageFilter, Planes};
+use crate::{ImageFilter, Planes, VideoStreamParams};
 
 /// Install Blur, Edge, and Resize into the runtime context's filter
 /// registry. Idempotent — last write wins per filter name.
@@ -23,19 +23,42 @@ pub fn register(ctx: &mut RuntimeContext) {
 }
 
 /// Wraps a legacy [`ImageFilter`] in the [`StreamFilter`] contract.
-/// Single video port in, single video port out.
+/// Single video port in, single video port out. The stream-level video
+/// shape ([`VideoStreamParams`]) is cached once at construction off
+/// the input port and threaded into every `apply()` call — the trait
+/// used to read these off the frame, but they live on the stream's
+/// `CodecParameters` now.
 struct ImageFilterAdapter {
     inner: Box<dyn ImageFilter>,
     inp: [PortSpec; 1],
     outp: [PortSpec; 1],
+    params: VideoStreamParams,
 }
 
 impl ImageFilterAdapter {
     fn new(inner: Box<dyn ImageFilter>, in_port: PortSpec, out_port: PortSpec) -> Self {
+        let params = match &in_port.params {
+            PortParams::Video {
+                format,
+                width,
+                height,
+                ..
+            } => VideoStreamParams {
+                format: *format,
+                width: *width,
+                height: *height,
+            },
+            _ => VideoStreamParams {
+                format: PixelFormat::Yuv420P,
+                width: 0,
+                height: 0,
+            },
+        };
         Self {
             inner,
             inp: [in_port],
             outp: [out_port],
+            params,
         }
     }
 }
@@ -58,7 +81,7 @@ impl StreamFilter for ImageFilterAdapter {
                 "image-filter adapter: input port 0 only accepts video frames",
             ));
         };
-        let out = self.inner.apply(v)?;
+        let out = self.inner.apply(v, self.params)?;
         ctx.emit(0, Frame::Video(out))?;
         Ok(())
     }

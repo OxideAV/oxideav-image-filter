@@ -60,7 +60,7 @@
 //! formats: `Gray8`, `Rgb24`, `Rgba`, `Yuv420P`, `Yuv422P`, `Yuv444P`.
 //! Other formats return [`Error::unsupported`](oxideav_core::Error).
 
-use oxideav_core::{Error, VideoFrame};
+use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 pub mod blur;
 pub mod brightness_contrast;
@@ -110,13 +110,35 @@ pub use solarize::Solarize;
 pub use threshold::Threshold;
 pub use unsharp::Unsharp;
 
+/// Stream-level video parameters threaded into [`ImageFilter::apply`].
+///
+/// Used to live on every `VideoFrame` (`format` / `width` / `height`);
+/// the slim moved them to the stream's
+/// [`CodecParameters`](oxideav_core::CodecParameters). The
+/// [`ImageFilterAdapter`](crate::registry) shim reads them once from
+/// the input port spec at construction and re-supplies them per call
+/// so concrete filters don't have to negotiate per-frame.
+#[derive(Clone, Copy, Debug)]
+pub struct VideoStreamParams {
+    pub format: PixelFormat,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// A filter that transforms a single video frame without any external
 /// state. Calling [`apply`](Self::apply) twice with the same input
 /// produces the same output.
+///
+/// Stream-level shape (`format` / `width` / `height`) used to live on
+/// each `VideoFrame`; with the slim it lives on the stream's
+/// `CodecParameters` and is threaded in via [`VideoStreamParams`].
+/// Filters that change the output shape (Edge → Gray8, Resize → new
+/// width/height, etc.) document the new shape in their per-filter
+/// docs; the adapter rebuilds the output port spec accordingly.
 pub trait ImageFilter: Send {
     /// Apply the filter to `input`, producing a new frame. The filter
     /// must not retain any reference to `input`.
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error>;
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error>;
 }
 
 /// Selects which planes of a video frame a filter operates on.
@@ -155,14 +177,15 @@ impl Planes {
     }
 }
 
-/// Returns `true` when the filters in this crate can operate on `f`.
+/// Returns `true` when the filters in this crate can operate on `format`.
 ///
 /// Used internally by [`Blur`] / [`Edge`] / [`Resize`] to reject
-/// unsupported pixel formats with a descriptive error.
-pub(crate) fn is_supported(f: &VideoFrame) -> bool {
-    use oxideav_core::PixelFormat;
+/// unsupported pixel formats with a descriptive error. Reads the
+/// stream's pixel format (now off [`VideoStreamParams`]) since the
+/// slim removed it from `VideoFrame`.
+pub(crate) fn is_supported_format(format: PixelFormat) -> bool {
     matches!(
-        f.format,
+        format,
         PixelFormat::Gray8
             | PixelFormat::Rgb24
             | PixelFormat::Rgba

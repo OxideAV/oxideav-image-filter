@@ -4,7 +4,7 @@
 //! `(x, y, w, h)` rectangle. Clean-room from the obvious definition:
 //! the output pixel `(i, j)` is the input pixel `(x + i, y + j)`.
 
-use crate::{is_supported, ImageFilter};
+use crate::{is_supported_format, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Crop a rectangular region out of a frame.
@@ -36,11 +36,11 @@ impl Crop {
 }
 
 impl ImageFilter for Crop {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Crop does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
 
@@ -57,28 +57,24 @@ impl ImageFilter for Crop {
             .y
             .checked_add(self.height)
             .ok_or_else(|| Error::invalid("oxideav-image-filter: Crop y + height overflows u32"))?;
-        if x_end > input.width || y_end > input.height {
+        if x_end > params.width || y_end > params.height {
             return Err(Error::invalid(format!(
                 "oxideav-image-filter: Crop ({},{})+{}x{} exceeds frame {}x{}",
-                self.x, self.y, self.width, self.height, input.width, input.height
+                self.x, self.y, self.width, self.height, params.width, params.height
             )));
         }
 
-        let chroma = crate::blur::chroma_subsampling(input.format);
+        let chroma = crate::blur::chroma_subsampling(params.format);
         let rect = (self.x, self.y, self.width, self.height);
         let mut new_planes: Vec<VideoPlane> = Vec::with_capacity(input.planes.len());
         for (idx, plane) in input.planes.iter().enumerate() {
-            let (plane_x, plane_y, plane_w, plane_h) = plane_rect(input.format, idx, chroma, rect);
-            let bpp = crate::blur::bytes_per_plane_pixel(input.format, idx);
+            let (plane_x, plane_y, plane_w, plane_h) = plane_rect(params.format, idx, chroma, rect);
+            let bpp = crate::blur::bytes_per_plane_pixel(params.format, idx);
             new_planes.push(crop_plane(plane, plane_x, plane_y, plane_w, plane_h, bpp));
         }
 
         Ok(VideoFrame {
-            format: input.format,
-            width: self.width,
-            height: self.height,
             pts: input.pts,
-            time_base: input.time_base,
             planes: new_planes,
         })
     }
@@ -141,11 +137,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -156,9 +148,7 @@ mod tests {
     #[test]
     fn crop_extracts_dimensions_and_samples() {
         let input = gray(8, 6, |x, y| (x + y * 10) as u8);
-        let out = Crop::new(2, 1, 4, 3).apply(&input).unwrap();
-        assert_eq!(out.width, 4);
-        assert_eq!(out.height, 3);
+        let out = Crop::new(2, 1, 4, 3).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 6 }).unwrap();
         assert_eq!(out.planes[0].stride, 4);
         // Top-left of crop should be input(2, 1) = 2 + 10 = 12.
         assert_eq!(out.planes[0].data[0], 12);
@@ -170,22 +160,20 @@ mod tests {
     fn crop_rejects_overflow() {
         let input = gray(8, 6, |_, _| 0);
         // Width exceeds frame.
-        let err = Crop::new(5, 0, 4, 4).apply(&input).unwrap_err();
+        let err = Crop::new(5, 0, 4, 4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 6 }).unwrap_err();
         assert!(format!("{err}").contains("exceeds"));
         // Height exceeds frame.
-        let err = Crop::new(0, 3, 4, 4).apply(&input).unwrap_err();
+        let err = Crop::new(0, 3, 4, 4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 6 }).unwrap_err();
         assert!(format!("{err}").contains("exceeds"));
         // Zero size.
-        let err = Crop::new(0, 0, 0, 4).apply(&input).unwrap_err();
+        let err = Crop::new(0, 0, 0, 4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 6 }).unwrap_err();
         assert!(format!("{err}").contains("> 0"));
     }
 
     #[test]
     fn crop_full_frame_is_identity() {
         let input = gray(5, 4, |x, y| (x * 3 + y * 7) as u8);
-        let out = Crop::new(0, 0, 5, 4).apply(&input).unwrap();
-        assert_eq!(out.width, 5);
-        assert_eq!(out.height, 4);
+        let out = Crop::new(0, 0, 5, 4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 5, height: 4 }).unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
@@ -196,11 +184,7 @@ mod tests {
         let u: Vec<u8> = (0..4 * 4).map(|i| 100 + i as u8).collect();
         let v: Vec<u8> = (0..4 * 4).map(|i| 200 + i as u8).collect();
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 8,
-            height: 8,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane { stride: 8, data: y },
                 VideoPlane { stride: 4, data: u },
@@ -209,9 +193,12 @@ mod tests {
         };
 
         // Even-aligned 4×4 crop starting at (2, 2).
-        let out = Crop::new(2, 2, 4, 4).apply(&input).unwrap();
-        assert_eq!(out.width, 4);
-        assert_eq!(out.height, 4);
+        let out = Crop::new(2, 2, 4, 4)
+            .apply(
+                &input,
+                VideoStreamParams { format: PixelFormat::Yuv420P, width: 8, height: 8 },
+            )
+            .unwrap();
         // Luma is exactly 4×4.
         assert_eq!(out.planes[0].stride, 4);
         assert_eq!(out.planes[0].data.len(), 16);

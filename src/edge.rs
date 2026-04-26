@@ -1,7 +1,7 @@
 //! Sobel edge-magnitude filter. Returns a `Gray8` frame containing
 //! `|Gx| + |Gy|` per pixel (clamped to 0..=255).
 
-use crate::{is_supported, ImageFilter};
+use crate::{is_supported_format, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Sobel edge detector.
@@ -34,26 +34,22 @@ impl Edge {
 }
 
 impl ImageFilter for Edge {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Edge does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
 
-        let w = input.width as usize;
-        let h = input.height as usize;
-        let luma = build_luma_plane(input)?;
+        let w = params.width as usize;
+        let h = params.height as usize;
+        let luma = build_luma_plane(input, params)?;
 
         let out = sobel3(&luma, w, h);
 
         Ok(VideoFrame {
-            format: PixelFormat::Gray8,
-            width: input.width,
-            height: input.height,
             pts: input.pts,
-            time_base: input.time_base,
             planes: vec![VideoPlane {
                 stride: w,
                 data: out,
@@ -63,12 +59,16 @@ impl ImageFilter for Edge {
 }
 
 /// Build a tight-stride Gray8 buffer from any supported input.
-fn build_luma_plane(f: &VideoFrame) -> Result<Vec<u8>, Error> {
-    let w = f.width as usize;
-    let h = f.height as usize;
+///
+/// `params` carries width / height / pixel format, which used to live
+/// on the frame before the slim moved them to the stream's
+/// `CodecParameters`.
+fn build_luma_plane(f: &VideoFrame, params: VideoStreamParams) -> Result<Vec<u8>, Error> {
+    let w = params.width as usize;
+    let h = params.height as usize;
     let mut out = vec![0u8; w * h];
 
-    match f.format {
+    match params.format {
         PixelFormat::Gray8 => {
             let src = &f.planes[0];
             for y in 0..h {
@@ -110,7 +110,7 @@ fn build_luma_plane(f: &VideoFrame) -> Result<Vec<u8>, Error> {
         _ => {
             return Err(Error::unsupported(format!(
                 "Edge: cannot derive luma from {:?}",
-                f.format
+                params.format
             )));
         }
     }
@@ -160,11 +160,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -175,7 +171,7 @@ mod tests {
     #[test]
     fn flat_input_has_zero_edges() {
         let input = gray(16, 16, |_, _| 120);
-        let out = Edge::new().apply(&input).unwrap();
+        let out = Edge::new().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 0);
         }
@@ -185,7 +181,7 @@ mod tests {
     fn vertical_step_produces_edge() {
         // Bright right half, dark left half → strong vertical edge at x=8.
         let input = gray(16, 16, |x, _| if x < 8 { 20 } else { 220 });
-        let out = Edge::new().apply(&input).unwrap();
+        let out = Edge::new().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
         // Interior pixel on the edge column must have large response.
         let idx = 8 * 16 + 8;
         assert!(
@@ -207,20 +203,13 @@ mod tests {
             })
             .collect();
         let input = VideoFrame {
-            format: PixelFormat::Rgb24,
-            width: 8,
-            height: 8,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: 8 * 3,
                 data,
             }],
         };
-        let out = Edge::new().apply(&input).unwrap();
-        assert_eq!(out.format, PixelFormat::Gray8);
-        assert_eq!(out.width, 8);
-        assert_eq!(out.height, 8);
+        let out = Edge::new().apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 4, height: 4 }).unwrap();
         assert_eq!(out.planes.len(), 1);
     }
 }

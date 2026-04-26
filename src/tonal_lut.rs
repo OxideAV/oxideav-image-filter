@@ -12,15 +12,25 @@ use oxideav_core::{PixelFormat, VideoFrame};
 
 /// Apply `lut` to the tone channels of `frame` in place.
 ///
+/// `format` / `width` / `height` come from the stream's
+/// [`CodecParameters`](oxideav_core::CodecParameters) — they're not
+/// on the frame any more.
+///
 /// * `Gray8`: every sample is looked up.
 /// * `Rgb24`: every R/G/B sample is looked up.
 /// * `Rgba`: R/G/B looked up, alpha preserved.
 /// * `Yuv420P` / `Yuv422P` / `Yuv444P`: Y plane looked up, chroma
 ///   planes untouched.
-pub(crate) fn apply_tone_lut(frame: &mut VideoFrame, lut: &[u8; 256]) {
-    let w = frame.width as usize;
-    let h = frame.height as usize;
-    match frame.format {
+pub(crate) fn apply_tone_lut(
+    frame: &mut VideoFrame,
+    lut: &[u8; 256],
+    format: PixelFormat,
+    width: u32,
+    height: u32,
+) {
+    let w = width as usize;
+    let h = height as usize;
+    match format {
         PixelFormat::Gray8 => {
             let p = &mut frame.planes[0];
             let stride = p.stride;

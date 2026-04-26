@@ -11,7 +11,7 @@
 //! bias value everywhere.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{is_supported, ImageFilter, Planes};
+use crate::{is_supported_format, ImageFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Relief / "emboss" 3×3 convolution.
@@ -41,27 +41,27 @@ const KERNEL: [[i32; 3]; 3] = [[-2, -1, 0], [-1, 1, 1], [0, 1, 2]];
 const BIAS: i32 = 128;
 
 impl ImageFilter for Emboss {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Emboss does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
 
-        let planes_selector = match input.format {
+        let planes_selector = match params.format {
             PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => Planes::Luma,
             _ => Planes::All,
         };
 
-        let (cx, cy) = chroma_subsampling(input.format);
+        let (cx, cy) = chroma_subsampling(params.format);
         let mut out = input.clone();
         for (idx, plane) in out.planes.iter_mut().enumerate() {
             if !planes_selector.matches(idx, input.planes.len()) {
                 continue;
             }
-            let (pw, ph) = plane_dims(input.width, input.height, input.format, idx, cx, cy);
-            let bpp = bytes_per_plane_pixel(input.format, idx);
+            let (pw, ph) = plane_dims(params.width, params.height, params.format, idx, cx, cy);
+            let bpp = bytes_per_plane_pixel(params.format, idx);
             *plane = emboss_plane(&input.planes[idx], pw as usize, ph as usize, bpp);
         }
 
@@ -111,11 +111,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -128,7 +124,7 @@ mod tests {
         // Kernel sum = -2-1+0-1+1+1+0+1+2 = 1. For uniform c, acc = c.
         // Output = clamp(c + 128, 0, 255). For c=80, result = 208.
         let input = gray(8, 8, |_, _| 80);
-        let out = Emboss::new(1).apply(&input).unwrap();
+        let out = Emboss::new(1).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 208);
         }
@@ -137,7 +133,7 @@ mod tests {
     #[test]
     fn zero_input_gives_bias_value() {
         let input = gray(8, 8, |_, _| 0);
-        let out = Emboss::new(1).apply(&input).unwrap();
+        let out = Emboss::new(1).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
         for b in &out.planes[0].data {
             // Kernel sum = 1, so 0 * 1 + 128 = 128.
             assert_eq!(*b, 128);
@@ -149,7 +145,7 @@ mod tests {
         // Vertical step dark/bright at x=4 → the +/- kernel highlights
         // one side and shadows the other.
         let input = gray(8, 8, |x, _| if x < 4 { 0 } else { 200 });
-        let out = Emboss::new(1).apply(&input).unwrap();
+        let out = Emboss::new(1).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
         // Interior pixel on bright side away from the edge: kernel sum
         // = 1, so value = 200 + 128 = 328 → clamped to 255.
         assert_eq!(out.planes[0].data[4 * 8 + 7], 255);
@@ -163,11 +159,7 @@ mod tests {
         let u = vec![77u8; 8 * 8];
         let v = vec![188u8; 8 * 8];
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 16,
-            height: 16,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane {
                     stride: 16,
@@ -177,7 +169,7 @@ mod tests {
                 VideoPlane { stride: 8, data: v },
             ],
         };
-        let out = Emboss::new(1).apply(&input).unwrap();
+        let out = Emboss::new(1).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap();
         // Luma should be bias value (50*1 + 128 = 178).
         for b in &out.planes[0].data {
             assert_eq!(*b, 178);

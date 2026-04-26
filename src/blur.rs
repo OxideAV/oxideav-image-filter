@@ -1,7 +1,7 @@
 //! Gaussian blur — separable 1D kernel applied row-wise then column-wise
 //! on each selected plane.
 
-use crate::{is_supported, ImageFilter, Planes};
+use crate::{is_supported_format, ImageFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Separable Gaussian blur.
@@ -45,24 +45,24 @@ impl Blur {
 }
 
 impl ImageFilter for Blur {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Blur does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
 
         let kernel = gaussian_kernel(self.radius, self.sigma);
-        let (cx, cy) = chroma_subsampling(input.format);
+        let (cx, cy) = chroma_subsampling(params.format);
         let mut out = input.clone();
 
         for (idx, plane) in out.planes.iter_mut().enumerate() {
             if !self.planes.matches(idx, input.planes.len()) {
                 continue;
             }
-            let (pw, ph) = plane_dims(input.width, input.height, input.format, idx, cx, cy);
-            let bpp = bytes_per_plane_pixel(input.format, idx);
+            let (pw, ph) = plane_dims(params.width, params.height, params.format, idx, cx, cy);
+            let bpp = bytes_per_plane_pixel(params.format, idx);
             *plane = blur_plane(plane, pw, ph, bpp, &kernel);
         }
 
@@ -183,11 +183,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -210,9 +206,7 @@ mod tests {
     #[test]
     fn blur_preserves_flat_frame() {
         let input = gray_frame(16, 16, |_, _| 200);
-        let out = Blur::new(3).with_sigma(1.5).apply(&input).unwrap();
-        assert_eq!(out.width, 16);
-        assert_eq!(out.height, 16);
+        let out = Blur::new(3).with_sigma(1.5).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 200, "flat input should stay flat after blur");
         }
@@ -222,7 +216,7 @@ mod tests {
     fn blur_smooths_impulse() {
         // Isolated bright pixel in the middle of a dark field.
         let input = gray_frame(21, 21, |x, y| if x == 10 && y == 10 { 255 } else { 0 });
-        let out = Blur::new(3).with_sigma(1.5).apply(&input).unwrap();
+        let out = Blur::new(3).with_sigma(1.5).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 21, height: 21 }).unwrap();
         // The centre pixel must have dropped (some mass smeared outward).
         let centre = out.planes[0].data[10 * 21 + 10];
         assert!(centre < 200 && centre > 10, "centre = {centre}");
@@ -238,11 +232,7 @@ mod tests {
         let u = vec![77u8; 8 * 8];
         let v = vec![128u8; 8 * 8];
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 16,
-            height: 16,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane {
                     stride: 16,
@@ -256,7 +246,14 @@ mod tests {
         let out = Blur::new(2)
             .with_sigma(1.0)
             .with_planes(Planes::Luma)
-            .apply(&input)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 16,
+                    height: 16,
+                },
+            )
             .unwrap();
 
         // Chroma planes must be byte-identical.

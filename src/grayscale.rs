@@ -4,7 +4,7 @@
 //! Output can either stay in the input's RGB layout (each channel set
 //! to `y`) or collapse to `Gray8` when `output_gray8` is set.
 
-use crate::ImageFilter;
+use crate::{ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// RGB → grayscale desaturation.
@@ -52,14 +52,14 @@ fn luma(r: u8, g: u8, b: u8) -> u8 {
 }
 
 impl ImageFilter for Grayscale {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        let (bpp, has_alpha) = match input.format {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),
             PixelFormat::Gray8 => {
                 // Already grey — just return a tight-stride copy.
-                let w = input.width as usize;
-                let h = input.height as usize;
+                let w = params.width as usize;
+                let h = params.height as usize;
                 let src = &input.planes[0];
                 let mut out = vec![0u8; w * h];
                 for y in 0..h {
@@ -67,11 +67,7 @@ impl ImageFilter for Grayscale {
                         .copy_from_slice(&src.data[y * src.stride..y * src.stride + w]);
                 }
                 return Ok(VideoFrame {
-                    format: PixelFormat::Gray8,
-                    width: input.width,
-                    height: input.height,
                     pts: input.pts,
-                    time_base: input.time_base,
                     planes: vec![VideoPlane {
                         stride: w,
                         data: out,
@@ -85,8 +81,8 @@ impl ImageFilter for Grayscale {
             }
         };
 
-        let w = input.width as usize;
-        let h = input.height as usize;
+        let w = params.width as usize;
+        let h = params.height as usize;
         let src = &input.planes[0];
 
         if self.output_gray8 {
@@ -98,11 +94,7 @@ impl ImageFilter for Grayscale {
                 }
             }
             return Ok(VideoFrame {
-                format: PixelFormat::Gray8,
-                width: input.width,
-                height: input.height,
                 pts: input.pts,
-                time_base: input.time_base,
                 planes: vec![VideoPlane {
                     stride: w,
                     data: out,
@@ -132,11 +124,7 @@ impl ImageFilter for Grayscale {
         }
 
         Ok(VideoFrame {
-            format: input.format,
-            width: input.width,
-            height: input.height,
             pts: input.pts,
-            time_base: input.time_base,
             planes: vec![VideoPlane {
                 stride: row_bytes,
                 data: out,
@@ -159,11 +147,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Rgb24,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: (w * 3) as usize,
                 data,
@@ -175,7 +159,7 @@ mod tests {
     fn pure_red_gives_rec601_luma() {
         // 0.299 * 255 = 76.245 -> 76
         let input = rgb(2, 2, |_, _| (255, 0, 0));
-        let out = Grayscale::default().apply(&input).unwrap();
+        let out = Grayscale::default().apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
         for chunk in out.planes[0].data.chunks(3) {
             assert_eq!(chunk[0], 76);
             assert_eq!(chunk[1], 76);
@@ -188,9 +172,8 @@ mod tests {
         let input = rgb(2, 2, |_, _| (255, 255, 255));
         let out = Grayscale::new()
             .with_output_gray8(true)
-            .apply(&input)
+            .apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 })
             .unwrap();
-        assert_eq!(out.format, PixelFormat::Gray8);
         assert_eq!(out.planes.len(), 1);
         for b in &out.planes[0].data {
             assert_eq!(*b, 255);
@@ -201,14 +184,15 @@ mod tests {
     fn alpha_preserved_by_default() {
         let data = vec![255, 0, 0, 200, 0, 255, 0, 100];
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: 2,
-            height: 1,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane { stride: 8, data }],
         };
-        let out = Grayscale::default().apply(&input).unwrap();
+        let out = Grayscale::default()
+            .apply(
+                &input,
+                VideoStreamParams { format: PixelFormat::Rgba, width: 2, height: 1 },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data[3], 200);
         assert_eq!(out.planes[0].data[7], 100);
     }
@@ -217,16 +201,15 @@ mod tests {
     fn alpha_overwritten_when_preserve_off() {
         let data = vec![255, 0, 0, 50, 0, 255, 0, 1];
         let input = VideoFrame {
-            format: PixelFormat::Rgba,
-            width: 2,
-            height: 1,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane { stride: 8, data }],
         };
         let out = Grayscale::new()
             .with_preserve_alpha(false)
-            .apply(&input)
+            .apply(
+                &input,
+                VideoStreamParams { format: PixelFormat::Rgba, width: 2, height: 1 },
+            )
             .unwrap();
         assert_eq!(out.planes[0].data[3], 255);
         assert_eq!(out.planes[0].data[7], 255);
@@ -236,29 +219,20 @@ mod tests {
     fn gray8_input_is_passed_through() {
         let data: Vec<u8> = (0..16).collect();
         let input = VideoFrame {
-            format: PixelFormat::Gray8,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: 4,
                 data: data.clone(),
             }],
         };
-        let out = Grayscale::default().apply(&input).unwrap();
-        assert_eq!(out.format, PixelFormat::Gray8);
+        let out = Grayscale::default().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
         assert_eq!(out.planes[0].data, data);
     }
 
     #[test]
     fn rejects_yuv() {
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 4,
-            height: 4,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane {
                     stride: 4,
@@ -274,7 +248,7 @@ mod tests {
                 },
             ],
         };
-        let err = Grayscale::default().apply(&input).unwrap_err();
+        let err = Grayscale::default().apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap_err();
         assert!(format!("{err}").contains("Grayscale"));
     }
 }

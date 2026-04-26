@@ -1,6 +1,6 @@
 //! Rescale a frame to arbitrary dimensions.
 
-use crate::{is_supported, ImageFilter};
+use crate::{is_supported_format, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// How samples are reconstructed during rescale.
@@ -39,24 +39,24 @@ impl Resize {
 }
 
 impl ImageFilter for Resize {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Resize does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
 
-        let (cx, cy) = crate::blur::chroma_subsampling(input.format);
+        let (cx, cy) = crate::blur::chroma_subsampling(params.format);
         let new_w = self.target_width;
         let new_h = self.target_height;
 
         let mut new_planes: Vec<VideoPlane> = Vec::with_capacity(input.planes.len());
         for (idx, plane) in input.planes.iter().enumerate() {
             let (src_w, src_h) =
-                crate::blur::plane_dims(input.width, input.height, input.format, idx, cx, cy);
-            let (dst_w, dst_h) = crate::blur::plane_dims(new_w, new_h, input.format, idx, cx, cy);
-            let bpp = crate::blur::bytes_per_plane_pixel(input.format, idx);
+                crate::blur::plane_dims(params.width, params.height, params.format, idx, cx, cy);
+            let (dst_w, dst_h) = crate::blur::plane_dims(new_w, new_h, params.format, idx, cx, cy);
+            let bpp = crate::blur::bytes_per_plane_pixel(params.format, idx);
             new_planes.push(resize_plane(
                 plane,
                 src_w,
@@ -69,11 +69,7 @@ impl ImageFilter for Resize {
         }
 
         Ok(VideoFrame {
-            format: input.format,
-            width: new_w,
-            height: new_h,
             pts: input.pts,
-            time_base: input.time_base,
             planes: new_planes,
         })
     }
@@ -156,11 +152,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -173,10 +165,8 @@ mod tests {
         let input = gray(2, 2, |x, y| (y * 2 + x + 1) as u8 * 50); // 50, 100, 150, 200
         let out = Resize::new(4, 4)
             .with_interpolation(Interpolation::Nearest)
-            .apply(&input)
+            .apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 2, height: 2 })
             .unwrap();
-        assert_eq!(out.width, 4);
-        assert_eq!(out.height, 4);
         // Every 2×2 block should carry one source value.
         let v_tl = out.planes[0].data[0];
         let v_tr = out.planes[0].data[3];
@@ -192,7 +182,7 @@ mod tests {
     fn downscale_bilinear_averages() {
         // 4×4 flat at 100 → 2×2 must also be flat at 100.
         let input = gray(4, 4, |_, _| 100);
-        let out = Resize::new(2, 2).apply(&input).unwrap();
+        let out = Resize::new(2, 2).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 100);
         }
@@ -206,11 +196,7 @@ mod tests {
         let u = vec![77u8; 8 * 8];
         let v = vec![128u8; 8 * 8];
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane {
                     stride: 16,
@@ -220,9 +206,7 @@ mod tests {
                 VideoPlane { stride: 8, data: v },
             ],
         };
-        let out = Resize::new(8, 8).apply(&input).unwrap();
-        assert_eq!(out.width, 8);
-        assert_eq!(out.height, 8);
+        let out = Resize::new(8, 8).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 16, height: 16 }).unwrap();
         assert_eq!(out.planes.len(), 3);
         // Y plane is 8×8 after resize, stride tight at 8.
         assert_eq!(out.planes[0].stride, 8);

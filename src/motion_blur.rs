@@ -6,7 +6,7 @@
 //! for `-motion-blur RxS+A`.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, gaussian_kernel, plane_dims};
-use crate::{is_supported, ImageFilter, Planes};
+use crate::{is_supported_format, ImageFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Directional motion blur.
@@ -39,15 +39,15 @@ impl MotionBlur {
 }
 
 impl ImageFilter for MotionBlur {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: MotionBlur does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
 
-        let planes_selector = match input.format {
+        let planes_selector = match params.format {
             PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => Planes::Luma,
             _ => Planes::All,
         };
@@ -57,14 +57,14 @@ impl ImageFilter for MotionBlur {
         let dx = angle_rad.cos();
         let dy = angle_rad.sin();
 
-        let (cx, cy) = chroma_subsampling(input.format);
+        let (cx, cy) = chroma_subsampling(params.format);
         let mut out = input.clone();
         for (idx, plane) in out.planes.iter_mut().enumerate() {
             if !planes_selector.matches(idx, input.planes.len()) {
                 continue;
             }
-            let (pw, ph) = plane_dims(input.width, input.height, input.format, idx, cx, cy);
-            let bpp = bytes_per_plane_pixel(input.format, idx);
+            let (pw, ph) = plane_dims(params.width, params.height, params.format, idx, cx, cy);
+            let bpp = bytes_per_plane_pixel(params.format, idx);
             *plane = motion_blur_plane(
                 &input.planes[idx],
                 pw as usize,
@@ -134,11 +134,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -149,7 +145,7 @@ mod tests {
     #[test]
     fn flat_frame_stays_flat() {
         let input = gray(16, 16, |_, _| 123);
-        let out = MotionBlur::new(3, 1.5, 30.0).apply(&input).unwrap();
+        let out = MotionBlur::new(3, 1.5, 30.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 123);
         }
@@ -160,7 +156,7 @@ mod tests {
         // Single bright column at x=8 → horizontal motion blur keeps it
         // in the same row.
         let input = gray(16, 16, |x, _| if x == 8 { 255 } else { 0 });
-        let out = MotionBlur::new(3, 1.0, 0.0).apply(&input).unwrap();
+        let out = MotionBlur::new(3, 1.0, 0.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
         // Pixel to the right of the bright column should be lit.
         assert!(out.planes[0].data[8 * 16 + 9] > 0);
         // Pixel on a different row but same column should also carry
@@ -174,7 +170,7 @@ mod tests {
     fn angle_90_blurs_vertically() {
         // Bright row at y=8; 90° angle → samples along y axis.
         let input = gray(16, 16, |_, y| if y == 8 { 255 } else { 0 });
-        let out = MotionBlur::new(3, 1.0, 90.0).apply(&input).unwrap();
+        let out = MotionBlur::new(3, 1.0, 90.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
         // Pixel above the bright row should be lit.
         assert!(out.planes[0].data[7 * 16 + 8] > 0);
     }
@@ -185,11 +181,7 @@ mod tests {
         let u = vec![77u8; 8 * 8];
         let v = vec![188u8; 8 * 8];
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 16,
-            height: 16,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane {
                     stride: 16,
@@ -199,7 +191,7 @@ mod tests {
                 VideoPlane { stride: 8, data: v },
             ],
         };
-        let out = MotionBlur::new(3, 1.5, 45.0).apply(&input).unwrap();
+        let out = MotionBlur::new(3, 1.5, 45.0).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap();
         assert_eq!(out.planes[1].data, vec![77u8; 8 * 8]);
         assert_eq!(out.planes[2].data, vec![188u8; 8 * 8]);
     }

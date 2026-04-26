@@ -9,7 +9,7 @@
 //! RGB/RGBA inputs.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{is_supported, Blur, ImageFilter, Planes};
+use crate::{is_supported_format, Blur, ImageFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Sharpen an image via unsharp-mask. See the module docs for the
@@ -49,17 +49,17 @@ impl Sharpen {
 }
 
 impl ImageFilter for Sharpen {
-    fn apply(&self, input: &VideoFrame) -> Result<VideoFrame, Error> {
-        if !is_supported(input) {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Sharpen does not yet handle {:?}",
-                input.format
+                params.format
             )));
         }
 
         // For YUV, only sharpen luma (plane 0); for RGB/RGBA/Gray, blur
         // all channels.
-        let planes_selector = match input.format {
+        let planes_selector = match params.format {
             PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => Planes::Luma,
             _ => Planes::All,
         };
@@ -67,7 +67,7 @@ impl ImageFilter for Sharpen {
         let blurred = Blur::new(self.radius)
             .with_sigma(self.sigma)
             .with_planes(planes_selector)
-            .apply(input)?;
+            .apply(input, params)?;
 
         // Short-circuit if amount is effectively zero — avoid re-walking
         // the frame.
@@ -75,14 +75,14 @@ impl ImageFilter for Sharpen {
             return Ok(input.clone());
         }
 
-        let (cx, cy) = chroma_subsampling(input.format);
+        let (cx, cy) = chroma_subsampling(params.format);
         let mut out = input.clone();
         for (idx, plane) in out.planes.iter_mut().enumerate() {
             if !planes_selector.matches(idx, input.planes.len()) {
                 continue;
             }
-            let (pw, ph) = plane_dims(input.width, input.height, input.format, idx, cx, cy);
-            let bpp = bytes_per_plane_pixel(input.format, idx);
+            let (pw, ph) = plane_dims(params.width, params.height, params.format, idx, cx, cy);
+            let bpp = bytes_per_plane_pixel(params.format, idx);
             *plane = unsharp_mask_plane(
                 &input.planes[idx],
                 &blurred.planes[idx],
@@ -149,11 +149,7 @@ mod tests {
             }
         }
         VideoFrame {
-            format: PixelFormat::Gray8,
-            width: w,
-            height: h,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![VideoPlane {
                 stride: w as usize,
                 data,
@@ -164,14 +160,14 @@ mod tests {
     #[test]
     fn amount_zero_is_identity() {
         let input = gray(8, 8, |x, y| ((x * 30 + y * 7) % 251) as u8);
-        let out = Sharpen::new(2, 1.0).with_amount(0.0).apply(&input).unwrap();
+        let out = Sharpen::new(2, 1.0).with_amount(0.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
     #[test]
     fn sharpen_preserves_flat_frame() {
         let input = gray(16, 16, |_, _| 120);
-        let out = Sharpen::new(2, 1.0).apply(&input).unwrap();
+        let out = Sharpen::new(2, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 120);
         }
@@ -181,7 +177,7 @@ mod tests {
     fn sharpen_enhances_edge() {
         // Step from 60 to 200 at x=4 (horizontal).
         let input = gray(8, 1, |x, _| if x < 4 { 60 } else { 200 });
-        let out = Sharpen::new(2, 1.0).with_amount(1.5).apply(&input).unwrap();
+        let out = Sharpen::new(2, 1.0).with_amount(1.5).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 1 }).unwrap();
         // Pixel just inside bright side should be >= original 200.
         let right = out.planes[0].data[4];
         assert!(right >= 200, "right = {right}");
@@ -196,11 +192,7 @@ mod tests {
         let u = vec![77u8; 8 * 8];
         let v = vec![188u8; 8 * 8];
         let input = VideoFrame {
-            format: PixelFormat::Yuv420P,
-            width: 16,
-            height: 16,
             pts: None,
-            time_base: TimeBase::new(1, 1),
             planes: vec![
                 VideoPlane {
                     stride: 16,
@@ -210,7 +202,7 @@ mod tests {
                 VideoPlane { stride: 8, data: v },
             ],
         };
-        let out = Sharpen::new(2, 1.0).apply(&input).unwrap();
+        let out = Sharpen::new(2, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap();
         assert_eq!(out.planes[1].data, vec![77u8; 8 * 8]);
         assert_eq!(out.planes[2].data, vec![188u8; 8 * 8]);
     }
