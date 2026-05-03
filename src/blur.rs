@@ -175,7 +175,6 @@ mod tests {
     use super::*;
 
     fn gray_frame(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
-        use oxideav_core::TimeBase;
         let mut data = Vec::with_capacity((w * h) as usize);
         for y in 0..h {
             for x in 0..w {
@@ -247,7 +246,6 @@ mod tests {
 
     #[test]
     fn plane_selector_luma_leaves_chroma_untouched() {
-        use oxideav_core::TimeBase;
         let y: Vec<u8> = (0..16 * 16).map(|i| (i % 256) as u8).collect();
         let u = vec![77u8; 8 * 8];
         let v = vec![128u8; 8 * 8];

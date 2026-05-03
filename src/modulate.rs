@@ -160,8 +160,6 @@ fn hue_to_rgb(p: f32, q: f32, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxideav_core::TimeBase;
-
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);
         for y in 0..h {
@@ -295,7 +293,7 @@ mod tests {
     #[test]
     fn alpha_is_preserved() {
         let w = 2;
-        let h = 2;
+        let _h = 2;
         let data: Vec<u8> = vec![
             200, 100, 50, 77, 50, 80, 120, 200, 10, 20, 30, 40, 0, 0, 0, 99,
         ];

@@ -66,7 +66,7 @@ fn flop_plane(src: &VideoPlane, w: usize, h: usize, bpp: usize) -> VideoPlane {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxideav_core::{PixelFormat, TimeBase};
+    use oxideav_core::PixelFormat;
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

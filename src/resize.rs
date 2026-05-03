@@ -142,7 +142,7 @@ fn resize_plane(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxideav_core::{PixelFormat, TimeBase};
+    use oxideav_core::PixelFormat;
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
@@ -206,8 +206,8 @@ mod tests {
 
     #[test]
     fn yuv420_resize_preserves_plane_layout() {
-        let w = 16u32;
-        let h = 16u32;
+        let _w = 16u32;
+        let _h = 16u32;
         let y: Vec<u8> = (0..16 * 16).map(|i| (i % 256) as u8).collect();
         let u = vec![77u8; 8 * 8];
         let v = vec![128u8; 8 * 8];

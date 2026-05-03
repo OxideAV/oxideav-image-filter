@@ -96,8 +96,6 @@ impl ImageFilter for Sepia {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxideav_core::TimeBase;
-
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);
         for y in 0..h {

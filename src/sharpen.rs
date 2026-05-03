@@ -139,8 +139,6 @@ pub(crate) fn unsharp_mask_plane(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxideav_core::TimeBase;
-
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
         for y in 0..h {

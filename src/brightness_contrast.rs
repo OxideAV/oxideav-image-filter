@@ -70,7 +70,7 @@ fn build_lut(brightness: f32, contrast: f32) -> [u8; 256] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxideav_core::{PixelFormat, TimeBase, VideoPlane};
+    use oxideav_core::{PixelFormat, VideoPlane};
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

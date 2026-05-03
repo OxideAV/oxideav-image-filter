@@ -102,7 +102,7 @@ impl ImageFilter for Negate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxideav_core::{TimeBase, VideoPlane};
+    use oxideav_core::VideoPlane;
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
