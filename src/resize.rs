@@ -165,7 +165,14 @@ mod tests {
         let input = gray(2, 2, |x, y| (y * 2 + x + 1) as u8 * 50); // 50, 100, 150, 200
         let out = Resize::new(4, 4)
             .with_interpolation(Interpolation::Nearest)
-            .apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 2, height: 2 })
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 2,
+                    height: 2,
+                },
+            )
             .unwrap();
         // Every 2×2 block should carry one source value.
         let v_tl = out.planes[0].data[0];
@@ -182,7 +189,16 @@ mod tests {
     fn downscale_bilinear_averages() {
         // 4×4 flat at 100 → 2×2 must also be flat at 100.
         let input = gray(4, 4, |_, _| 100);
-        let out = Resize::new(2, 2).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let out = Resize::new(2, 2)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 100);
         }
@@ -206,7 +222,16 @@ mod tests {
                 VideoPlane { stride: 8, data: v },
             ],
         };
-        let out = Resize::new(8, 8).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 16, height: 16 }).unwrap();
+        let out = Resize::new(8, 8)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 16,
+                    height: 16,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes.len(), 3);
         // Y plane is 8×8 after resize, stride tight at 8.
         assert_eq!(out.planes[0].stride, 8);

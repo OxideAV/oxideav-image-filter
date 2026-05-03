@@ -84,7 +84,8 @@ impl ImageFilter for Rotate {
         for (idx, plane) in input.planes.iter().enumerate() {
             let (src_pw, src_ph) =
                 crate::blur::plane_dims(params.width, params.height, params.format, idx, cx, cy);
-            let (dst_pw, dst_ph) = crate::blur::plane_dims(new_w, new_h, params.format, idx, cx, cy);
+            let (dst_pw, dst_ph) =
+                crate::blur::plane_dims(new_w, new_h, params.format, idx, cx, cy);
             let bpp = crate::blur::bytes_per_plane_pixel(params.format, idx);
             let fill = plane_fill(params.format, idx, &bg);
             new_planes.push(rotate_plane(
@@ -336,14 +337,27 @@ mod tests {
     #[test]
     fn rotate_0_is_identity() {
         let input = gray(8, 6, |x, y| (x + y * 8) as u8);
-        let out = Rotate::new(0.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 6 }).unwrap();
+        let out = Rotate::new(0.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 6,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
     #[test]
     fn rotate_90_twice_matches_180() {
         // Square so 90° keeps dims equal to the original.
-        let p = VideoStreamParams { format: PixelFormat::Gray8, width: 9, height: 9 };
+        let p = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 9,
+            height: 9,
+        };
         let input = gray(9, 9, |x, y| ((x * 17 + y * 23) % 251) as u8);
         let ninety = Rotate::new(90.0).apply(&input, p).unwrap();
         let one_eighty_via_two = Rotate::new(90.0).apply(&ninety, p).unwrap();
@@ -365,7 +379,16 @@ mod tests {
     #[test]
     fn rotate_360_is_near_identity() {
         let input = gray(10, 8, |x, y| ((x * 11 + y * 13) % 251) as u8);
-        let out = Rotate::new(360.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 10, height: 8 }).unwrap();
+        let out = Rotate::new(360.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 10,
+                    height: 8,
+                },
+            )
+            .unwrap();
         // 360° is a multiple of 90° and takes the fast path → exact.
         for (a, b) in out.planes[0].data.iter().zip(input.planes[0].data.iter()) {
             assert!(
@@ -381,14 +404,20 @@ mod tests {
         let out = Rotate::new(45.0)
             .apply(
                 &input,
-                VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 },
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 8,
+                },
             )
             .unwrap();
         // 45° of an 8×8 square: bbox side = 8 * (cos45 + sin45)
         //                                  ≈ 8 * 1.4142 ≈ 11.31 → 12.
         // Output dims live on the downstream port spec now, not the
         // frame; recompute them from the source width/height.
-        let out_w = (8.0_f32 * (45.0_f32.to_radians().cos().abs() + 45.0_f32.to_radians().sin().abs())).ceil() as usize;
+        let out_w = (8.0_f32
+            * (45.0_f32.to_radians().cos().abs() + 45.0_f32.to_radians().sin().abs()))
+        .ceil() as usize;
         let out_h = out_w;
         // Corners of the output must be background (black by default).
         assert_eq!(out.planes[0].data[0], 0);
@@ -408,7 +437,14 @@ mod tests {
         let input = gray(4, 4, |_, _| 200);
         let out = Rotate::new(45.0)
             .with_background([77, 0, 0, 0])
-            .apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 })
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
             .unwrap();
         // Top-left corner is outside the rotated square → should be 77.
         assert_eq!(out.planes[0].data[0], 77);
@@ -440,7 +476,16 @@ mod tests {
                 },
             ],
         };
-        let out = Rotate::new(90.0).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 8, height: 8 }).unwrap();
+        let out = Rotate::new(90.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 8,
+                    height: 8,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[1].stride, 4);
         assert_eq!(out.planes[1].data.len(), 4 * 4);
         // Flat chroma stays flat where it's sampled (centre of the rotated

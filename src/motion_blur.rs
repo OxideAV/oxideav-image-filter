@@ -145,7 +145,16 @@ mod tests {
     #[test]
     fn flat_frame_stays_flat() {
         let input = gray(16, 16, |_, _| 123);
-        let out = MotionBlur::new(3, 1.5, 30.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
+        let out = MotionBlur::new(3, 1.5, 30.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 16,
+                    height: 16,
+                },
+            )
+            .unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 123);
         }
@@ -156,7 +165,16 @@ mod tests {
         // Single bright column at x=8 → horizontal motion blur keeps it
         // in the same row.
         let input = gray(16, 16, |x, _| if x == 8 { 255 } else { 0 });
-        let out = MotionBlur::new(3, 1.0, 0.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
+        let out = MotionBlur::new(3, 1.0, 0.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 16,
+                    height: 16,
+                },
+            )
+            .unwrap();
         // Pixel to the right of the bright column should be lit.
         assert!(out.planes[0].data[8 * 16 + 9] > 0);
         // Pixel on a different row but same column should also carry
@@ -170,7 +188,16 @@ mod tests {
     fn angle_90_blurs_vertically() {
         // Bright row at y=8; 90° angle → samples along y axis.
         let input = gray(16, 16, |_, y| if y == 8 { 255 } else { 0 });
-        let out = MotionBlur::new(3, 1.0, 90.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
+        let out = MotionBlur::new(3, 1.0, 90.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 16,
+                    height: 16,
+                },
+            )
+            .unwrap();
         // Pixel above the bright row should be lit.
         assert!(out.planes[0].data[7 * 16 + 8] > 0);
     }
@@ -191,7 +218,16 @@ mod tests {
                 VideoPlane { stride: 8, data: v },
             ],
         };
-        let out = MotionBlur::new(3, 1.5, 45.0).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap();
+        let out = MotionBlur::new(3, 1.5, 45.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[1].data, vec![77u8; 8 * 8]);
         assert_eq!(out.planes[2].data, vec![188u8; 8 * 8]);
     }

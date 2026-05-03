@@ -148,7 +148,16 @@ mod tests {
     #[test]
     fn crop_extracts_dimensions_and_samples() {
         let input = gray(8, 6, |x, y| (x + y * 10) as u8);
-        let out = Crop::new(2, 1, 4, 3).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 6 }).unwrap();
+        let out = Crop::new(2, 1, 4, 3)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 6,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].stride, 4);
         // Top-left of crop should be input(2, 1) = 2 + 10 = 12.
         assert_eq!(out.planes[0].data[0], 12);
@@ -160,20 +169,56 @@ mod tests {
     fn crop_rejects_overflow() {
         let input = gray(8, 6, |_, _| 0);
         // Width exceeds frame.
-        let err = Crop::new(5, 0, 4, 4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 6 }).unwrap_err();
+        let err = Crop::new(5, 0, 4, 4)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 6,
+                },
+            )
+            .unwrap_err();
         assert!(format!("{err}").contains("exceeds"));
         // Height exceeds frame.
-        let err = Crop::new(0, 3, 4, 4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 6 }).unwrap_err();
+        let err = Crop::new(0, 3, 4, 4)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 6,
+                },
+            )
+            .unwrap_err();
         assert!(format!("{err}").contains("exceeds"));
         // Zero size.
-        let err = Crop::new(0, 0, 0, 4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 6 }).unwrap_err();
+        let err = Crop::new(0, 0, 0, 4)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 6,
+                },
+            )
+            .unwrap_err();
         assert!(format!("{err}").contains("> 0"));
     }
 
     #[test]
     fn crop_full_frame_is_identity() {
         let input = gray(5, 4, |x, y| (x * 3 + y * 7) as u8);
-        let out = Crop::new(0, 0, 5, 4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 5, height: 4 }).unwrap();
+        let out = Crop::new(0, 0, 5, 4)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 5,
+                    height: 4,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
@@ -196,7 +241,11 @@ mod tests {
         let out = Crop::new(2, 2, 4, 4)
             .apply(
                 &input,
-                VideoStreamParams { format: PixelFormat::Yuv420P, width: 8, height: 8 },
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 8,
+                    height: 8,
+                },
             )
             .unwrap();
         // Luma is exactly 4×4.

@@ -160,14 +160,33 @@ mod tests {
     #[test]
     fn amount_zero_is_identity() {
         let input = gray(8, 8, |x, y| ((x * 30 + y * 7) % 251) as u8);
-        let out = Sharpen::new(2, 1.0).with_amount(0.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
+        let out = Sharpen::new(2, 1.0)
+            .with_amount(0.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 8,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
     #[test]
     fn sharpen_preserves_flat_frame() {
         let input = gray(16, 16, |_, _| 120);
-        let out = Sharpen::new(2, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
+        let out = Sharpen::new(2, 1.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 16,
+                    height: 16,
+                },
+            )
+            .unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 120);
         }
@@ -177,7 +196,17 @@ mod tests {
     fn sharpen_enhances_edge() {
         // Step from 60 to 200 at x=4 (horizontal).
         let input = gray(8, 1, |x, _| if x < 4 { 60 } else { 200 });
-        let out = Sharpen::new(2, 1.0).with_amount(1.5).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 1 }).unwrap();
+        let out = Sharpen::new(2, 1.0)
+            .with_amount(1.5)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 1,
+                },
+            )
+            .unwrap();
         // Pixel just inside bright side should be >= original 200.
         let right = out.planes[0].data[4];
         assert!(right >= 200, "right = {right}");
@@ -202,7 +231,16 @@ mod tests {
                 VideoPlane { stride: 8, data: v },
             ],
         };
-        let out = Sharpen::new(2, 1.0).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap();
+        let out = Sharpen::new(2, 1.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[1].data, vec![77u8; 8 * 8]);
         assert_eq!(out.planes[2].data, vec![188u8; 8 * 8]);
     }

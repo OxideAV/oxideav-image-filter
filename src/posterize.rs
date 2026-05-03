@@ -93,7 +93,16 @@ mod tests {
     #[test]
     fn posterize_two_levels_is_binary() {
         let input = gray(4, 4, |x, y| (x * 32 + y * 32) as u8);
-        let out = Posterize::new(2).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let out = Posterize::new(2)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for v in &out.planes[0].data {
             assert!(*v == 0 || *v == 255, "got {v}");
         }
@@ -108,7 +117,16 @@ mod tests {
             2 => 180,
             _ => 250,
         });
-        let out = Posterize::new(4).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 1 }).unwrap();
+        let out = Posterize::new(4)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 1,
+                },
+            )
+            .unwrap();
         let vs = &out.planes[0].data;
         let allowed = [0u8, 85, 170, 255];
         for v in vs {
@@ -122,7 +140,16 @@ mod tests {
     #[test]
     fn posterize_256_levels_is_identity() {
         let input = gray(4, 4, |x, y| ((x + y * 4) * 15) as u8);
-        let out = Posterize::new(256).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let out = Posterize::new(256)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
@@ -133,7 +160,16 @@ mod tests {
             pts: None,
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = Posterize::new(3).apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
+        let out = Posterize::new(3)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for i in 0..16 {
             assert_eq!(out.planes[0].data[i * 4 + 3], 200);
         }

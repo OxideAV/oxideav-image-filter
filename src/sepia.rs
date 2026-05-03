@@ -118,7 +118,16 @@ mod tests {
     #[test]
     fn pure_red_to_warm_brown() {
         let input = rgb(2, 2, |_, _| (255, 0, 0));
-        let out = Sepia::default().apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
+        let out = Sepia::default()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 2,
+                    height: 2,
+                },
+            )
+            .unwrap();
         // 0.393*255 = 100.215 -> 100
         // 0.349*255 =  88.995 ->  89
         // 0.272*255 =  69.36  ->  69
@@ -132,14 +141,32 @@ mod tests {
     #[test]
     fn threshold_zero_is_identity() {
         let input = rgb(4, 4, |x, y| ((x * 40) as u8, (y * 40) as u8, 77));
-        let out = Sepia::new(0.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 4, height: 4 }).unwrap();
+        let out = Sepia::new(0.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
     #[test]
     fn threshold_half_interpolates() {
         let input = rgb(1, 1, |_, _| (255, 0, 0));
-        let out = Sepia::new(0.5).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 1, height: 1 }).unwrap();
+        let out = Sepia::new(0.5)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 1,
+                    height: 1,
+                },
+            )
+            .unwrap();
         // Halfway between (255, 0, 0) and (100, 89, 69) ≈ (177, 44, 34).
         assert!((out.planes[0].data[0] as i16 - 178).abs() <= 2);
         assert!((out.planes[0].data[1] as i16 - 45).abs() <= 2);
@@ -156,7 +183,11 @@ mod tests {
         let out = Sepia::default()
             .apply(
                 &input,
-                VideoStreamParams { format: PixelFormat::Rgba, width: 2, height: 1 },
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 2,
+                    height: 1,
+                },
             )
             .unwrap();
         assert_eq!(out.planes[0].data[3], 200);
@@ -182,7 +213,16 @@ mod tests {
                 },
             ],
         };
-        let err = Sepia::default().apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap_err();
+        let err = Sepia::default()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap_err();
         assert!(format!("{err}").contains("Sepia"));
     }
 }

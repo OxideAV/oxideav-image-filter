@@ -83,7 +83,16 @@ mod tests {
     #[test]
     fn flip_swaps_rows() {
         let input = gray(4, 3, |_, y| (y * 10) as u8);
-        let out = Flip::new().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 3 }).unwrap();
+        let out = Flip::new()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 3,
+                },
+            )
+            .unwrap();
         // Row 0 (was 0) -> becomes bottom; row 2 (was 20) -> top.
         assert_eq!(&out.planes[0].data[0..4], &[20u8, 20, 20, 20]);
         assert_eq!(&out.planes[0].data[4..8], &[10u8, 10, 10, 10]);
@@ -92,7 +101,11 @@ mod tests {
 
     #[test]
     fn flip_flip_is_identity() {
-        let p = VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 7 };
+        let p = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 8,
+            height: 7,
+        };
         let input = gray(8, 7, |x, y| ((x * 13 + y * 29) % 251) as u8);
         let once = Flip::new().apply(&input, p).unwrap();
         let twice = Flip::new().apply(&once, p).unwrap();
@@ -131,7 +144,16 @@ mod tests {
                 },
             ],
         };
-        let out = Flip::new().apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 8, height: 4 }).unwrap();
+        let out = Flip::new()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 8,
+                    height: 4,
+                },
+            )
+            .unwrap();
         // Top Y row (was row 3 with value 30) should now be 30.
         assert_eq!(out.planes[0].data[0], 30);
         assert_eq!(out.planes[0].data[(h as usize - 1) * w as usize], 0);

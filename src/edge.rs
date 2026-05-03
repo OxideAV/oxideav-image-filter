@@ -171,7 +171,16 @@ mod tests {
     #[test]
     fn flat_input_has_zero_edges() {
         let input = gray(16, 16, |_, _| 120);
-        let out = Edge::new().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
+        let out = Edge::new()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 16,
+                    height: 16,
+                },
+            )
+            .unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 0);
         }
@@ -181,7 +190,16 @@ mod tests {
     fn vertical_step_produces_edge() {
         // Bright right half, dark left half → strong vertical edge at x=8.
         let input = gray(16, 16, |x, _| if x < 8 { 20 } else { 220 });
-        let out = Edge::new().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
+        let out = Edge::new()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 16,
+                    height: 16,
+                },
+            )
+            .unwrap();
         // Interior pixel on the edge column must have large response.
         let idx = 8 * 16 + 8;
         assert!(
@@ -209,7 +227,16 @@ mod tests {
                 data,
             }],
         };
-        let out = Edge::new().apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 4, height: 4 }).unwrap();
+        let out = Edge::new()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes.len(), 1);
     }
 }

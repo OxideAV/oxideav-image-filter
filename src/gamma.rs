@@ -87,7 +87,16 @@ mod tests {
     #[test]
     fn gamma_one_is_identity() {
         let input = gray(4, 4, |x, y| ((x + y * 4) * 15) as u8);
-        let out = Gamma::new(1.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let out = Gamma::new(1.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
@@ -95,7 +104,16 @@ mod tests {
     fn gamma_two_brightens_midtones() {
         // Midtone 128 should map higher with gamma > 1.
         let input = gray(1, 1, |_, _| 128);
-        let out = Gamma::new(2.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 1, height: 1 }).unwrap();
+        let out = Gamma::new(2.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 1,
+                    height: 1,
+                },
+            )
+            .unwrap();
         let mapped = out.planes[0].data[0];
         // Expected ≈ 255 * sqrt(128/255) ≈ 181.
         assert!(mapped > 170 && mapped < 190, "mapped = {mapped}");
@@ -104,7 +122,16 @@ mod tests {
     #[test]
     fn gamma_half_darkens_midtones() {
         let input = gray(1, 1, |_, _| 128);
-        let out = Gamma::new(0.5).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 1, height: 1 }).unwrap();
+        let out = Gamma::new(0.5)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 1,
+                    height: 1,
+                },
+            )
+            .unwrap();
         let mapped = out.planes[0].data[0];
         // Expected ≈ 255 * (128/255)^2 ≈ 64.
         assert!(mapped > 55 && mapped < 75, "mapped = {mapped}");
@@ -113,7 +140,16 @@ mod tests {
     #[test]
     fn gamma_preserves_endpoints() {
         let input = gray(2, 1, |x, _| if x == 0 { 0 } else { 255 });
-        let out = Gamma::new(2.2).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 2, height: 1 }).unwrap();
+        let out = Gamma::new(2.2)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 2,
+                    height: 1,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data[0], 0);
         assert_eq!(out.planes[0].data[1], 255);
     }
@@ -125,7 +161,16 @@ mod tests {
             pts: None,
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = Gamma::new(2.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
+        let out = Gamma::new(2.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for i in 0..16 {
             assert_eq!(out.planes[0].data[i * 4 + 3], 77, "alpha preserved");
         }

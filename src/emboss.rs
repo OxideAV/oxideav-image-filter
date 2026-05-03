@@ -124,7 +124,16 @@ mod tests {
         // Kernel sum = -2-1+0-1+1+1+0+1+2 = 1. For uniform c, acc = c.
         // Output = clamp(c + 128, 0, 255). For c=80, result = 208.
         let input = gray(8, 8, |_, _| 80);
-        let out = Emboss::new(1).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
+        let out = Emboss::new(1)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 8,
+                },
+            )
+            .unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 208);
         }
@@ -133,7 +142,16 @@ mod tests {
     #[test]
     fn zero_input_gives_bias_value() {
         let input = gray(8, 8, |_, _| 0);
-        let out = Emboss::new(1).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
+        let out = Emboss::new(1)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 8,
+                },
+            )
+            .unwrap();
         for b in &out.planes[0].data {
             // Kernel sum = 1, so 0 * 1 + 128 = 128.
             assert_eq!(*b, 128);
@@ -145,7 +163,16 @@ mod tests {
         // Vertical step dark/bright at x=4 → the +/- kernel highlights
         // one side and shadows the other.
         let input = gray(8, 8, |x, _| if x < 4 { 0 } else { 200 });
-        let out = Emboss::new(1).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
+        let out = Emboss::new(1)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 8,
+                },
+            )
+            .unwrap();
         // Interior pixel on bright side away from the edge: kernel sum
         // = 1, so value = 200 + 128 = 328 → clamped to 255.
         assert_eq!(out.planes[0].data[4 * 8 + 7], 255);
@@ -169,7 +196,16 @@ mod tests {
                 VideoPlane { stride: 8, data: v },
             ],
         };
-        let out = Emboss::new(1).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap();
+        let out = Emboss::new(1)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         // Luma should be bias value (50*1 + 128 = 178).
         for b in &out.planes[0].data {
             assert_eq!(*b, 178);

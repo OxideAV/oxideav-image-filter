@@ -206,7 +206,17 @@ mod tests {
     #[test]
     fn blur_preserves_flat_frame() {
         let input = gray_frame(16, 16, |_, _| 200);
-        let out = Blur::new(3).with_sigma(1.5).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 16, height: 16 }).unwrap();
+        let out = Blur::new(3)
+            .with_sigma(1.5)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 16,
+                    height: 16,
+                },
+            )
+            .unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 200, "flat input should stay flat after blur");
         }
@@ -216,7 +226,17 @@ mod tests {
     fn blur_smooths_impulse() {
         // Isolated bright pixel in the middle of a dark field.
         let input = gray_frame(21, 21, |x, y| if x == 10 && y == 10 { 255 } else { 0 });
-        let out = Blur::new(3).with_sigma(1.5).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 21, height: 21 }).unwrap();
+        let out = Blur::new(3)
+            .with_sigma(1.5)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 21,
+                    height: 21,
+                },
+            )
+            .unwrap();
         // The centre pixel must have dropped (some mass smeared outward).
         let centre = out.planes[0].data[10 * 21 + 10];
         assert!(centre < 200 && centre > 10, "centre = {centre}");

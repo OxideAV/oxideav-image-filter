@@ -159,7 +159,16 @@ mod tests {
     fn pure_red_gives_rec601_luma() {
         // 0.299 * 255 = 76.245 -> 76
         let input = rgb(2, 2, |_, _| (255, 0, 0));
-        let out = Grayscale::default().apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
+        let out = Grayscale::default()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 2,
+                    height: 2,
+                },
+            )
+            .unwrap();
         for chunk in out.planes[0].data.chunks(3) {
             assert_eq!(chunk[0], 76);
             assert_eq!(chunk[1], 76);
@@ -172,7 +181,14 @@ mod tests {
         let input = rgb(2, 2, |_, _| (255, 255, 255));
         let out = Grayscale::new()
             .with_output_gray8(true)
-            .apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 })
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 2,
+                    height: 2,
+                },
+            )
             .unwrap();
         assert_eq!(out.planes.len(), 1);
         for b in &out.planes[0].data {
@@ -190,7 +206,11 @@ mod tests {
         let out = Grayscale::default()
             .apply(
                 &input,
-                VideoStreamParams { format: PixelFormat::Rgba, width: 2, height: 1 },
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 2,
+                    height: 1,
+                },
             )
             .unwrap();
         assert_eq!(out.planes[0].data[3], 200);
@@ -208,7 +228,11 @@ mod tests {
             .with_preserve_alpha(false)
             .apply(
                 &input,
-                VideoStreamParams { format: PixelFormat::Rgba, width: 2, height: 1 },
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 2,
+                    height: 1,
+                },
             )
             .unwrap();
         assert_eq!(out.planes[0].data[3], 255);
@@ -225,7 +249,16 @@ mod tests {
                 data: data.clone(),
             }],
         };
-        let out = Grayscale::default().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let out = Grayscale::default()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, data);
     }
 
@@ -248,7 +281,16 @@ mod tests {
                 },
             ],
         };
-        let err = Grayscale::default().apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap_err();
+        let err = Grayscale::default()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap_err();
         assert!(format!("{err}").contains("Grayscale"));
     }
 }

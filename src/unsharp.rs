@@ -119,14 +119,32 @@ mod tests {
     fn high_threshold_suppresses_sharpening() {
         // Gentle gradient — contrast below threshold so unsharp is a no-op.
         let input = gray(8, 8, |x, _| (100 + x * 2) as u8);
-        let out = Unsharp::new(2, 1.0, 2.0, 50).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
+        let out = Unsharp::new(2, 1.0, 2.0, 50)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 8,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
     #[test]
     fn zero_threshold_matches_classic_unsharp() {
         let input = gray(8, 1, |x, _| if x < 4 { 60 } else { 200 });
-        let out = Unsharp::new(2, 1.0, 1.5, 0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 1 }).unwrap();
+        let out = Unsharp::new(2, 1.0, 1.5, 0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 1,
+                },
+            )
+            .unwrap();
         // At the step, we should see enhancement.
         assert!(out.planes[0].data[4] >= 200);
         assert!(out.planes[0].data[3] <= 60);
@@ -137,7 +155,16 @@ mod tests {
         // Sharp step: diff at edge is large, should sharpen; nearby flat
         // pixels should stay put.
         let input = gray(8, 1, |x, _| if x < 4 { 50 } else { 200 });
-        let out = Unsharp::new(2, 1.0, 1.0, 20).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 1 }).unwrap();
+        let out = Unsharp::new(2, 1.0, 1.0, 20)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 1,
+                },
+            )
+            .unwrap();
         // Far-left pixel has no meaningful diff → unchanged.
         assert_eq!(out.planes[0].data[0], 50);
         // Far-right likewise.
@@ -147,7 +174,16 @@ mod tests {
     #[test]
     fn amount_zero_is_identity() {
         let input = gray(8, 8, |x, y| ((x * 30 + y * 7) % 251) as u8);
-        let out = Unsharp::new(2, 1.0, 0.0, 0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 8, height: 8 }).unwrap();
+        let out = Unsharp::new(2, 1.0, 0.0, 0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 8,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 }

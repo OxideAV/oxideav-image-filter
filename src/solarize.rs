@@ -87,7 +87,16 @@ mod tests {
     fn solarize_below_threshold_is_identity() {
         let input = gray(4, 1, |x, _| x as u8 * 30);
         // All samples < 128 with threshold 128 → identity.
-        let out = Solarize::new(128).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 1 }).unwrap();
+        let out = Solarize::new(128)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 1,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
@@ -98,7 +107,16 @@ mod tests {
             1 => 128,
             _ => 200,
         });
-        let out = Solarize::new(128).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 3, height: 1 }).unwrap();
+        let out = Solarize::new(128)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 3,
+                    height: 1,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data[0], 50); // below threshold → unchanged
         assert_eq!(out.planes[0].data[1], 127); // 255 - 128
         assert_eq!(out.planes[0].data[2], 55); // 255 - 200
@@ -107,7 +125,16 @@ mod tests {
     #[test]
     fn solarize_threshold_zero_is_full_negate() {
         let input = gray(4, 1, |x, _| x as u8 * 60);
-        let out = Solarize::new(0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 1 }).unwrap();
+        let out = Solarize::new(0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 1,
+                },
+            )
+            .unwrap();
         for (i, v) in out.planes[0].data.iter().enumerate() {
             assert_eq!(*v, 255 - input.planes[0].data[i]);
         }
@@ -116,7 +143,16 @@ mod tests {
     #[test]
     fn solarize_threshold_255_is_almost_identity() {
         let input = gray(4, 1, |x, _| x as u8 * 60);
-        let out = Solarize::new(255).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 1 }).unwrap();
+        let out = Solarize::new(255)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 1,
+                },
+            )
+            .unwrap();
         for i in 0..3 {
             assert_eq!(out.planes[0].data[i], input.planes[0].data[i]);
         }
@@ -129,7 +165,16 @@ mod tests {
             pts: None,
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = Solarize::new(128).apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
+        let out = Solarize::new(128)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for i in 0..16 {
             let px = &out.planes[0].data[i * 4..i * 4 + 4];
             assert_eq!(px[0], 55); // 255 - 200

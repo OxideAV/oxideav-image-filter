@@ -91,7 +91,16 @@ mod tests {
     #[test]
     fn zero_zero_is_identity() {
         let input = gray(4, 4, |x, y| ((x + y * 4) * 15) as u8);
-        let out = BrightnessContrast::new(0.0, 0.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let out = BrightnessContrast::new(0.0, 0.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data, input.planes[0].data);
     }
 
@@ -99,14 +108,32 @@ mod tests {
     fn pure_brightness_shifts_up() {
         // +50 brightness adds 64 (50 * 1.28) to every sample.
         let input = gray(1, 1, |_, _| 100);
-        let out = BrightnessContrast::new(50.0, 0.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 1, height: 1 }).unwrap();
+        let out = BrightnessContrast::new(50.0, 0.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 1,
+                    height: 1,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data[0], 164);
     }
 
     #[test]
     fn pure_brightness_clamps_at_255() {
         let input = gray(1, 1, |_, _| 240);
-        let out = BrightnessContrast::new(100.0, 0.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 1, height: 1 }).unwrap();
+        let out = BrightnessContrast::new(100.0, 0.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 1,
+                    height: 1,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data[0], 255);
     }
 
@@ -115,7 +142,16 @@ mod tests {
         // Contrast +100 doubles the gain around 128.
         // For v=64 → (64-128)*2 + 128 = 0. For v=192 → (192-128)*2 + 128 = 256 → clamp 255.
         let input = gray(2, 1, |x, _| if x == 0 { 64 } else { 192 });
-        let out = BrightnessContrast::new(0.0, 100.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 2, height: 1 }).unwrap();
+        let out = BrightnessContrast::new(0.0, 100.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 2,
+                    height: 1,
+                },
+            )
+            .unwrap();
         assert_eq!(out.planes[0].data[0], 0);
         assert_eq!(out.planes[0].data[1], 255);
     }
@@ -124,7 +160,16 @@ mod tests {
     fn contrast_negative_hundred_flattens_to_mid() {
         // Gain 0 → every sample collapses to 128.
         let input = gray(4, 4, |x, y| ((x + y * 4) * 15) as u8);
-        let out = BrightnessContrast::new(0.0, -100.0).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let out = BrightnessContrast::new(0.0, -100.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 128);
         }
@@ -137,7 +182,16 @@ mod tests {
             pts: None,
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = BrightnessContrast::new(20.0, 20.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
+        let out = BrightnessContrast::new(20.0, 20.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for i in 0..16 {
             assert_eq!(out.planes[0].data[i * 4 + 3], 77);
         }

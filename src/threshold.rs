@@ -126,7 +126,16 @@ mod tests {
     #[test]
     fn threshold_gray_snaps_to_black_or_white() {
         let input = gray(4, 4, |x, y| (x * 32 + y * 32) as u8);
-        let out = Threshold::new(100).apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let out = Threshold::new(100)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for (i, v) in out.planes[0].data.iter().enumerate() {
             let orig = input.planes[0].data[i];
             let expected = if orig >= 100 { 255 } else { 0 };
@@ -141,7 +150,16 @@ mod tests {
             pts: None,
             planes: vec![VideoPlane { stride: 16, data }],
         };
-        let out = Threshold::new(128).apply(&input, VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 }).unwrap();
+        let out = Threshold::new(128)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for i in 0..16 {
             let px = &out.planes[0].data[i * 4..i * 4 + 4];
             assert_eq!(px[0], 0);
@@ -168,7 +186,16 @@ mod tests {
                 },
             ],
         };
-        let out = Threshold::new(64).apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap();
+        let out = Threshold::new(64)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for v in &out.planes[0].data {
             assert!(*v == 0 || *v == 255);
         }

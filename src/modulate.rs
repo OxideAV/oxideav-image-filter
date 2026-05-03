@@ -182,7 +182,16 @@ mod tests {
     #[test]
     fn identity_preserves_colours() {
         let input = rgb(4, 4, |x, y| ((x * 40) as u8, (y * 40) as u8, 128));
-        let out = Modulate::default().apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 4, height: 4 }).unwrap();
+        let out = Modulate::default()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         // Identity = very small rounding drift allowed.
         for (a, b) in out.planes[0].data.iter().zip(input.planes[0].data.iter()) {
             let diff = (*a as i16 - *b as i16).abs();
@@ -193,7 +202,16 @@ mod tests {
     #[test]
     fn brightness_zero_gives_black() {
         let input = rgb(2, 2, |_, _| (200, 100, 50));
-        let out = Modulate::new(0.0, 100.0, 0.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
+        let out = Modulate::new(0.0, 100.0, 0.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 2,
+                    height: 2,
+                },
+            )
+            .unwrap();
         for b in &out.planes[0].data {
             assert_eq!(*b, 0);
         }
@@ -203,7 +221,16 @@ mod tests {
     fn saturation_zero_gives_gray() {
         // Pure red → grey when S=0.
         let input = rgb(2, 2, |_, _| (255, 0, 0));
-        let out = Modulate::new(100.0, 0.0, 0.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
+        let out = Modulate::new(100.0, 0.0, 0.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 2,
+                    height: 2,
+                },
+            )
+            .unwrap();
         // L for pure red = 0.5 → grey = 127 or 128.
         for chunk in out.planes[0].data.chunks(3) {
             assert_eq!(chunk[0], chunk[1]);
@@ -215,7 +242,16 @@ mod tests {
     #[test]
     fn hue_rotation_120_swaps_red_to_green() {
         let input = rgb(2, 2, |_, _| (255, 0, 0));
-        let out = Modulate::new(100.0, 100.0, 120.0).apply(&input, VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 2 }).unwrap();
+        let out = Modulate::new(100.0, 100.0, 120.0)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 2,
+                    height: 2,
+                },
+            )
+            .unwrap();
         // After +120° rotation, red should rotate to green.
         for chunk in out.planes[0].data.chunks(3) {
             assert!(chunk[0] < 5, "r = {}", chunk[0]);
@@ -243,7 +279,16 @@ mod tests {
                 },
             ],
         };
-        let err = Modulate::default().apply(&input, VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 }).unwrap_err();
+        let err = Modulate::default()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap_err();
         assert!(format!("{err}").contains("Modulate"));
     }
 
@@ -264,7 +309,11 @@ mod tests {
         let out = Modulate::new(120.0, 110.0, 10.0)
             .apply(
                 &input,
-                VideoStreamParams { format: PixelFormat::Rgba, width: 2, height: 2 },
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 2,
+                    height: 2,
+                },
             )
             .unwrap();
         assert_eq!(out.planes[0].data[3], 77);

@@ -123,7 +123,16 @@ mod tests {
     #[test]
     fn negate_gray_inverts_every_pixel() {
         let input = gray(4, 4, |x, y| (x * 10 + y) as u8);
-        let out = Negate::new().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 }).unwrap();
+        let out = Negate::new()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
         for (i, v) in out.planes[0].data.iter().enumerate() {
             let orig = input.planes[0].data[i];
             assert_eq!(*v, 255 - orig);
@@ -132,7 +141,11 @@ mod tests {
 
     #[test]
     fn negate_twice_is_identity() {
-        let p = VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 4 };
+        let p = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 4,
+            height: 4,
+        };
         let input = gray(4, 4, |x, y| ((x + y * 4) * 7) as u8);
         let once = Negate::new().apply(&input, p).unwrap();
         let twice = Negate::new().apply(&once, p).unwrap();
@@ -154,7 +167,11 @@ mod tests {
         let out = Negate::new()
             .apply(
                 &input,
-                VideoStreamParams { format: PixelFormat::Rgba, width: 4, height: 4 },
+                VideoStreamParams {
+                    format: PixelFormat::Rgba,
+                    width: 4,
+                    height: 4,
+                },
             )
             .unwrap();
         for x in 0..16 {
@@ -192,7 +209,11 @@ mod tests {
         let out = Negate::new()
             .apply(
                 &input,
-                VideoStreamParams { format: PixelFormat::Yuv420P, width: 4, height: 4 },
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 4,
+                    height: 4,
+                },
             )
             .unwrap();
         for (i, b) in out.planes[0].data.iter().enumerate() {

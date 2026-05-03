@@ -87,7 +87,16 @@ mod tests {
     #[test]
     fn flop_reverses_columns() {
         let input = gray(4, 2, |x, _| (x * 10) as u8);
-        let out = Flop::new().apply(&input, VideoStreamParams { format: PixelFormat::Gray8, width: 4, height: 2 }).unwrap();
+        let out = Flop::new()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 2,
+                },
+            )
+            .unwrap();
         // Row 0: [0, 10, 20, 30] -> [30, 20, 10, 0].
         assert_eq!(&out.planes[0].data[0..4], &[30u8, 20, 10, 0]);
         assert_eq!(&out.planes[0].data[4..8], &[30u8, 20, 10, 0]);
@@ -95,7 +104,11 @@ mod tests {
 
     #[test]
     fn flop_flop_is_identity() {
-        let p = VideoStreamParams { format: PixelFormat::Gray8, width: 7, height: 5 };
+        let p = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 7,
+            height: 5,
+        };
         let input = gray(7, 5, |x, y| ((x * 19 + y * 31) % 251) as u8);
         let once = Flop::new().apply(&input, p).unwrap();
         let twice = Flop::new().apply(&once, p).unwrap();
@@ -113,7 +126,11 @@ mod tests {
         let out = Flop::new()
             .apply(
                 &input,
-                VideoStreamParams { format: PixelFormat::Rgb24, width: 2, height: 1 },
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 2,
+                    height: 1,
+                },
             )
             .unwrap();
         // After flop: (200, 210, 220) | (10, 20, 30) — channel order inside a
