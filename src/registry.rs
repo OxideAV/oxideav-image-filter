@@ -16,11 +16,18 @@ use crate::{ImageFilter, Planes, VideoStreamParams};
 
 /// Install Blur, Edge, and Resize into the runtime context's filter
 /// registry. Idempotent — last write wins per filter name.
+///
+/// Also auto-registered into [`oxideav_core::REGISTRARS`] via the
+/// [`oxideav_core::register!`] macro below so consumers calling
+/// [`oxideav_core::RuntimeContext::with_all_features`] pick the
+/// image filters up without any explicit umbrella plumbing.
 pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("blur", Box::new(make_blur));
     ctx.filters.register("edge", Box::new(make_edge));
     ctx.filters.register("resize", Box::new(make_resize));
 }
+
+oxideav_core::register!("image_filter", register);
 
 /// Wraps a legacy [`ImageFilter`] in the [`StreamFilter`] contract.
 /// Single video port in, single video port out. The stream-level video
