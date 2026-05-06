@@ -101,7 +101,7 @@ pub use motion_blur::MotionBlur;
 pub use negate::Negate;
 pub use normalize::Normalize;
 pub use posterize::Posterize;
-pub use registry::register;
+pub use registry::{__oxideav_entry, register};
 pub use resize::{Interpolation, Resize};
 pub use rotate::Rotate;
 pub use sepia::Sepia;
