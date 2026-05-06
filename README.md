@@ -1,8 +1,6 @@
 # oxideav-image-filter
 
-Pure-Rust single-frame image filters for
-[oxideav](https://github.com/OxideAV/oxideav-workspace) — a 100% pure Rust
-media framework. No C libraries, no FFI wrappers, no `*-sys` crates.
+Pure-Rust single-frame image filters for the [oxideav](https://github.com/OxideAV/oxideav-workspace) framework — codec, container, and filter crates are implemented from the spec (no C codec libraries linked or wrapped, no `*-sys` crates).
 
 This crate specialises in **stateless per-frame effects** — there is no
 frame-to-frame context. That's what separates it from sibling crates:
