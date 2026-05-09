@@ -91,6 +91,11 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Posterize`** — reduce each channel to `N` intensity levels. IM:
   `-posterize N`.
 - **`Solarize`** — invert pixels above a threshold. IM: `-solarize N%`.
+- **`Equalize`** — per-channel histogram equalisation via CDF
+  mapping. Luma-only on YUV. IM: `-equalize`.
+- **`AutoGamma`** — pick a per-channel gamma so the geometric mean
+  lands at mid-grey 0.5 (`gamma = log(mean) / log(0.5)`). IM:
+  `-auto-gamma`.
 
 ### Colour
 
@@ -100,6 +105,10 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   to grayscale. IM: `-sepia-tone N%`.
 - **`Grayscale`** — Rec. 601 desaturate; optional `Gray8` collapse.
   IM: `-colorspace Gray`.
+- **`Colorize`** — linear blend toward a target `[R, G, B, A]` colour
+  by a `0.0..=1.0` amount. IM: `-colorize N%`.
+- **`Vignette`** — Gaussian radial darkening centred at `(x*w, y*h)`
+  with `radius` + `sigma`. IM: `-vignette RxS{+x{+y}}`.
 
 ### Sharpening + artistic
 
