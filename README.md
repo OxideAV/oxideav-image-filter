@@ -96,6 +96,8 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`AutoGamma`** — pick a per-channel gamma so the geometric mean
   lands at mid-grey 0.5 (`gamma = log(mean) / log(0.5)`). IM:
   `-auto-gamma`.
+- **`SigmoidalContrast`** — sigmoid-curve contrast around a midpoint.
+  IM: `-sigmoidal-contrast CxM%`.
 
 ### Colour
 
@@ -107,6 +109,8 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   IM: `-colorspace Gray`.
 - **`Colorize`** — linear blend toward a target `[R, G, B, A]` colour
   by a `0.0..=1.0` amount. IM: `-colorize N%`.
+- **`Tint`** — luminance-weighted blend toward a target colour;
+  bright pixels reach the target, dark pixels stay put. IM: `-tint N`.
 - **`Vignette`** — Gaussian radial darkening centred at `(x*w, y*h)`
   with `radius` + `sigma`. IM: `-vignette RxS{+x{+y}}`.
 
@@ -119,6 +123,11 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Emboss`** — 3×3 relief convolution with `+128` bias. IM: `-emboss R`.
 - **`MotionBlur`** — 1-D Gaussian blur along `angle_degrees`. IM:
   `-motion-blur RxS+A`.
+- **`Implode`** — radial pinch / explode with bilinear resampling.
+  IM: `-implode N`.
+- **`Swirl`** — radius-decaying rotational distortion. IM: `-swirl N`.
+- **`Despeckle`** — median-window edge-preserving noise reduction
+  (alpha pass-through). IM: `-despeckle`.
 
 All filters listed here share the `ImageFilter` trait — chain them
 manually with repeated `.apply()` calls, or feed them through
