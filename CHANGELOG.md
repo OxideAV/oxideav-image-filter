@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Wire `sharpen`, `gamma`, `brightness-contrast`, `brightness`, and `contrast`
+  filter factories into the runtime registry so pipeline jobs and
+  oxideav-cli-convert IM-flag mapping can resolve them by name.
+
 ## [0.1.1](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.0...v0.1.1) - 2026-05-06
 
 ### Other
