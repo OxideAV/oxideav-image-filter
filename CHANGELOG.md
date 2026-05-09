@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wire `sharpen`, `gamma`, `brightness-contrast`, `brightness`, and `contrast`
   filter factories into the runtime registry so pipeline jobs and
   oxideav-cli-convert IM-flag mapping can resolve them by name.
+- Wire 16 additional filter factories into `register()`: `unsharp`,
+  `threshold`, `level`, `normalize`, `posterize`, `solarize`, `flip`, `flop`,
+  `rotate`, `crop`, `negate`, `sepia`, `modulate`, `grayscale`,
+  `motion-blur`, and `emboss`. Output port shape is recomputed when the
+  filter changes dimensions/format (`crop`, `rotate`, `grayscale` with
+  `output_gray8`). One smoke test per newly-wired filter exercises the
+  factory + adapter `push` path on a 4×4 fixture.
+- `Crop` is now re-exported from the crate root.
 
 ## [0.1.1](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.0...v0.1.1) - 2026-05-06
 

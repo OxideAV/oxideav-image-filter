@@ -14,10 +14,16 @@ use serde_json::Value;
 
 use crate::{ImageFilter, Planes, VideoStreamParams};
 
-/// Install Blur, Edge, Resize, Sharpen, Gamma, and BrightnessContrast
-/// (plus the `brightness` / `contrast` single-axis aliases) into the
-/// runtime context's filter registry. Idempotent — last write wins per
-/// filter name.
+/// Install every image-filter factory into the runtime context's
+/// filter registry. Idempotent — last write wins per filter name.
+///
+/// Wired in this round (round next):
+/// - Round-prev: `blur`, `edge`, `resize`, `sharpen`, `gamma`,
+///   `brightness-contrast`, `brightness`, `contrast`.
+/// - Round-next additions: `unsharp`, `threshold`, `level`,
+///   `normalize`, `posterize`, `solarize`, `flip`, `flop`,
+///   `rotate`, `crop`, `negate`, `sepia`, `modulate`,
+///   `grayscale`, `motion-blur`, `emboss`.
 ///
 /// Also wired into [`oxideav_meta::register_all`] via the
 /// [`oxideav_core::register!`] macro below.
@@ -32,6 +38,25 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("brightness", Box::new(make_brightness));
     ctx.filters.register("contrast", Box::new(make_contrast));
+
+    // Round-next factories.
+    ctx.filters.register("unsharp", Box::new(make_unsharp));
+    ctx.filters.register("threshold", Box::new(make_threshold));
+    ctx.filters.register("level", Box::new(make_level));
+    ctx.filters.register("normalize", Box::new(make_normalize));
+    ctx.filters.register("posterize", Box::new(make_posterize));
+    ctx.filters.register("solarize", Box::new(make_solarize));
+    ctx.filters.register("flip", Box::new(make_flip));
+    ctx.filters.register("flop", Box::new(make_flop));
+    ctx.filters.register("rotate", Box::new(make_rotate));
+    ctx.filters.register("crop", Box::new(make_crop));
+    ctx.filters.register("negate", Box::new(make_negate));
+    ctx.filters.register("sepia", Box::new(make_sepia));
+    ctx.filters.register("modulate", Box::new(make_modulate));
+    ctx.filters.register("grayscale", Box::new(make_grayscale));
+    ctx.filters
+        .register("motion-blur", Box::new(make_motion_blur));
+    ctx.filters.register("emboss", Box::new(make_emboss));
 }
 
 oxideav_core::register!("image_filter", register);
@@ -305,9 +330,388 @@ fn make_contrast(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFi
     )))
 }
 
+// --- Round-next factories ---
+
+fn make_unsharp(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Unsharp;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let radius = get_u64("radius").unwrap_or(1) as u32;
+    let sigma = get_f64("sigma").unwrap_or(0.5) as f32;
+    let amount = get_f64("amount").unwrap_or(1.0) as f32;
+    let threshold = get_u64("threshold").unwrap_or(0).min(255) as u8;
+    let f = Unsharp::new(radius, sigma, amount, threshold);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_threshold(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Threshold;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let threshold = get_u64("value")
+        .or_else(|| get_u64("threshold"))
+        .unwrap_or(128)
+        .min(255) as u8;
+    let f = Threshold::new(threshold);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_level(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Level;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let black = get_u64("black").unwrap_or(0).min(255) as u8;
+    let white = get_u64("white").unwrap_or(255).min(255) as u8;
+    let gamma = get_f64("gamma").unwrap_or(1.0) as f32;
+    if !gamma.is_finite() || gamma <= 0.0 {
+        return Err(Error::invalid(format!(
+            "job: filter 'level': gamma must be a positive finite number (got {gamma})"
+        )));
+    }
+    let f = Level::new(black, white, gamma);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_normalize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Normalize;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let low_clip = get_f64("low_clip")
+        .or_else(|| get_f64("low"))
+        .unwrap_or(0.0) as f32;
+    let high_clip = get_f64("high_clip")
+        .or_else(|| get_f64("high"))
+        .unwrap_or(0.0) as f32;
+    let f = Normalize::new(low_clip, high_clip);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_posterize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Posterize;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let levels = get_u64("levels")
+        .or_else(|| get_u64("value"))
+        .unwrap_or(4)
+        .min(u32::MAX as u64) as u32;
+    let f = Posterize::new(levels);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_solarize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Solarize;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let threshold = get_u64("value")
+        .or_else(|| get_u64("threshold"))
+        .unwrap_or(128)
+        .min(255) as u8;
+    let f = Solarize::new(threshold);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_flip(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Flip;
+    let f = Flip::new();
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_flop(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Flop;
+    let f = Flop::new();
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_rotate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Rotate;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let degrees = get_f64("degrees")
+        .or_else(|| get_f64("angle"))
+        .unwrap_or(0.0) as f32;
+    if !degrees.is_finite() {
+        return Err(Error::invalid(format!(
+            "job: filter 'rotate': degrees must be finite (got {degrees})"
+        )));
+    }
+    let mut f = Rotate::new(degrees);
+    if let Some(arr) = p
+        .and_then(|m| m.get("background"))
+        .and_then(|v| v.as_array())
+    {
+        if arr.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'rotate': background must be a 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        let mut bg = [0u8; 4];
+        for (i, v) in arr.iter().enumerate() {
+            bg[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid(
+                        "job: filter 'rotate': background array must contain unsigned ints",
+                    )
+                })?
+                .min(255) as u8;
+        }
+        f = f.with_background(bg);
+    }
+
+    let in_port = video_in_port(inputs);
+    // For exact 90 / 270 degree multiples the canvas swaps width and
+    // height; for 0 / 180 it stays the same. Other angles change shape
+    // too — we leave that to the adapter to handle by re-reading the
+    // output dimensions off the produced frame's planes (the framework
+    // currently consumes them via the port cache, so for arbitrary
+    // angles the downstream node will need to re-negotiate. The 90 /
+    // 270 case is the one users hit in practice and we wire it
+    // exactly.)
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format,
+            width,
+            height,
+            time_base,
+            ..
+        } => {
+            let snapped = degrees.rem_euclid(360.0);
+            let (ow, oh) = if (snapped - 90.0).abs() < 1e-3 || (snapped - 270.0).abs() < 1e-3 {
+                (*height, *width)
+            } else if (snapped - 180.0).abs() < 1e-3 || snapped.abs() < 1e-3 {
+                (*width, *height)
+            } else {
+                // Arbitrary angle — best-effort use the bounding box of
+                // the rotated rect; downstream nodes should re-read the
+                // produced VideoPlane dims.
+                let theta = (degrees as f64).to_radians();
+                let s = theta.sin().abs();
+                let c = theta.cos().abs();
+                let nw = (*width as f64 * c + *height as f64 * s).ceil() as u32;
+                let nh = (*width as f64 * s + *height as f64 * c).ceil() as u32;
+                (nw.max(1), nh.max(1))
+            };
+            PortSpec::video("video", ow, oh, *format, *time_base)
+        }
+        _ => passthrough_out_port(&in_port),
+    };
+
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_crop(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Crop;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let x = get_u64("x").unwrap_or(0).min(u32::MAX as u64) as u32;
+    let y = get_u64("y").unwrap_or(0).min(u32::MAX as u64) as u32;
+    let w = get_u64("width")
+        .ok_or_else(|| Error::invalid("job: filter 'crop' needs unsigned `width`"))?
+        .min(u32::MAX as u64) as u32;
+    let h = get_u64("height")
+        .ok_or_else(|| Error::invalid("job: filter 'crop' needs unsigned `height`"))?
+        .min(u32::MAX as u64) as u32;
+    let f = Crop::new(x, y, w, h);
+    let in_port = video_in_port(inputs);
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format, time_base, ..
+        } => PortSpec::video("video", w, h, *format, *time_base),
+        _ => PortSpec::video("video", w, h, PixelFormat::Yuv420P, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_negate(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Negate;
+    let f = Negate::new();
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_sepia(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Sepia;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let threshold = get_f64("threshold")
+        .or_else(|| get_f64("value"))
+        .unwrap_or(1.0) as f32;
+    let f = Sepia::new(threshold);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_modulate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Modulate;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let brightness = get_f64("brightness").unwrap_or(100.0) as f32;
+    let saturation = get_f64("saturation").unwrap_or(100.0) as f32;
+    let hue = get_f64("hue_degrees")
+        .or_else(|| get_f64("hue"))
+        .unwrap_or(0.0) as f32;
+    let f = Modulate::new(brightness, saturation, hue);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_grayscale(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Grayscale;
+    let p = params.as_object();
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+
+    let preserve_alpha = get_bool("preserve_alpha").unwrap_or(true);
+    let output_gray8 = get_bool("output_gray8").unwrap_or(false);
+    let f = Grayscale::new()
+        .with_preserve_alpha(preserve_alpha)
+        .with_output_gray8(output_gray8);
+
+    let in_port = video_in_port(inputs);
+    let out_port = if output_gray8 {
+        match &in_port.params {
+            PortParams::Video {
+                width,
+                height,
+                time_base,
+                ..
+            } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+            _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+        }
+    } else {
+        passthrough_out_port(&in_port)
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_motion_blur(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::MotionBlur;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let radius = get_u64("radius").unwrap_or(3) as u32;
+    let sigma = get_f64("sigma").unwrap_or(1.5) as f32;
+    let angle = get_f64("angle_degrees")
+        .or_else(|| get_f64("angle"))
+        .unwrap_or(0.0) as f32;
+    let f = MotionBlur::new(radius, sigma, angle);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_emboss(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Emboss;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let radius = get_u64("radius").unwrap_or(1) as u32;
+    let f = Emboss::new(radius);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxideav_core::{Frame, VideoFrame, VideoPlane};
     use serde_json::json;
 
     fn ctx() -> RuntimeContext {
@@ -332,6 +736,23 @@ mod tests {
             "brightness-contrast",
             "brightness",
             "contrast",
+            // Round-next additions.
+            "unsharp",
+            "threshold",
+            "level",
+            "normalize",
+            "posterize",
+            "solarize",
+            "flip",
+            "flop",
+            "rotate",
+            "crop",
+            "negate",
+            "sepia",
+            "modulate",
+            "grayscale",
+            "motion-blur",
+            "emboss",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -417,5 +838,442 @@ mod tests {
         c.filters
             .make("v:gamma", &json!({"value": 1.5}), &inputs)
             .expect("v:gamma");
+    }
+
+    // --- Round-next smoke tests ---
+    //
+    // Each newly-wired filter gets one factory-build + one apply through
+    // the adapter on a small synthetic RGBA fixture (or matching format
+    // when the filter requires something else, e.g. Crop on Yuv420P).
+
+    /// Collect everything emitted by `push` into a vec.
+    struct CollectCtx {
+        out: Vec<(usize, Frame)>,
+    }
+    impl oxideav_core::filter::FilterContext for CollectCtx {
+        fn emit(&mut self, port: usize, frame: Frame) -> Result<()> {
+            self.out.push((port, frame));
+            Ok(())
+        }
+    }
+
+    fn rgba_in_port(w: u32, h: u32) -> PortSpec {
+        PortSpec::video("in", w, h, PixelFormat::Rgba, TimeBase::new(1, 30))
+    }
+
+    fn rgb24_in_port(w: u32, h: u32) -> PortSpec {
+        PortSpec::video("in", w, h, PixelFormat::Rgb24, TimeBase::new(1, 30))
+    }
+
+    fn gray_in_port(w: u32, h: u32) -> PortSpec {
+        PortSpec::video("in", w, h, PixelFormat::Gray8, TimeBase::new(1, 30))
+    }
+
+    /// Build a 4×4 RGBA frame from a per-pixel function returning
+    /// `[R, G, B, A]`.
+    fn rgba_4x4(pattern: impl Fn(u32, u32) -> [u8; 4]) -> VideoFrame {
+        let mut data = Vec::with_capacity(4 * 4 * 4);
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                data.extend_from_slice(&pattern(x, y));
+            }
+        }
+        VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 16, data }],
+        }
+    }
+
+    fn gray_4x4(pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
+        let mut data = Vec::with_capacity(16);
+        for y in 0..4u32 {
+            for x in 0..4u32 {
+                data.push(pattern(x, y));
+            }
+        }
+        VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 4, data }],
+        }
+    }
+
+    /// Run a built filter against a single video frame and return the
+    /// emitted output (asserting exactly one frame on port 0).
+    fn run_one(mut f: Box<dyn StreamFilter>, frame: VideoFrame) -> VideoFrame {
+        let mut col = CollectCtx { out: Vec::new() };
+        f.push(&mut col, 0, &Frame::Video(frame))
+            .expect("push must not error");
+        assert_eq!(col.out.len(), 1, "filter emitted {} frames", col.out.len());
+        let (port, frame) = col.out.into_iter().next().unwrap();
+        assert_eq!(port, 0, "filter emitted on unexpected port {port}");
+        match frame {
+            Frame::Video(v) => v,
+            other => panic!("filter emitted non-video frame: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unsharp_smoke() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "unsharp",
+                &json!({"radius": 1, "sigma": 0.5, "amount": 1.0, "threshold": 0}),
+                &inputs,
+            )
+            .expect("unsharp factory");
+        let out = run_one(f, rgba_4x4(|x, _| [x as u8 * 60, 0, 0, 255]));
+        assert_eq!(out.planes.len(), 1);
+        assert_eq!(out.planes[0].data.len(), 4 * 4 * 4);
+    }
+
+    #[test]
+    fn threshold_smoke_binarises_gray() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("threshold", &json!({"value": 128}), &inputs)
+            .expect("threshold factory");
+        // Half-and-half pattern: bottom rows above 128, top rows below.
+        let out = run_one(f, gray_4x4(|_, y| if y < 2 { 50 } else { 200 }));
+        assert_eq!(out.planes[0].data[0], 0); // top row -> 0
+        assert_eq!(out.planes[0].data[12], 255); // bottom row -> 255
+    }
+
+    #[test]
+    fn level_smoke_stretches_range() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "level",
+                &json!({"black": 50, "white": 200, "gamma": 1.0}),
+                &inputs,
+            )
+            .expect("level factory");
+        let out = run_one(f, gray_4x4(|_, _| 50));
+        // Sample at the black point should map to 0.
+        assert_eq!(out.planes[0].data[0], 0);
+    }
+
+    #[test]
+    fn level_factory_rejects_non_positive_gamma() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        assert!(c
+            .filters
+            .make("level", &json!({"gamma": 0.0}), &inputs)
+            .is_err());
+        assert!(c
+            .filters
+            .make("level", &json!({"gamma": -1.0}), &inputs)
+            .is_err());
+    }
+
+    #[test]
+    fn normalize_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("normalize", &json!({}), &inputs)
+            .expect("normalize factory");
+        let out = run_one(f, gray_4x4(|x, _| 50 + x as u8 * 30));
+        assert_eq!(out.planes.len(), 1);
+        assert_eq!(out.planes[0].data.len(), 16);
+        // Min sample (50) and max sample (140) should stretch to 0/255.
+        let min = *out.planes[0].data.iter().min().unwrap();
+        let max = *out.planes[0].data.iter().max().unwrap();
+        assert_eq!(min, 0);
+        assert_eq!(max, 255);
+    }
+
+    #[test]
+    fn posterize_smoke_collapses_levels() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("posterize", &json!({"levels": 2}), &inputs)
+            .expect("posterize factory");
+        let out = run_one(f, gray_4x4(|x, _| x as u8 * 80));
+        // With 2 levels, every sample should be in {0, 255}.
+        for &v in &out.planes[0].data {
+            assert!(v == 0 || v == 255, "posterize{{2}} produced {v}");
+        }
+    }
+
+    #[test]
+    fn solarize_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("solarize", &json!({"value": 100}), &inputs)
+            .expect("solarize factory");
+        let out = run_one(f, gray_4x4(|_, y| if y < 2 { 50 } else { 200 }));
+        // Below threshold 100 -> unchanged 50.
+        assert_eq!(out.planes[0].data[0], 50);
+        // Above threshold 100 -> 255 - 200 = 55.
+        assert_eq!(out.planes[0].data[12], 55);
+    }
+
+    #[test]
+    fn flip_smoke_reverses_rows() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("flip", &json!({}), &inputs)
+            .expect("flip factory");
+        let out = run_one(f, gray_4x4(|_, y| y as u8 * 10));
+        // Top row was 0; after flip top row is what was the bottom row (3*10 = 30).
+        assert_eq!(out.planes[0].data[0], 30);
+        assert_eq!(out.planes[0].data[12], 0);
+    }
+
+    #[test]
+    fn flop_smoke_reverses_columns() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("flop", &json!({}), &inputs)
+            .expect("flop factory");
+        let out = run_one(f, gray_4x4(|x, _| x as u8 * 10));
+        // Left col was 0; after flop left col is what was right col (3*10 = 30).
+        assert_eq!(out.planes[0].data[0], 30);
+        assert_eq!(out.planes[0].data[3], 0);
+    }
+
+    #[test]
+    fn rotate_smoke_90_swaps_w_and_h() {
+        let c = ctx();
+        // Use a 4x2 input so the swap is observable.
+        let inputs = [PortSpec::video(
+            "in",
+            4,
+            2,
+            PixelFormat::Gray8,
+            TimeBase::new(1, 30),
+        )];
+        let f = c
+            .filters
+            .make("rotate", &json!({"degrees": 90}), &inputs)
+            .expect("rotate factory");
+        // Output port should already advertise the swapped dimensions.
+        let out_ports = f.output_ports();
+        match &out_ports[0].params {
+            PortParams::Video { width, height, .. } => {
+                assert_eq!(*width, 2);
+                assert_eq!(*height, 4);
+            }
+            _ => panic!("rotate output port is not video"),
+        }
+        // Also exercise the apply path on a 4x4 fixture (simpler) and
+        // verify the produced plane has 4*4 = 16 samples.
+        let inputs2 = [gray_in_port(4, 4)];
+        let f2 = c
+            .filters
+            .make("rotate", &json!({"degrees": 90}), &inputs2)
+            .expect("rotate factory");
+        let out = run_one(f2, gray_4x4(|x, _| x as u8 * 50));
+        assert_eq!(out.planes[0].data.len(), 16);
+    }
+
+    #[test]
+    fn rotate_background_array_must_be_4_long() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c.filters.make(
+            "rotate",
+            &json!({"degrees": 45, "background": [1, 2, 3]}),
+            &inputs,
+        );
+        assert!(bad.is_err(), "background must be a 4-element array");
+        c.filters
+            .make(
+                "rotate",
+                &json!({"degrees": 45, "background": [1, 2, 3, 4]}),
+                &inputs,
+            )
+            .expect("4-element background should build");
+    }
+
+    #[test]
+    fn crop_smoke_extracts_subregion() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "crop",
+                &json!({"x": 1, "y": 1, "width": 2, "height": 2}),
+                &inputs,
+            )
+            .expect("crop factory");
+        // Output port should report the 2x2 dimensions.
+        match &f.output_ports()[0].params {
+            PortParams::Video { width, height, .. } => {
+                assert_eq!(*width, 2);
+                assert_eq!(*height, 2);
+            }
+            _ => panic!("crop output port is not video"),
+        }
+        let out = run_one(f, gray_4x4(|x, y| (x + y * 10) as u8));
+        // Top-left of crop should be input(1, 1) = 1 + 10 = 11.
+        assert_eq!(out.planes[0].data[0], 11);
+        assert_eq!(out.planes[0].data.len(), 4);
+    }
+
+    #[test]
+    fn crop_factory_requires_width_and_height() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        assert!(c
+            .filters
+            .make("crop", &json!({"x": 0, "y": 0, "height": 2}), &inputs)
+            .is_err());
+        assert!(c
+            .filters
+            .make("crop", &json!({"x": 0, "y": 0, "width": 2}), &inputs)
+            .is_err());
+    }
+
+    #[test]
+    fn negate_smoke_inverts_rgba() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("negate", &json!({}), &inputs)
+            .expect("negate factory");
+        let out = run_one(f, rgba_4x4(|_, _| [10, 20, 30, 200]));
+        // R/G/B inverted; alpha preserved.
+        assert_eq!(out.planes[0].data[0], 245); // 255 - 10
+        assert_eq!(out.planes[0].data[1], 235); // 255 - 20
+        assert_eq!(out.planes[0].data[2], 225); // 255 - 30
+        assert_eq!(out.planes[0].data[3], 200); // alpha unchanged
+    }
+
+    #[test]
+    fn sepia_smoke() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("sepia", &json!({"threshold": 1.0}), &inputs)
+            .expect("sepia factory");
+        // RGB24 4×4: build manually.
+        let mut data = Vec::with_capacity(4 * 4 * 3);
+        for _y in 0..4 {
+            for _x in 0..4 {
+                data.extend_from_slice(&[100u8, 100, 100]);
+            }
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 12, data }],
+        };
+        let out = run_one(f, frame);
+        // Output should still be 4*4*3 = 48 bytes.
+        assert_eq!(out.planes[0].data.len(), 48);
+        // Sepia of a neutral gray (100,100,100) should warm-tint:
+        // r' = (0.393+0.769+0.189)*100 = 135.1 -> 135.
+        // Just sanity-check the R channel grew above 100.
+        assert!(out.planes[0].data[0] > 100);
+    }
+
+    #[test]
+    fn modulate_smoke_identity() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "modulate",
+                &json!({"brightness": 100.0, "saturation": 100.0, "hue": 0.0}),
+                &inputs,
+            )
+            .expect("modulate factory");
+        let frame = rgba_4x4(|_, _| [120, 80, 40, 255]);
+        let out = run_one(f, frame.clone());
+        // Identity modulate should reproduce the input bytewise (within
+        // round-trip rounding error of 1).
+        for (i, (&a, &b)) in out.planes[0]
+            .data
+            .iter()
+            .zip(frame.planes[0].data.iter())
+            .enumerate()
+        {
+            let diff = (a as i16 - b as i16).abs();
+            assert!(diff <= 1, "byte {i}: |{a} - {b}| = {diff} > 1");
+        }
+    }
+
+    #[test]
+    fn grayscale_smoke_rgba_to_gray8() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("grayscale", &json!({"output_gray8": true}), &inputs)
+            .expect("grayscale factory");
+        // Output port should now be Gray8.
+        match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => {
+                assert_eq!(*format, PixelFormat::Gray8);
+            }
+            _ => panic!("grayscale output port is not video"),
+        }
+        let out = run_one(f, rgba_4x4(|_, _| [100, 100, 100, 255]));
+        // Gray8 frame: 4*4 = 16 bytes.
+        assert_eq!(out.planes[0].data.len(), 16);
+        // Luma of (100,100,100) is 100.
+        assert_eq!(out.planes[0].data[0], 100);
+    }
+
+    #[test]
+    fn motion_blur_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "motion-blur",
+                &json!({"radius": 2, "sigma": 1.0, "angle": 0.0}),
+                &inputs,
+            )
+            .expect("motion-blur factory");
+        let out = run_one(f, gray_4x4(|_, _| 50));
+        // Flat input should remain flat after blur.
+        assert!(out.planes[0]
+            .data
+            .iter()
+            .all(|&v| (v as i16 - 50).abs() <= 1));
+    }
+
+    #[test]
+    fn emboss_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("emboss", &json!({"radius": 1}), &inputs)
+            .expect("emboss factory");
+        let out = run_one(f, gray_4x4(|_, _| 100));
+        // The 3x3 emboss kernel sums to 1, so a flat-100 input becomes
+        // 100*1 + 128 (bias) = 228 inside, clamped to 0..=255.
+        // Edge pixels still touch the convolution machinery; just assert
+        // every output is a valid u8 (no panic) and the centre pixels
+        // are exactly 228.
+        assert_eq!(out.planes[0].data.len(), 16);
+        // Centre pixel (1,1) and (2,2) sit fully inside the 4x4 grid.
+        assert_eq!(out.planes[0].data[5], 228); // (1, 1)
+        assert_eq!(out.planes[0].data[10], 228); // (2, 2)
     }
 }

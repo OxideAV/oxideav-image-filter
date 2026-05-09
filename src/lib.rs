@@ -89,6 +89,7 @@ pub mod unsharp;
 
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
+pub use crop::Crop;
 pub use edge::Edge;
 pub use emboss::Emboss;
 pub use flip::Flip;
