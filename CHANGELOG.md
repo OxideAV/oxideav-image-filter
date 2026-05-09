@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-channel gamma correction; Gray8/Rgb24/Rgba/YUV planar). Alpha is
   preserved on Rgba; YUV runs only on the luma plane for Equalize /
   AutoGamma.
+- Implement five more ImageMagick-style filters and wire factories into
+  `register()`: `Tint` (luminance-weighted blend toward a target colour;
+  Rgb24/Rgba), `SigmoidalContrast` (sigmoid-curve contrast adjustment
+  via 256-entry LUT; Gray8/Rgb24/Rgba/YUV-luma), `Implode` (radial
+  pinch / explode bilinear-resampled; Rgb24/Rgba), `Swirl`
+  (radius-decaying rotational distortion; Rgb24/Rgba), and `Despeckle`
+  (median-window edge-preserving noise reduction; Rgb24/Rgba with
+  alpha pass-through). Each filter has identity-case bit-exact
+  pass-through tests.
 
 ## [0.1.1](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.0...v0.1.1) - 2026-05-06
 

@@ -66,6 +66,14 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("equalize", Box::new(make_equalize));
     ctx.filters
         .register("auto-gamma", Box::new(make_auto_gamma));
+
+    // Round-after-after-next factories.
+    ctx.filters.register("tint", Box::new(make_tint));
+    ctx.filters
+        .register("sigmoidal-contrast", Box::new(make_sigmoidal_contrast));
+    ctx.filters.register("implode", Box::new(make_implode));
+    ctx.filters.register("swirl", Box::new(make_swirl));
+    ctx.filters.register("despeckle", Box::new(make_despeckle));
 }
 
 oxideav_core::register!("image_filter", register);
@@ -805,6 +813,139 @@ fn make_auto_gamma(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Strea
     )))
 }
 
+// --- Round-after-after-next factories ---
+
+fn make_tint(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Tint;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let amount = get_f64("amount")
+        .or_else(|| get_f64("value"))
+        .unwrap_or(1.0) as f32;
+    if !amount.is_finite() {
+        return Err(Error::invalid(format!(
+            "job: filter 'tint': amount must be finite (got {amount})"
+        )));
+    }
+    let mut color = [128u8, 128, 128, 255];
+    if let Some(arr) = p.and_then(|m| m.get("color")).and_then(|v| v.as_array()) {
+        if !(3..=4).contains(&arr.len()) {
+            return Err(Error::invalid(format!(
+                "job: filter 'tint': color must be a 3- or 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        for (i, v) in arr.iter().enumerate() {
+            color[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid("job: filter 'tint': color array must contain unsigned ints")
+                })?
+                .min(255) as u8;
+        }
+    }
+    let f = Tint::new(color, amount);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_sigmoidal_contrast(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::SigmoidalContrast;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let contrast = get_f64("contrast")
+        .or_else(|| get_f64("value"))
+        .unwrap_or(3.0) as f32;
+    let midpoint = get_f64("midpoint").unwrap_or(128.0) as f32;
+    if !contrast.is_finite() || !midpoint.is_finite() {
+        return Err(Error::invalid(
+            "job: filter 'sigmoidal-contrast': contrast and midpoint must be finite",
+        ));
+    }
+    let f = SigmoidalContrast::new(contrast, midpoint);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_implode(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Implode;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let factor = get_f64("factor")
+        .or_else(|| get_f64("amount"))
+        .or_else(|| get_f64("value"))
+        .unwrap_or(0.5) as f32;
+    if !factor.is_finite() {
+        return Err(Error::invalid(format!(
+            "job: filter 'implode': factor must be finite (got {factor})"
+        )));
+    }
+    let f = Implode::new(factor);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_swirl(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Swirl;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let degrees = get_f64("degrees")
+        .or_else(|| get_f64("angle"))
+        .or_else(|| get_f64("value"))
+        .unwrap_or(90.0) as f32;
+    if !degrees.is_finite() {
+        return Err(Error::invalid(format!(
+            "job: filter 'swirl': degrees must be finite (got {degrees})"
+        )));
+    }
+    let f = Swirl::new(degrees);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_despeckle(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Despeckle;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let radius = get_u64("radius")
+        .or_else(|| get_u64("value"))
+        .unwrap_or(1)
+        .min(u32::MAX as u64) as u32;
+    let f = Despeckle::new(radius);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -855,6 +996,12 @@ mod tests {
             "colorize",
             "equalize",
             "auto-gamma",
+            // Round-after-after-next additions.
+            "tint",
+            "sigmoidal-contrast",
+            "implode",
+            "swirl",
+            "despeckle",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -1497,5 +1644,180 @@ mod tests {
         // Centre pixel (1,1) and (2,2) sit fully inside the 4x4 grid.
         assert_eq!(out.planes[0].data[5], 228); // (1, 1)
         assert_eq!(out.planes[0].data[10], 228); // (2, 2)
+    }
+
+    // --- Round-after-after-next smoke tests ---
+
+    #[test]
+    fn tint_smoke_blends_white_to_target() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "tint",
+                &json!({"color": [10, 20, 30, 255], "amount": 1.0}),
+                &inputs,
+            )
+            .expect("tint factory");
+        // White input ⇒ luma = 255 ⇒ weight = 1 ⇒ output = target.
+        let out = run_one(f, rgba_4x4(|_, _| [255, 255, 255, 222]));
+        assert_eq!(out.planes[0].data[0], 10);
+        assert_eq!(out.planes[0].data[1], 20);
+        assert_eq!(out.planes[0].data[2], 30);
+        assert_eq!(out.planes[0].data[3], 222); // alpha preserved
+    }
+
+    #[test]
+    fn tint_factory_rejects_bad_color_arity() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c
+            .filters
+            .make("tint", &json!({"color": [1, 2], "amount": 0.5}), &inputs);
+        assert!(bad.is_err(), "color must be 3 or 4 elements");
+    }
+
+    #[test]
+    fn sigmoidal_contrast_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "sigmoidal-contrast",
+                &json!({"contrast": 5.0, "midpoint": 128.0}),
+                &inputs,
+            )
+            .expect("sigmoidal-contrast factory");
+        // Below-midpoint input should be pulled darker.
+        let out = run_one(f, gray_4x4(|_, _| 64));
+        assert!(out.planes[0].data[0] < 64);
+    }
+
+    #[test]
+    fn sigmoidal_contrast_zero_is_passthrough() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("sigmoidal-contrast", &json!({"contrast": 0.0}), &inputs)
+            .expect("sigmoidal-contrast factory");
+        let frame = gray_4x4(|x, y| (x + y * 4) as u8 * 16);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn implode_smoke_factor_zero_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("implode", &json!({"factor": 0.0}), &inputs)
+            .expect("implode factory");
+        let frame =
+            rgba_4x4_8x8(|x, y| [(x * 30) as u8, (y * 30) as u8, ((x + y) * 10) as u8, 222]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn implode_smoke_flat_image_invariant() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("implode", &json!({"factor": 0.5}), &inputs)
+            .expect("implode factory");
+        let frame = rgba_4x4_8x8(|_, _| [100, 150, 200, 222]);
+        let out = run_one(f, frame);
+        for chunk in out.planes[0].data.chunks(4) {
+            assert_eq!(chunk[0], 100);
+            assert_eq!(chunk[1], 150);
+            assert_eq!(chunk[2], 200);
+            assert_eq!(chunk[3], 222);
+        }
+    }
+
+    #[test]
+    fn swirl_smoke_zero_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("swirl", &json!({"degrees": 0.0}), &inputs)
+            .expect("swirl factory");
+        let frame =
+            rgba_4x4_8x8(|x, y| [(x * 30) as u8, (y * 30) as u8, ((x + y) * 10) as u8, 222]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn swirl_smoke_flat_image_invariant() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("swirl", &json!({"degrees": 90.0}), &inputs)
+            .expect("swirl factory");
+        let frame = rgba_4x4_8x8(|_, _| [100, 150, 200, 222]);
+        let out = run_one(f, frame);
+        for chunk in out.planes[0].data.chunks(4) {
+            assert_eq!(chunk[0], 100);
+            assert_eq!(chunk[1], 150);
+            assert_eq!(chunk[2], 200);
+            assert_eq!(chunk[3], 222);
+        }
+    }
+
+    #[test]
+    fn despeckle_smoke_radius_zero_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("despeckle", &json!({"radius": 0}), &inputs)
+            .expect("despeckle factory");
+        let frame =
+            rgba_4x4_8x8(|x, y| [(x * 30) as u8, (y * 30) as u8, ((x + y) * 10) as u8, 222]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn despeckle_smoke_removes_isolated_speck() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("despeckle", &json!({"radius": 1}), &inputs)
+            .expect("despeckle factory");
+        let mut frame = rgba_4x4_8x8(|_, _| [100, 100, 100, 222]);
+        // Inject a speck at (3, 3).
+        let off = (3 * 8 + 3) * 4;
+        frame.planes[0].data[off] = 255;
+        frame.planes[0].data[off + 1] = 255;
+        frame.planes[0].data[off + 2] = 255;
+        let out = run_one(f, frame);
+        // The 3×3 median wipes the speck back to 100.
+        assert_eq!(out.planes[0].data[off], 100);
+        assert_eq!(out.planes[0].data[off + 1], 100);
+        assert_eq!(out.planes[0].data[off + 2], 100);
+    }
+
+    /// Build an 8×8 RGBA fixture from a per-pixel function returning `[R, G, B, A]`.
+    fn rgba_4x4_8x8(pattern: impl Fn(u32, u32) -> [u8; 4]) -> VideoFrame {
+        let mut data = Vec::with_capacity(8 * 8 * 4);
+        for y in 0..8u32 {
+            for x in 0..8u32 {
+                data.extend_from_slice(&pattern(x, y));
+            }
+        }
+        VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 32, data }],
+        }
     }
 }

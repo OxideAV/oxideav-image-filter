@@ -20,6 +20,8 @@
 //!   `[R, G, B, A]` colour by a `0.0..=1.0` amount.
 //! - [`Crop`](crop::Crop) — extract a rectangular subregion
 //!   `(x, y, width, height)` (ImageMagick `-crop WxH+X+Y`).
+//! - [`Despeckle`](despeckle::Despeckle) — median-window
+//!   edge-preserving noise reduction; alpha pass-through.
 //! - [`Edge`](edge::Edge) — Sobel edge magnitude; accepts colour input
 //!   and returns a single-plane luma-ish intensity image.
 //! - [`Emboss`](emboss::Emboss) — 3×3 relief convolution; luma-only
@@ -32,6 +34,9 @@
 //!   channel (LUT-based; YUV only touches luma).
 //! - [`Grayscale`](grayscale::Grayscale) — desaturate RGB/RGBA with
 //!   Rec. 601 luma weights; optional Gray8 collapse.
+//! - [`Implode`](implode::Implode) — radial pinch / explode (ImageMagick
+//!   `-implode N`); bilinear-resampled inverse mapping inside the
+//!   inscribed circle.
 //! - [`Level`](level::Level) — remap `[black, white]` to `[0, 255]`
 //!   with optional mid-tone gamma (ImageMagick `-level`).
 //! - [`Modulate`](modulate::Modulate) — adjust brightness, saturation,
@@ -55,8 +60,16 @@
 //!   threshold (ImageMagick `-solarize N%`).
 //! - [`Sharpen`](sharpen::Sharpen) — unsharp-mask sharpening with
 //!   `radius`/`sigma`/`amount`; YUV touches only luma.
+//! - [`SigmoidalContrast`](sigmoidal_contrast::SigmoidalContrast) —
+//!   sigmoid-curve contrast adjustment (ImageMagick
+//!   `-sigmoidal-contrast CxM%`).
+//! - [`Swirl`](swirl::Swirl) — radius-decaying rotational distortion
+//!   (ImageMagick `-swirl N`).
 //! - [`Threshold`](threshold::Threshold) — binarise each sample to
 //!   black/white against a cut-off (YUV sets chroma to neutral 128).
+//! - [`Tint`](tint::Tint) — luminance-weighted tint toward a target
+//!   colour (ImageMagick `-tint`); bright pixels reach the target,
+//!   dark pixels stay put.
 //! - [`Unsharp`](unsharp::Unsharp) — threshold-gated unsharp-mask
 //!   (ImageMagick `-unsharp RxS+A+T`).
 //! - [`Vignette`](vignette::Vignette) — Gaussian radial darkening
@@ -76,6 +89,7 @@ pub mod blur;
 pub mod brightness_contrast;
 pub mod colorize;
 pub mod crop;
+pub mod despeckle;
 pub mod edge;
 pub mod emboss;
 pub mod equalize;
@@ -83,6 +97,7 @@ pub mod flip;
 pub mod flop;
 pub mod gamma;
 pub mod grayscale;
+pub mod implode;
 pub mod level;
 pub mod modulate;
 pub mod motion_blur;
@@ -94,8 +109,11 @@ pub mod resize;
 pub mod rotate;
 pub mod sepia;
 pub mod sharpen;
+pub mod sigmoidal_contrast;
 pub mod solarize;
+pub mod swirl;
 pub mod threshold;
+pub mod tint;
 pub(crate) mod tonal_lut;
 pub mod unsharp;
 pub mod vignette;
@@ -105,6 +123,7 @@ pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
 pub use colorize::Colorize;
 pub use crop::Crop;
+pub use despeckle::Despeckle;
 pub use edge::Edge;
 pub use emboss::Emboss;
 pub use equalize::Equalize;
@@ -112,6 +131,7 @@ pub use flip::Flip;
 pub use flop::Flop;
 pub use gamma::Gamma;
 pub use grayscale::Grayscale;
+pub use implode::Implode;
 pub use level::Level;
 pub use modulate::Modulate;
 pub use motion_blur::MotionBlur;
@@ -123,8 +143,11 @@ pub use resize::{Interpolation, Resize};
 pub use rotate::Rotate;
 pub use sepia::Sepia;
 pub use sharpen::Sharpen;
+pub use sigmoidal_contrast::SigmoidalContrast;
 pub use solarize::Solarize;
+pub use swirl::Swirl;
 pub use threshold::Threshold;
+pub use tint::Tint;
 pub use unsharp::Unsharp;
 pub use vignette::Vignette;
 
