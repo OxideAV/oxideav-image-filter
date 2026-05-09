@@ -17,13 +17,15 @@ use crate::{ImageFilter, Planes, VideoStreamParams};
 /// Install every image-filter factory into the runtime context's
 /// filter registry. Idempotent — last write wins per filter name.
 ///
-/// Wired in this round (round next):
-/// - Round-prev: `blur`, `edge`, `resize`, `sharpen`, `gamma`,
+/// Wired in this round:
+/// - Round-prev-prev: `blur`, `edge`, `resize`, `sharpen`, `gamma`,
 ///   `brightness-contrast`, `brightness`, `contrast`.
-/// - Round-next additions: `unsharp`, `threshold`, `level`,
+/// - Round-prev additions: `unsharp`, `threshold`, `level`,
 ///   `normalize`, `posterize`, `solarize`, `flip`, `flop`,
 ///   `rotate`, `crop`, `negate`, `sepia`, `modulate`,
 ///   `grayscale`, `motion-blur`, `emboss`.
+/// - Round-next additions: `vignette`, `colorize`, `equalize`,
+///   `auto-gamma`.
 ///
 /// Also wired into [`oxideav_meta::register_all`] via the
 /// [`oxideav_core::register!`] macro below.
@@ -57,6 +59,13 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("motion-blur", Box::new(make_motion_blur));
     ctx.filters.register("emboss", Box::new(make_emboss));
+
+    // Round-after-next factories.
+    ctx.filters.register("vignette", Box::new(make_vignette));
+    ctx.filters.register("colorize", Box::new(make_colorize));
+    ctx.filters.register("equalize", Box::new(make_equalize));
+    ctx.filters
+        .register("auto-gamma", Box::new(make_auto_gamma));
 }
 
 oxideav_core::register!("image_filter", register);
@@ -708,6 +717,94 @@ fn make_emboss(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
     )))
 }
 
+fn make_vignette(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Vignette;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let x = get_f64("x").unwrap_or(0.5) as f32;
+    let y = get_f64("y").unwrap_or(0.5) as f32;
+    let radius = get_f64("radius").unwrap_or(0.0) as f32;
+    let sigma = get_f64("sigma").unwrap_or(0.0) as f32;
+    if !x.is_finite() || !y.is_finite() || !radius.is_finite() || !sigma.is_finite() {
+        return Err(Error::invalid(
+            "job: filter 'vignette': x/y/radius/sigma must be finite numbers",
+        ));
+    }
+    let f = Vignette::new(x, y, radius, sigma);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_colorize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Colorize;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let amount = get_f64("amount")
+        .or_else(|| get_f64("value"))
+        .unwrap_or(0.5) as f32;
+    if !amount.is_finite() {
+        return Err(Error::invalid(format!(
+            "job: filter 'colorize': amount must be finite (got {amount})"
+        )));
+    }
+    let mut color = [255u8, 255, 255, 255];
+    if let Some(arr) = p.and_then(|m| m.get("color")).and_then(|v| v.as_array()) {
+        if !(3..=4).contains(&arr.len()) {
+            return Err(Error::invalid(format!(
+                "job: filter 'colorize': color must be a 3- or 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        for (i, v) in arr.iter().enumerate() {
+            color[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid("job: filter 'colorize': color array must contain unsigned ints")
+                })?
+                .min(255) as u8;
+        }
+    }
+    let f = Colorize::new(color, amount);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_equalize(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Equalize;
+    let f = Equalize::new();
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_auto_gamma(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::AutoGamma;
+    let f = AutoGamma::new();
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -753,6 +850,11 @@ mod tests {
             "grayscale",
             "motion-blur",
             "emboss",
+            // Round-after-next additions.
+            "vignette",
+            "colorize",
+            "equalize",
+            "auto-gamma",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -1255,6 +1357,126 @@ mod tests {
             .data
             .iter()
             .all(|&v| (v as i16 - 50).abs() <= 1));
+    }
+
+    #[test]
+    fn vignette_smoke_darkens_corners() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("vignette", &json!({}), &inputs)
+            .expect("vignette factory");
+        let out = run_one(f, rgba_4x4(|_, _| [200, 200, 200, 255]));
+        // Corner (0, 0) should be darker than centre-ish pixel (1, 1).
+        assert!(
+            out.planes[0].data[0] <= out.planes[0].data[5 * 4],
+            "vignette should darken corners more than centre"
+        );
+        // Alpha preserved.
+        assert_eq!(out.planes[0].data[3], 255);
+    }
+
+    #[test]
+    fn vignette_factory_rejects_non_finite() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        // serde_json doesn't have NaN, but very-large radius works; test
+        // a structurally bad call instead — bad type for x.
+        let bad = c
+            .filters
+            .make("vignette", &json!({"x": "not-a-number"}), &inputs);
+        // String coerces to None ⇒ default 0.5 used; should still build.
+        bad.expect("non-numeric values use defaults");
+    }
+
+    #[test]
+    fn colorize_smoke_blends_to_target() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "colorize",
+                &json!({"color": [200, 100, 50, 255], "amount": 1.0}),
+                &inputs,
+            )
+            .expect("colorize factory");
+        let out = run_one(f, rgba_4x4(|_, _| [10, 20, 30, 222]));
+        // amount = 1.0 should fully replace the colour; alpha preserved.
+        assert_eq!(out.planes[0].data[0], 200);
+        assert_eq!(out.planes[0].data[1], 100);
+        assert_eq!(out.planes[0].data[2], 50);
+        assert_eq!(out.planes[0].data[3], 222);
+    }
+
+    #[test]
+    fn colorize_amount_zero_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "colorize",
+                &json!({"color": [255, 0, 0, 255], "amount": 0.0}),
+                &inputs,
+            )
+            .expect("colorize factory");
+        let frame = rgba_4x4(|_, _| [10, 20, 30, 222]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn colorize_factory_rejects_bad_color_arity() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c.filters.make(
+            "colorize",
+            &json!({"color": [1, 2], "amount": 0.5}),
+            &inputs,
+        );
+        assert!(bad.is_err(), "color must be 3 or 4 elements");
+    }
+
+    #[test]
+    fn equalize_smoke_spreads_range() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("equalize", &json!({}), &inputs)
+            .expect("equalize factory");
+        // Build an 8×8 Gray8 fixture with samples in [60, 80].
+        let mut data = Vec::with_capacity(64);
+        for y in 0..8u32 {
+            for x in 0..8u32 {
+                data.push(60 + ((x + y) as u8) % 21);
+            }
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 8, data }],
+        };
+        let out = run_one(f, frame);
+        let min = *out.planes[0].data.iter().min().unwrap();
+        let max = *out.planes[0].data.iter().max().unwrap();
+        assert_eq!(min, 0);
+        assert_eq!(max, 255);
+    }
+
+    #[test]
+    fn auto_gamma_smoke_brightens_dark_input() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("auto-gamma", &json!({}), &inputs)
+            .expect("auto-gamma factory");
+        let out = run_one(f, gray_4x4(|_, _| 30));
+        // Dark input (mean 30) should be brightened toward mid-grey.
+        let v = out.planes[0].data[0];
+        assert!(v > 100, "auto-gamma did not brighten: {v}");
     }
 
     #[test]

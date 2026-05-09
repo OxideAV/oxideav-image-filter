@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `output_gray8`). One smoke test per newly-wired filter exercises the
   factory + adapter `push` path on a 4×4 fixture.
 - `Crop` is now re-exported from the crate root.
+- Implement four new ImageMagick-style filters and wire factories into
+  `register()`: `Vignette` (Gaussian radial darkening; Rgb24/Rgba),
+  `Colorize` (linear blend toward a target colour by `amount`;
+  Rgb24/Rgba), `Equalize` (per-channel CDF histogram equalisation;
+  Gray8/Rgb24/Rgba/YUV planar), and `AutoGamma` (geometric-mean-driven
+  per-channel gamma correction; Gray8/Rgb24/Rgba/YUV planar). Alpha is
+  preserved on Rgba; YUV runs only on the luma plane for Equalize /
+  AutoGamma.
 
 ## [0.1.1](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.0...v0.1.1) - 2026-05-06
 

@@ -9,17 +9,23 @@
 //!
 //! # Available filters
 //!
+//! - [`AutoGamma`](auto_gamma::AutoGamma) — auto-gamma: pick a per-channel
+//!   gamma so the geometric mean lands at 0.5.
 //! - [`Blur`](blur::Blur) — separable Gaussian blur with configurable
 //!   radius + sigma, optional plane selector (luma only / chroma only /
 //!   specific plane / all).
 //! - [`BrightnessContrast`](brightness_contrast::BrightnessContrast) —
 //!   linear brightness + contrast adjustment (LUT-based).
+//! - [`Colorize`](colorize::Colorize) — linear blend toward a target
+//!   `[R, G, B, A]` colour by a `0.0..=1.0` amount.
 //! - [`Crop`](crop::Crop) — extract a rectangular subregion
 //!   `(x, y, width, height)` (ImageMagick `-crop WxH+X+Y`).
 //! - [`Edge`](edge::Edge) — Sobel edge magnitude; accepts colour input
 //!   and returns a single-plane luma-ish intensity image.
 //! - [`Emboss`](emboss::Emboss) — 3×3 relief convolution; luma-only
 //!   on YUV, every channel on RGB.
+//! - [`Equalize`](equalize::Equalize) — per-channel histogram
+//!   equalisation via CDF mapping.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
 //! - [`Flop`](flop::Flop) — mirror horizontally (left col ↔ right col).
 //! - [`Gamma`](gamma::Gamma) — power-law gamma curve applied per tone
@@ -53,6 +59,9 @@
 //!   black/white against a cut-off (YUV sets chroma to neutral 128).
 //! - [`Unsharp`](unsharp::Unsharp) — threshold-gated unsharp-mask
 //!   (ImageMagick `-unsharp RxS+A+T`).
+//! - [`Vignette`](vignette::Vignette) — Gaussian radial darkening
+//!   centred at `(x, y)` with `radius` + `sigma` (ImageMagick
+//!   `-vignette RxS{+x{+y}}`).
 //!
 //! # Pixel formats
 //!
@@ -62,11 +71,14 @@
 
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
+pub mod auto_gamma;
 pub mod blur;
 pub mod brightness_contrast;
+pub mod colorize;
 pub mod crop;
 pub mod edge;
 pub mod emboss;
+pub mod equalize;
 pub mod flip;
 pub mod flop;
 pub mod gamma;
@@ -86,12 +98,16 @@ pub mod solarize;
 pub mod threshold;
 pub(crate) mod tonal_lut;
 pub mod unsharp;
+pub mod vignette;
 
+pub use auto_gamma::AutoGamma;
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
+pub use colorize::Colorize;
 pub use crop::Crop;
 pub use edge::Edge;
 pub use emboss::Emboss;
+pub use equalize::Equalize;
 pub use flip::Flip;
 pub use flop::Flop;
 pub use gamma::Gamma;
@@ -110,6 +126,7 @@ pub use sharpen::Sharpen;
 pub use solarize::Solarize;
 pub use threshold::Threshold;
 pub use unsharp::Unsharp;
+pub use vignette::Vignette;
 
 /// Stream-level video parameters threaded into [`ImageFilter::apply`].
 ///
