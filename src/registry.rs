@@ -100,6 +100,9 @@ pub fn register(ctx: &mut RuntimeContext) {
     // r7 factory (perspective).
     ctx.filters
         .register("perspective", Box::new(make_perspective));
+
+    // r7 factory (distort).
+    ctx.filters.register("distort", Box::new(make_distort));
 }
 
 oxideav_core::register!("image_filter", register);
@@ -1323,6 +1326,78 @@ fn make_perspective(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Strea
     )))
 }
 
+fn make_distort(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Distort;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    // Either explicit `mode` ("barrel" / "pincushion") with a single
+    // `strength`, or full `k1` / `k2` coefficients. The mode form is
+    // sugar — when both are supplied the coefficients win.
+    let (mut k1, mut k2) = (0.0f32, 0.0f32);
+    if let Some(mode) = p.and_then(|m| m.get("mode")).and_then(|v| v.as_str()) {
+        let strength = get_f64("strength").unwrap_or(0.3) as f32;
+        match mode {
+            "barrel" => k1 = -strength.abs(),
+            "pincushion" => k1 = strength.abs(),
+            other => {
+                return Err(Error::invalid(format!(
+                    "job: filter 'distort': unknown mode '{other}' (expected 'barrel' or 'pincushion')"
+                )));
+            }
+        }
+    }
+    if let Some(v) = get_f64("k1") {
+        k1 = v as f32;
+    }
+    if let Some(v) = get_f64("k2") {
+        k2 = v as f32;
+    }
+    if !k1.is_finite() || !k2.is_finite() {
+        return Err(Error::invalid(
+            "job: filter 'distort': k1 / k2 must be finite numbers",
+        ));
+    }
+    let mut f = Distort::new(k1, k2);
+    if let (Some(cx), Some(cy)) = (get_f64("cx"), get_f64("cy")) {
+        f = f.with_centre(cx as f32, cy as f32);
+    }
+    if let Some(r) = get_f64("r_norm").or_else(|| get_f64("radius")) {
+        f = f.with_r_norm(r as f32);
+    }
+    if let Some(arr) = p
+        .and_then(|m| m.get("background"))
+        .and_then(|v| v.as_array())
+    {
+        if arr.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'distort': background must be a 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        let mut bg = [0u8; 4];
+        for (i, v) in arr.iter().enumerate() {
+            bg[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid(
+                        "job: filter 'distort': background array must contain unsigned ints",
+                    )
+                })?
+                .min(255) as u8;
+        }
+        f = f.with_background(bg);
+    }
+
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1392,6 +1467,7 @@ mod tests {
             "morphology-open",
             "morphology-close",
             "perspective",
+            "distort",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -2548,6 +2624,55 @@ mod tests {
                 &inputs,
             )
             .expect("nested corner arrays must work");
+    }
+
+    #[test]
+    fn distort_factory_zero_strength_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("distort", &json!({"k1": 0.0, "k2": 0.0}), &inputs)
+            .expect("distort factory");
+        let frame = rgba_4x4(|x, y| [(x * 50) as u8, (y * 50) as u8, 100, 255]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn distort_factory_mode_barrel_builds() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        c.filters
+            .make(
+                "distort",
+                &json!({"mode": "barrel", "strength": 0.2}),
+                &inputs,
+            )
+            .expect("distort factory mode=barrel");
+    }
+
+    #[test]
+    fn distort_factory_mode_pincushion_builds() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        c.filters
+            .make(
+                "distort",
+                &json!({"mode": "pincushion", "strength": 0.2}),
+                &inputs,
+            )
+            .expect("distort factory mode=pincushion");
+    }
+
+    #[test]
+    fn distort_factory_rejects_unknown_mode() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c
+            .filters
+            .make("distort", &json!({"mode": "fisheye"}), &inputs);
+        assert!(bad.is_err(), "unknown mode must fail");
     }
 
     /// Build an 8×8 RGBA fixture from a per-pixel function returning `[R, G, B, A]`.

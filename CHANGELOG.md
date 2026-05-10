@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `morphology-close` — into `register()`. Supports Gray8 / Rgb24 / Rgba
   (alpha pass-through) and planar YUV; out-of-bounds taps clamp to the
   nearest edge.
+- r7: implement `Distort` — radial-polynomial barrel / pincushion lens
+  distortion. Inverse-maps each output pixel through the polynomial
+  `r' = r · (1 + k1·r² + k2·r⁴)` (with `r` normalised against
+  `min(w, h) / 2` by default; overridable via `with_r_norm`) then
+  bilinear-samples. Convenience constructors `Distort::barrel(s)` /
+  `Distort::pincushion(s)` set `k1` directly. Operates on Rgb24 / Rgba.
+  Wires the `distort` factory into `register()` accepting either
+  `mode` + `strength` sugar or explicit `k1` / `k2` coefficients, plus
+  optional `cx`/`cy`, `r_norm`, and `background` keys.
 - r7: implement `Perspective` — 4-corner perspective warp. Solves the
   3×3 homography between source and destination quads via 8×8
   Gauss-Jordan elimination, then inverse-maps every output pixel

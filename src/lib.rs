@@ -27,6 +27,9 @@
 //!   `(x, y, width, height)` (ImageMagick `-crop WxH+X+Y`).
 //! - [`Despeckle`](despeckle::Despeckle) — median-window
 //!   edge-preserving noise reduction; alpha pass-through.
+//! - [`Distort`](distort::Distort) — radial-polynomial barrel /
+//!   pincushion lens distortion (`k1` quadratic + `k2` quartic
+//!   coefficients). IM: `-distort barrel "k1 k2 ..."`.
 //! - [`Edge`](edge::Edge) — Sobel edge magnitude; accepts colour input
 //!   and returns a single-plane luma-ish intensity image.
 //! - [`Emboss`](emboss::Emboss) — 3×3 relief convolution; luma-only
@@ -112,6 +115,7 @@ pub mod colorize;
 pub mod convolve;
 pub mod crop;
 pub mod despeckle;
+pub mod distort;
 pub mod edge;
 pub mod emboss;
 pub mod equalize;
@@ -153,6 +157,7 @@ pub use colorize::Colorize;
 pub use convolve::Convolve;
 pub use crop::Crop;
 pub use despeckle::Despeckle;
+pub use distort::Distort;
 pub use edge::Edge;
 pub use emboss::Emboss;
 pub use equalize::Equalize;
