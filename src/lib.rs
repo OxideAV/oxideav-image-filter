@@ -88,6 +88,10 @@
 //!   (ImageMagick `-swirl N`).
 //! - [`Threshold`](threshold::Threshold) — binarise each sample to
 //!   black/white against a cut-off (YUV sets chroma to neutral 128).
+//! - [`TiltShift`](tilt_shift::TiltShift) — selective Gaussian blur
+//!   masked by a horizontal in-focus band (miniature-photography
+//!   depth-of-field). IM rough analogue: `-blur` masked by a vertical
+//!   gradient.
 //! - [`Tint`](tint::Tint) — luminance-weighted tint toward a target
 //!   colour (ImageMagick `-tint`); bright pixels reach the target,
 //!   dark pixels stay put.
@@ -143,6 +147,7 @@ pub mod solarize;
 pub mod spread;
 pub mod swirl;
 pub mod threshold;
+pub mod tilt_shift;
 pub mod tint;
 pub(crate) mod tonal_lut;
 pub mod unsharp;
@@ -185,6 +190,7 @@ pub use solarize::Solarize;
 pub use spread::Spread;
 pub use swirl::Swirl;
 pub use threshold::Threshold;
+pub use tilt_shift::TiltShift;
 pub use tint::Tint;
 pub use unsharp::Unsharp;
 pub use vignette::Vignette;

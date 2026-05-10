@@ -52,6 +52,15 @@ pub enum PolarDirection {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Polar {
     pub direction: PolarDirection,
+    /// Optional horizontal centre override (in pixel coordinates).
+    /// `None` means image centre `(w-1)/2`.
+    pub cx: Option<f32>,
+    /// Optional vertical centre override (in pixel coordinates).
+    /// `None` means image centre `(h-1)/2`.
+    pub cy: Option<f32>,
+    /// Optional maximum-radius override (in pixels). `None` means the
+    /// distance from the centre to the farthest corner.
+    pub max_radius: Option<f32>,
 }
 
 impl Polar {
@@ -59,6 +68,9 @@ impl Polar {
     pub fn forward() -> Self {
         Self {
             direction: PolarDirection::Polar,
+            cx: None,
+            cy: None,
+            max_radius: None,
         }
     }
 
@@ -66,12 +78,30 @@ impl Polar {
     pub fn inverse() -> Self {
         Self {
             direction: PolarDirection::DePolar,
+            cx: None,
+            cy: None,
+            max_radius: None,
         }
     }
 
     /// Override the distortion direction explicitly.
     pub fn with_direction(mut self, direction: PolarDirection) -> Self {
         self.direction = direction;
+        self
+    }
+
+    /// Override the polar centre. Pass `None` for either coordinate
+    /// to keep the default (image centre).
+    pub fn with_centre(mut self, cx: Option<f32>, cy: Option<f32>) -> Self {
+        self.cx = cx;
+        self.cy = cy;
+        self
+    }
+
+    /// Override the maximum radius. `None` means "auto" (distance from
+    /// centre to farthest corner).
+    pub fn with_max_radius(mut self, max_radius: Option<f32>) -> Self {
+        self.max_radius = max_radius;
         self
     }
 }
@@ -103,11 +133,13 @@ impl ImageFilter for Polar {
             });
         }
 
-        let cx = (w as f32 - 1.0) * 0.5;
-        let cy = (h as f32 - 1.0) * 0.5;
+        let cx = self.cx.unwrap_or((w as f32 - 1.0) * 0.5);
+        let cy = self.cy.unwrap_or((h as f32 - 1.0) * 0.5);
         // Distance to the farthest corner — the smallest radius that
-        // covers the whole input image.
-        let max_r = ((w.max(1) as f32 - 1.0 - cx).hypot(h.max(1) as f32 - 1.0 - cy)).max(1.0);
+        // covers the whole input image. Honoured only when the user
+        // hasn't supplied an explicit `max_radius`.
+        let auto_max_r = ((w.max(1) as f32 - 1.0 - cx).hypot(h.max(1) as f32 - 1.0 - cy)).max(1.0);
+        let max_r = self.max_radius.unwrap_or(auto_max_r).max(1.0);
 
         match self.direction {
             PolarDirection::Polar => {
@@ -309,6 +341,48 @@ mod tests {
         assert!(
             bright_row_avg > dark_row_avg,
             "depolar didn't lift bright ring into a row: {bright_row_avg} vs {dark_row_avg}"
+        );
+    }
+
+    #[test]
+    fn centre_override_changes_warp_geometry() {
+        // Two passes of polar with different centres should produce
+        // different output bytes — the centre influences which input
+        // pixel sits at the radial origin.
+        let input = rgb(16, 16, |x, y| (x as u8 * 8, y as u8 * 8, 64));
+        let p_default = Polar::forward();
+        let p_offset = Polar::forward().with_centre(Some(2.0), Some(2.0));
+        let a = p_default.apply(&input, params_rgb(16, 16)).unwrap();
+        let b = p_offset.apply(&input, params_rgb(16, 16)).unwrap();
+        assert_ne!(
+            a.planes[0].data, b.planes[0].data,
+            "centre override should change polar output"
+        );
+    }
+
+    #[test]
+    fn max_radius_override_clamps_distortion() {
+        // Tiny max_radius keeps the polar output close to the centre's
+        // colour everywhere — easy to observe by checking the bottom
+        // row (which would normally sample the corners).
+        let input = rgb(
+            16,
+            16,
+            |x, _| if x < 8 { (10, 10, 10) } else { (200, 200, 200) },
+        );
+        let f = Polar::forward().with_max_radius(Some(0.5));
+        let out = f.apply(&input, params_rgb(16, 16)).unwrap();
+        // With a near-zero max_radius, every output sample sits within
+        // a tiny disc around the centre. Centre-area input avg should
+        // dominate; bottom row samples should look very similar.
+        let row_a = &out.planes[0].data[0..3];
+        let row_b = &out.planes[0].data[(15 * 16 + 8) * 3..(15 * 16 + 8) * 3 + 3];
+        let diff: i32 = (0..3)
+            .map(|i| (row_a[i] as i32 - row_b[i] as i32).abs())
+            .sum();
+        assert!(
+            diff < 100,
+            "max_radius=0.5 should keep output near-uniform, got diff = {diff}"
         );
     }
 

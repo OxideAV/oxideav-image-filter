@@ -103,6 +103,10 @@ pub fn register(ctx: &mut RuntimeContext) {
 
     // r7 factory (distort).
     ctx.filters.register("distort", Box::new(make_distort));
+
+    // r7 factory (tilt-shift).
+    ctx.filters
+        .register("tilt-shift", Box::new(make_tilt_shift));
 }
 
 oxideav_core::register!("image_filter", register);
@@ -1106,9 +1110,26 @@ fn make_convolve(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFi
     )))
 }
 
-fn make_polar(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+/// Apply optional `cx` / `cy` / `max_radius` (alias `max_r`) overrides
+/// from a JSON parameter object onto a `Polar`. Mirrors the new
+/// builder methods exposed in r7.
+fn polar_apply_overrides(mut f: crate::Polar, params: &Value) -> crate::Polar {
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let cx = get_f64("cx").map(|v| v as f32);
+    let cy = get_f64("cy").map(|v| v as f32);
+    if cx.is_some() || cy.is_some() {
+        f = f.with_centre(cx, cy);
+    }
+    if let Some(r) = get_f64("max_radius").or_else(|| get_f64("max_r")) {
+        f = f.with_max_radius(Some(r as f32));
+    }
+    f
+}
+
+fn make_polar(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::Polar;
-    let f = Polar::forward();
+    let f = polar_apply_overrides(Polar::forward(), params);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(
@@ -1118,9 +1139,9 @@ fn make_polar(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
     )))
 }
 
-fn make_depolar(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+fn make_depolar(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::Polar;
-    let f = Polar::inverse();
+    let f = polar_apply_overrides(Polar::inverse(), params);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(
@@ -1398,6 +1419,51 @@ fn make_distort(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
     )))
 }
 
+fn make_tilt_shift(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::TiltShift;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let mut f = TiltShift::default();
+    if let Some(c) = get_f64("focus_centre").or_else(|| get_f64("centre")) {
+        f = f.with_focus_centre(c as f32);
+    }
+    if let Some(h) = get_f64("focus_height").or_else(|| get_f64("height")) {
+        f = f.with_focus_height(h as f32);
+    }
+    if let Some(h) = get_f64("falloff_height").or_else(|| get_f64("falloff")) {
+        f = f.with_falloff_height(h as f32);
+    }
+    let radius = get_u64("blur_radius")
+        .or_else(|| get_u64("radius"))
+        .map(|v| v as u32)
+        .unwrap_or(f.blur_radius);
+    let sigma = get_f64("blur_sigma")
+        .or_else(|| get_f64("sigma"))
+        .map(|v| v as f32)
+        .unwrap_or(f.blur_sigma);
+    f = f.with_blur(radius, sigma);
+
+    if !f.focus_centre.is_finite()
+        || !f.focus_height.is_finite()
+        || !f.falloff_height.is_finite()
+        || !f.blur_sigma.is_finite()
+    {
+        return Err(Error::invalid(
+            "job: filter 'tilt-shift': focus_centre / focus_height / falloff_height / sigma must be finite",
+        ));
+    }
+
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1468,6 +1534,7 @@ mod tests {
             "morphology-close",
             "perspective",
             "distort",
+            "tilt-shift",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -2673,6 +2740,69 @@ mod tests {
             .filters
             .make("distort", &json!({"mode": "fisheye"}), &inputs);
         assert!(bad.is_err(), "unknown mode must fail");
+    }
+
+    #[test]
+    fn tilt_shift_factory_smoke_flat_image() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "tilt-shift",
+                &json!({
+                    "focus_centre": 0.5,
+                    "focus_height": 0.4,
+                    "falloff_height": 0.3,
+                    "blur_radius": 2,
+                    "blur_sigma": 1.0
+                }),
+                &inputs,
+            )
+            .expect("tilt-shift factory");
+        let out = run_one(f, gray_4x4(|_, _| 100));
+        // Flat input survives both blur and weighted blend.
+        for &v in &out.planes[0].data {
+            assert!((v as i16 - 100).abs() <= 1);
+        }
+    }
+
+    #[test]
+    fn tilt_shift_factory_accepts_short_aliases() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        c.filters
+            .make(
+                "tilt-shift",
+                &json!({
+                    "centre": 0.6,
+                    "height": 0.3,
+                    "falloff": 0.2,
+                    "radius": 3,
+                    "sigma": 1.5
+                }),
+                &inputs,
+            )
+            .expect("tilt-shift accepts short alias keys");
+    }
+
+    #[test]
+    fn polar_factory_accepts_centre_overrides() {
+        // r7 follow-up: polar / depolar should now surface cx / cy /
+        // max_radius via JSON. Build with explicit centre + max_radius
+        // and verify the factory builds.
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        c.filters
+            .make(
+                "polar",
+                &json!({"cx": 2.0, "cy": 5.0, "max_radius": 3.0}),
+                &inputs,
+            )
+            .expect("polar with overrides");
+        c.filters
+            .make("depolar", &json!({"cx": 4.0, "max_r": 6.0}), &inputs)
+            .expect("depolar with overrides");
     }
 
     /// Build an 8×8 RGBA fixture from a per-pixel function returning `[R, G, B, A]`.

@@ -139,7 +139,24 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   bias / divisor; alpha pass-through on RGBA. IM: `-convolve "..."`.
 - **`Polar`** / **`PolarDirection::DePolar`** — Cartesian ⇄ polar
   coordinate distortion (`-distort Polar` / `-distort DePolar`). Bends
-  an image into a fan or unrolls a fan back to a rectangle.
+  an image into a fan or unrolls a fan back to a rectangle. r7
+  surfaces optional `cx` / `cy` / `max_radius` overrides through both
+  the builder API and the JSON schema.
+- **`Morphology`** + **`MorphologyChain`** — N-iteration greyscale
+  dilate / erode with a 3×3 square or cross structuring element; plus
+  `open` (erode → dilate) and `close` (dilate → erode) compositions.
+  IM: `-morphology Dilate|Erode|Open|Close`.
+- **`Perspective`** — 4-corner perspective warp; solves the 3×3
+  homography from src/dst quads with 8×8 Gauss-Jordan elimination,
+  then inverse-maps each output pixel via `H⁻¹` with bilinear
+  sampling. IM: `-distort Perspective "..."`.
+- **`Distort`** — radial-polynomial barrel / pincushion lens
+  distortion (`k1` quadratic + `k2` quartic coefficients). IM:
+  `-distort barrel "k1 k2 ..."`.
+- **`TiltShift`** — selective Gaussian blur masked by a horizontal
+  in-focus band (miniature-photography depth-of-field). Configurable
+  `focus_centre`, `focus_height`, `falloff_height`, plus the
+  underlying blur `radius` / `sigma`.
 
 All filters listed here share the `ImageFilter` trait — chain them
 manually with repeated `.apply()` calls, or feed them through

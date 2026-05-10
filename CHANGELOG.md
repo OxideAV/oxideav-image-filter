@@ -16,6 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `morphology-close` — into `register()`. Supports Gray8 / Rgb24 / Rgba
   (alpha pass-through) and planar YUV; out-of-bounds taps clamp to the
   nearest edge.
+- r7: implement `TiltShift` — selective Gaussian blur masked by a
+  horizontal in-focus band (miniature-photography depth-of-field).
+  Builds the blurred reference frame via the existing `Blur` filter
+  then per-row blends `weight · sharp + (1 - weight) · blur`, where
+  weight is `1.0` inside the focus band and ramps linearly to `0.0`
+  across `falloff_height`. Supports Gray8 / Rgb24 / Rgba (alpha
+  pass-through) / planar YUV. JSON schema: `focus_centre`,
+  `focus_height`, `falloff_height` (or short aliases `centre` /
+  `height` / `falloff`), plus `blur_radius` / `blur_sigma` (or short
+  aliases `radius` / `sigma`).
+- r7: surface `cx` / `cy` / `max_radius` (alias `max_r`) overrides
+  through the JSON schema for `polar` and `depolar` factories. Also
+  exposes new `Polar::with_centre` / `Polar::with_max_radius` builder
+  methods (the previous defaults — image centre + farthest-corner
+  radius — remain unchanged when no override is supplied).
 - r7: implement `Distort` — radial-polynomial barrel / pincushion lens
   distortion. Inverse-maps each output pixel through the polynomial
   `r' = r · (1 + k1·r² + k2·r⁴)` (with `r` normalised against
