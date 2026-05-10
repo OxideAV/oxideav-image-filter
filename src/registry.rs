@@ -12,7 +12,10 @@ use oxideav_core::{
 };
 use serde_json::Value;
 
-use crate::{ImageFilter, Planes, VideoStreamParams};
+use crate::{
+    composite::{Composite, CompositeOp},
+    ImageFilter, Planes, TwoInputImageFilter, VideoStreamParams,
+};
 
 /// Install every image-filter factory into the runtime context's
 /// filter registry. Idempotent — last write wins per filter name.
@@ -107,6 +110,29 @@ pub fn register(ctx: &mut RuntimeContext) {
     // r7 factory (tilt-shift).
     ctx.filters
         .register("tilt-shift", Box::new(make_tilt_shift));
+
+    // r8 factories: Porter–Duff and arithmetic composite operators
+    // (two-input). Mirrors ImageMagick's `-compose <op>` family.
+    for op in [
+        CompositeOp::Over,
+        CompositeOp::In,
+        CompositeOp::Out,
+        CompositeOp::Atop,
+        CompositeOp::Xor,
+        CompositeOp::Plus,
+        CompositeOp::Multiply,
+        CompositeOp::Screen,
+        CompositeOp::Overlay,
+        CompositeOp::Darken,
+        CompositeOp::Lighten,
+        CompositeOp::Difference,
+    ] {
+        let name = format!("composite-{}", op.name());
+        ctx.filters.register(
+            &name,
+            Box::new(move |params, inputs| make_composite(op, params, inputs)),
+        );
+    }
 }
 
 oxideav_core::register!("image_filter", register);
@@ -182,6 +208,173 @@ fn video_in_port(inputs: &[PortSpec]) -> PortSpec {
         .find(|p| matches!(p.params, PortParams::Video { .. }))
         .cloned()
         .unwrap_or_else(|| PortSpec::video("in", 0, 0, PixelFormat::Yuv420P, TimeBase::new(1, 30)))
+}
+
+/// Wraps a [`TwoInputImageFilter`] in the [`StreamFilter`] contract.
+/// Two video input ports — `0 = src` (foreground), `1 = dst`
+/// (background) — and one video output port. The adapter buffers the
+/// most-recent frame from each input port and emits the composite
+/// whenever both ports have a frame in hand. Buffered frames are
+/// consumed (cleared) on every emit so the next frame on either port
+/// must be paired with a fresh frame on the other before the next
+/// emit. `flush` clears any pending side without emitting.
+struct TwoInputImageFilterAdapter {
+    inner: Box<dyn TwoInputImageFilter>,
+    inp: [PortSpec; 2],
+    outp: [PortSpec; 1],
+    params: VideoStreamParams,
+    pending_src: Option<oxideav_core::VideoFrame>,
+    pending_dst: Option<oxideav_core::VideoFrame>,
+}
+
+impl TwoInputImageFilterAdapter {
+    fn new(
+        inner: Box<dyn TwoInputImageFilter>,
+        src_port: PortSpec,
+        dst_port: PortSpec,
+        out_port: PortSpec,
+    ) -> Self {
+        // The two input ports must agree on shape — pick `src`'s
+        // params as the canonical pair (the factory layer enforces
+        // the match before we get here).
+        let params = match &src_port.params {
+            PortParams::Video {
+                format,
+                width,
+                height,
+                ..
+            } => VideoStreamParams {
+                format: *format,
+                width: *width,
+                height: *height,
+            },
+            _ => VideoStreamParams {
+                format: PixelFormat::Rgba,
+                width: 0,
+                height: 0,
+            },
+        };
+        Self {
+            inner,
+            inp: [src_port, dst_port],
+            outp: [out_port],
+            params,
+            pending_src: None,
+            pending_dst: None,
+        }
+    }
+}
+
+impl StreamFilter for TwoInputImageFilterAdapter {
+    fn input_ports(&self) -> &[PortSpec] {
+        &self.inp
+    }
+    fn output_ports(&self) -> &[PortSpec] {
+        &self.outp
+    }
+    fn push(&mut self, ctx: &mut dyn FilterContext, port: usize, frame: &Frame) -> Result<()> {
+        let Frame::Video(v) = frame else {
+            return Err(Error::invalid(
+                "two-input image-filter adapter: only video frames are accepted",
+            ));
+        };
+        match port {
+            0 => self.pending_src = Some(v.clone()),
+            1 => self.pending_dst = Some(v.clone()),
+            other => {
+                return Err(Error::invalid(format!(
+                    "two-input image-filter adapter: unknown input port {other}"
+                )));
+            }
+        }
+        if self.pending_src.is_some() && self.pending_dst.is_some() {
+            // Both inputs are buffered — take and emit. The earlier
+            // is_some() guards prevent the take() from clearing a
+            // half-pair (which would force the next push to wait for
+            // *two* fresh frames instead of one).
+            let src = self.pending_src.take().unwrap();
+            let dst = self.pending_dst.take().unwrap();
+            let out = self.inner.apply_two(&src, &dst, self.params)?;
+            ctx.emit(0, Frame::Video(out))?;
+        }
+        Ok(())
+    }
+    fn reset(&mut self) -> Result<()> {
+        self.pending_src = None;
+        self.pending_dst = None;
+        Ok(())
+    }
+}
+
+/// Resolve `(src, dst)` input ports for the two-input composite
+/// adapter. Looks for ports named `src` / `dst` first; falls back to
+/// the first two video ports in declaration order. Both ports must
+/// share the same `(format, width, height)` — the factory rejects
+/// mismatches up front so the adapter can rely on the invariant.
+fn two_video_in_ports(inputs: &[PortSpec]) -> (PortSpec, PortSpec) {
+    let by_name = |want: &str| inputs.iter().find(|p| p.name == want).cloned();
+    let src = by_name("src");
+    let dst = by_name("dst");
+    if let (Some(s), Some(d)) = (src, dst) {
+        return (s, d);
+    }
+    let mut video = inputs
+        .iter()
+        .filter(|p| matches!(p.params, PortParams::Video { .. }))
+        .cloned();
+    let s = video
+        .next()
+        .unwrap_or_else(|| PortSpec::video("src", 0, 0, PixelFormat::Rgba, TimeBase::new(1, 30)));
+    let d = video
+        .next()
+        .unwrap_or_else(|| PortSpec::video("dst", 0, 0, PixelFormat::Rgba, TimeBase::new(1, 30)));
+    (s, d)
+}
+
+fn make_composite(
+    op: CompositeOp,
+    _params: &Value,
+    inputs: &[PortSpec],
+) -> Result<Box<dyn StreamFilter>> {
+    let (src_port, dst_port) = two_video_in_ports(inputs);
+    // Enforce shape parity between the two inputs; the algebra
+    // assumes per-pixel correspondence.
+    if let (
+        PortParams::Video {
+            format: sf,
+            width: sw,
+            height: sh,
+            ..
+        },
+        PortParams::Video {
+            format: df,
+            width: dw,
+            height: dh,
+            ..
+        },
+    ) = (&src_port.params, &dst_port.params)
+    {
+        if sf != df || sw != dw || sh != dh {
+            return Err(Error::invalid(format!(
+                "job: filter 'composite-{}': src and dst ports must agree on \
+                 (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})",
+                op.name()
+            )));
+        }
+    }
+    // Output port mirrors the src port shape but uses the canonical
+    // "video" name so downstream wiring matches the rest of the
+    // crate's filters.
+    let out_port = PortSpec {
+        name: "video".to_string(),
+        ..src_port.clone()
+    };
+    Ok(Box::new(TwoInputImageFilterAdapter::new(
+        Box::new(Composite::new(op)),
+        src_port,
+        dst_port,
+        out_port,
+    )))
 }
 
 fn make_blur(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
@@ -1535,6 +1728,19 @@ mod tests {
             "perspective",
             "distort",
             "tilt-shift",
+            // r8 additions (Porter–Duff + arithmetic composites).
+            "composite-over",
+            "composite-in",
+            "composite-out",
+            "composite-atop",
+            "composite-xor",
+            "composite-plus",
+            "composite-multiply",
+            "composite-screen",
+            "composite-overlay",
+            "composite-darken",
+            "composite-lighten",
+            "composite-difference",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -2803,6 +3009,279 @@ mod tests {
         c.filters
             .make("depolar", &json!({"cx": 4.0, "max_r": 6.0}), &inputs)
             .expect("depolar with overrides");
+    }
+
+    // --- r8 composite tests (two-input adapter) ---
+
+    /// Build a single-pixel RGBA frame for the 2x2 fixture matrix.
+    fn rgba_1x1(pixel: [u8; 4]) -> VideoFrame {
+        VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 4,
+                data: pixel.to_vec(),
+            }],
+        }
+    }
+
+    /// Push (src, dst) into a two-input filter and return the single
+    /// emitted frame. Asserts exactly one emit.
+    fn run_two(mut f: Box<dyn StreamFilter>, src: VideoFrame, dst: VideoFrame) -> VideoFrame {
+        let mut col = CollectCtx { out: Vec::new() };
+        f.push(&mut col, 0, &Frame::Video(src))
+            .expect("push src must not error");
+        // Nothing emitted yet — only one input is buffered.
+        assert!(
+            col.out.is_empty(),
+            "expected no emit before dst arrives, got {}",
+            col.out.len()
+        );
+        f.push(&mut col, 1, &Frame::Video(dst))
+            .expect("push dst must not error");
+        assert_eq!(col.out.len(), 1, "expected exactly one emit after pair");
+        let (port, frame) = col.out.into_iter().next().unwrap();
+        assert_eq!(port, 0);
+        match frame {
+            Frame::Video(v) => v,
+            other => panic!("composite emitted non-video frame: {other:?}"),
+        }
+    }
+
+    /// Standard 2x2 fixture matrix: opaque red over opaque blue.
+    fn op_red() -> VideoFrame {
+        rgba_1x1([255, 0, 0, 255])
+    }
+    fn op_blue() -> VideoFrame {
+        rgba_1x1([0, 0, 255, 255])
+    }
+    fn half_red() -> VideoFrame {
+        rgba_1x1([255, 0, 0, 128])
+    }
+    fn transparent() -> VideoFrame {
+        rgba_1x1([0, 0, 0, 0])
+    }
+
+    fn make_composite_filter(name: &str) -> Box<dyn StreamFilter> {
+        let c = ctx();
+        // Two ports of identical RGBA shape, named src + dst.
+        let inputs = [
+            PortSpec::video("src", 1, 1, PixelFormat::Rgba, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 1, 1, PixelFormat::Rgba, TimeBase::new(1, 30)),
+        ];
+        c.filters
+            .make(name, &json!({}), &inputs)
+            .unwrap_or_else(|e| panic!("{name} factory: {e}"))
+    }
+
+    #[test]
+    fn composite_over_2x2_fixture() {
+        // (op-red, op-blue) ⇒ red wins
+        let out = run_two(make_composite_filter("composite-over"), op_red(), op_blue());
+        assert_eq!(out.planes[0].data[0..4], [255, 0, 0, 255]);
+        // (half-red, op-blue) ⇒ ~50/50 blend
+        let out = run_two(
+            make_composite_filter("composite-over"),
+            half_red(),
+            op_blue(),
+        );
+        assert!((out.planes[0].data[0] as i16 - 128).abs() <= 2);
+        assert_eq!(out.planes[0].data[3], 255);
+        // (op-red, transparent) ⇒ red survives
+        let out = run_two(
+            make_composite_filter("composite-over"),
+            op_red(),
+            transparent(),
+        );
+        assert_eq!(out.planes[0].data[0..4], [255, 0, 0, 255]);
+        // (transparent, op-blue) ⇒ blue survives
+        let out = run_two(
+            make_composite_filter("composite-over"),
+            transparent(),
+            op_blue(),
+        );
+        assert_eq!(out.planes[0].data[0..4], [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn composite_in_2x2_fixture() {
+        let out = run_two(make_composite_filter("composite-in"), op_red(), op_blue());
+        assert_eq!(out.planes[0].data[0..4], [255, 0, 0, 255]);
+        let out = run_two(
+            make_composite_filter("composite-in"),
+            op_red(),
+            transparent(),
+        );
+        assert_eq!(out.planes[0].data[0..4], [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn composite_out_2x2_fixture() {
+        let out = run_two(make_composite_filter("composite-out"), op_red(), op_blue());
+        assert_eq!(out.planes[0].data[0..4], [0, 0, 0, 0]);
+        let out = run_two(
+            make_composite_filter("composite-out"),
+            op_red(),
+            transparent(),
+        );
+        assert_eq!(out.planes[0].data[0..4], [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn composite_atop_2x2_fixture() {
+        let out = run_two(make_composite_filter("composite-atop"), op_red(), op_blue());
+        assert_eq!(out.planes[0].data[0..4], [255, 0, 0, 255]);
+        let out = run_two(
+            make_composite_filter("composite-atop"),
+            op_red(),
+            transparent(),
+        );
+        assert_eq!(out.planes[0].data[0..4], [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn composite_xor_2x2_fixture() {
+        let out = run_two(make_composite_filter("composite-xor"), op_red(), op_blue());
+        assert_eq!(out.planes[0].data[0..4], [0, 0, 0, 0]);
+        let out = run_two(
+            make_composite_filter("composite-xor"),
+            op_red(),
+            transparent(),
+        );
+        assert_eq!(out.planes[0].data[0..4], [255, 0, 0, 255]);
+        let out = run_two(
+            make_composite_filter("composite-xor"),
+            transparent(),
+            op_blue(),
+        );
+        assert_eq!(out.planes[0].data[0..4], [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn composite_plus_2x2_fixture() {
+        let out = run_two(make_composite_filter("composite-plus"), op_red(), op_blue());
+        // Per-channel sum, clamp.
+        assert_eq!(out.planes[0].data[0..4], [255, 0, 255, 255]);
+    }
+
+    #[test]
+    fn composite_multiply_2x2_fixture() {
+        // (255,0,0) * (0,0,255) / 255 ⇒ (0,0,0)
+        let out = run_two(
+            make_composite_filter("composite-multiply"),
+            op_red(),
+            op_blue(),
+        );
+        assert_eq!(out.planes[0].data[0..3], [0, 0, 0]);
+    }
+
+    #[test]
+    fn composite_screen_2x2_fixture() {
+        // 255 - (255-255)*(255-0)/255 = 255 in R; 255 - 255*0/255 = 0... wait
+        // 255 - (255 - r_s) * (255 - r_d) / 255
+        // R: 255 - 0*255/255 = 255
+        // G: 255 - 255*255/255 = 0
+        // B: 255 - 255*0/255 = 255
+        let out = run_two(
+            make_composite_filter("composite-screen"),
+            op_red(),
+            op_blue(),
+        );
+        assert_eq!(out.planes[0].data[0..3], [255, 0, 255]);
+    }
+
+    #[test]
+    fn composite_darken_2x2_fixture() {
+        // min channel-wise: (255,0,0) vs (0,0,255) ⇒ (0,0,0)
+        let out = run_two(
+            make_composite_filter("composite-darken"),
+            op_red(),
+            op_blue(),
+        );
+        assert_eq!(out.planes[0].data[0..3], [0, 0, 0]);
+    }
+
+    #[test]
+    fn composite_lighten_2x2_fixture() {
+        // max channel-wise: (255,0,0) vs (0,0,255) ⇒ (255,0,255)
+        let out = run_two(
+            make_composite_filter("composite-lighten"),
+            op_red(),
+            op_blue(),
+        );
+        assert_eq!(out.planes[0].data[0..3], [255, 0, 255]);
+    }
+
+    #[test]
+    fn composite_difference_2x2_fixture() {
+        // |s - d|: |255-0|=255, |0-0|=0, |0-255|=255
+        let out = run_two(
+            make_composite_filter("composite-difference"),
+            op_red(),
+            op_blue(),
+        );
+        assert_eq!(out.planes[0].data[0..3], [255, 0, 255]);
+    }
+
+    #[test]
+    fn composite_overlay_2x2_fixture() {
+        // dst<128 path: 2 * 255 * 0 / 255 = 0 (R); 2 * 0 * 0 / 255 = 0 (G);
+        // dst=255 ⇒ screen path: 255 - 2 * 255 * 0 / 255 = 255 (B)
+        let out = run_two(
+            make_composite_filter("composite-overlay"),
+            op_red(),
+            op_blue(),
+        );
+        assert_eq!(out.planes[0].data[0..3], [0, 0, 255]);
+    }
+
+    #[test]
+    fn composite_factory_rejects_shape_mismatch() {
+        let c = ctx();
+        let inputs = [
+            PortSpec::video("src", 4, 4, PixelFormat::Rgba, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 8, 8, PixelFormat::Rgba, TimeBase::new(1, 30)),
+        ];
+        let bad = c.filters.make("composite-over", &json!({}), &inputs);
+        assert!(bad.is_err(), "shape mismatch must fail at factory time");
+    }
+
+    #[test]
+    fn composite_factory_rejects_format_mismatch() {
+        let c = ctx();
+        let inputs = [
+            PortSpec::video("src", 4, 4, PixelFormat::Rgba, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 4, 4, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+        ];
+        let bad = c.filters.make("composite-over", &json!({}), &inputs);
+        assert!(bad.is_err(), "format mismatch must fail at factory time");
+    }
+
+    #[test]
+    fn composite_factory_two_input_ports_exposed() {
+        let f = make_composite_filter("composite-multiply");
+        assert_eq!(f.input_ports().len(), 2);
+        assert_eq!(f.output_ports().len(), 1);
+        assert_eq!(f.input_ports()[0].name, "src");
+        assert_eq!(f.input_ports()[1].name, "dst");
+    }
+
+    #[test]
+    fn composite_adapter_buffers_until_pair_ready() {
+        // Two pushes on port 0 in a row without any port-1 input should
+        // not emit; the second one simply replaces the buffered src.
+        let mut f = make_composite_filter("composite-over");
+        let mut col = CollectCtx { out: Vec::new() };
+        f.push(&mut col, 0, &Frame::Video(op_red())).unwrap();
+        f.push(&mut col, 0, &Frame::Video(transparent())).unwrap();
+        assert!(col.out.is_empty(), "no emit before any dst arrives");
+        f.push(&mut col, 1, &Frame::Video(op_blue())).unwrap();
+        assert_eq!(col.out.len(), 1);
+        // The second src (transparent) is what was paired with op_blue,
+        // so the result is op_blue (transparent over blue ⇒ blue).
+        let Frame::Video(v) = &col.out[0].1 else {
+            panic!("non-video emit");
+        };
+        assert_eq!(v.planes[0].data[0..4], [0, 0, 255, 255]);
     }
 
     /// Build an 8×8 RGBA fixture from a per-pixel function returning `[R, G, B, A]`.

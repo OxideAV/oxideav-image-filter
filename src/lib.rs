@@ -20,6 +20,10 @@
 //!   (Sobel-on-luma + invert ⇒ Gray8 sketch). IM: `-charcoal R`.
 //! - [`Colorize`](colorize::Colorize) — linear blend toward a target
 //!   `[R, G, B, A]` colour by a `0.0..=1.0` amount.
+//! - [`Composite`](composite::Composite) — two-input Porter–Duff and
+//!   arithmetic blend (`over`, `in`, `out`, `atop`, `xor`, `plus`,
+//!   `multiply`, `screen`, `overlay`, `darken`, `lighten`,
+//!   `difference`). Implements [`TwoInputImageFilter`].
 //! - [`Convolve`](convolve::Convolve) — user-supplied square `N×N`
 //!   convolution kernel (odd `N`); optional bias / divisor; alpha
 //!   pass-through on RGBA. IM: `-convolve "..."`.
@@ -116,6 +120,7 @@ pub mod blur;
 pub mod brightness_contrast;
 pub mod charcoal;
 pub mod colorize;
+pub mod composite;
 pub mod convolve;
 pub mod crop;
 pub mod despeckle;
@@ -159,6 +164,7 @@ pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
 pub use charcoal::Charcoal;
 pub use colorize::Colorize;
+pub use composite::{Composite, CompositeOp};
 pub use convolve::Convolve;
 pub use crop::Crop;
 pub use despeckle::Despeckle;
@@ -225,6 +231,33 @@ pub trait ImageFilter: Send {
     /// Apply the filter to `input`, producing a new frame. The filter
     /// must not retain any reference to `input`.
     fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error>;
+}
+
+/// A filter that combines two video frames — `src` (foreground) and
+/// `dst` (background) — into a single output frame. Like
+/// [`ImageFilter`] this contract is stateless: the same `(src, dst)`
+/// pair always yields the same output.
+///
+/// Used by the [`Composite`] family of Porter–Duff and arithmetic
+/// blend operators. The two-input adapter shim in [`crate::registry`]
+/// plumbs the
+/// pair of input ports through the [`StreamFilter`](oxideav_core::StreamFilter)
+/// trait by buffering the most recent frame from each port and
+/// emitting whenever both ports have a frame in hand.
+///
+/// `src` arrives on input port `0`, `dst` on input port `1`. Both
+/// frames must share the same `format` / `width` / `height` —
+/// implementations can assume that and panic / err out on mismatched
+/// shapes.
+pub trait TwoInputImageFilter: Send {
+    /// Combine `src` and `dst` into a new frame. Neither input is
+    /// retained beyond this call.
+    fn apply_two(
+        &self,
+        src: &VideoFrame,
+        dst: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error>;
 }
 
 /// Selects which planes of a video frame a filter operates on.

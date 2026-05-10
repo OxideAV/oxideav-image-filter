@@ -158,7 +158,24 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `focus_centre`, `focus_height`, `falloff_height`, plus the
   underlying blur `radius` / `sigma`.
 
-All filters listed here share the `ImageFilter` trait — chain them
+### Two-input compositing
+
+- **`Composite`** + **`CompositeOp`** — Porter–Duff and arithmetic
+  blends of a foreground (`src`) over a background (`dst`) frame.
+  Twelve operators registered as `composite-<op>` factories:
+  - Porter–Duff coverage: `over`, `in`, `out`, `atop`, `xor`.
+  - Arithmetic / per-channel: `plus` (clamped sum), `multiply`,
+    `screen`, `overlay` (multiply-or-screen on `dst < 128`),
+    `darken` (per-channel min), `lighten` (per-channel max),
+    `difference` (`|src - dst|`).
+  - Operates on `Gray8` / `Rgb24` / `Rgba` with **straight (non-
+    premultiplied)** alpha throughout. The new `TwoInputImageFilter`
+    trait formalises the two-port shape; the
+    `TwoInputImageFilterAdapter` shim buffers per-port frames and
+    emits whenever both ports have a frame in hand.
+  - IM analogue: `-compose <op> -composite`.
+
+All single-input filters listed above share the `ImageFilter` trait — chain them
 manually with repeated `.apply()` calls, or feed them through
 `oxideav-pipeline` as `video.<name>` filter nodes in a JSON job.
 

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r8: introduce a two-input filter contract (`TwoInputImageFilter`
+  trait + `TwoInputImageFilterAdapter` `StreamFilter` shim) and land
+  the Porter–Duff and arithmetic `Composite` family. Twelve operator
+  variants — `Over`, `In`, `Out`, `Atop`, `Xor`, `Plus`, `Multiply`,
+  `Screen`, `Overlay`, `Darken`, `Lighten`, `Difference` — each
+  registered as a `composite-<op>` factory. The adapter buffers the
+  most-recent frame from each input port (`0 = src`, `1 = dst`) and
+  emits whenever both are in hand; mismatched input shapes are
+  rejected at factory time. Operates on `Gray8` / `Rgb24` / `Rgba`
+  with straight (non-premultiplied) alpha; YUV / planar / higher-bit
+  formats return `Unsupported`. Each operator has a 2×2 fixture-pair
+  unit test through the registered factory plus per-pixel arithmetic
+  unit tests in the `composite` module. Filter count: 38 → 39 named
+  types (12 new factories).
 - r7: implement `Morphology` (greyscale dilate / erode with a 3×3 square
   or cross structuring element + N iterations) and `MorphologyChain`
   (open / close composition). Wires four factory names —
