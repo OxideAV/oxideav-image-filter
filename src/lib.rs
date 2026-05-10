@@ -46,6 +46,10 @@
 //!   with optional mid-tone gamma (ImageMagick `-level`).
 //! - [`Modulate`](modulate::Modulate) — adjust brightness, saturation,
 //!   and hue via HSL round-trip (ImageMagick `-modulate`).
+//! - [`Morphology`](morphology::Morphology) — N-iteration greyscale
+//!   dilate / erode with a 3×3 square or cross structuring element;
+//!   plus [`MorphologyChain`](morphology::MorphologyChain) for the
+//!   open / close compositions. IM: `-morphology Dilate|Erode|Open|Close`.
 //! - [`MotionBlur`](motion_blur::MotionBlur) — directional 1-D Gaussian
 //!   blur along `angle_degrees` (ImageMagick `-motion-blur RxS+A`).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
@@ -115,6 +119,7 @@ pub mod grayscale;
 pub mod implode;
 pub mod level;
 pub mod modulate;
+pub mod morphology;
 pub mod motion_blur;
 pub mod negate;
 pub mod normalize;
@@ -154,6 +159,7 @@ pub use grayscale::Grayscale;
 pub use implode::Implode;
 pub use level::Level;
 pub use modulate::Modulate;
+pub use morphology::{Morphology, MorphologyChain, MorphologyOp, StructuringElement};
 pub use motion_blur::MotionBlur;
 pub use negate::Negate;
 pub use normalize::Normalize;

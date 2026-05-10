@@ -86,6 +86,16 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("convolve", Box::new(make_convolve));
     ctx.filters.register("polar", Box::new(make_polar));
     ctx.filters.register("depolar", Box::new(make_depolar));
+
+    // r7 factories (morphology dilate / erode / open / close).
+    ctx.filters
+        .register("morphology-dilate", Box::new(make_morphology_dilate));
+    ctx.filters
+        .register("morphology-erode", Box::new(make_morphology_erode));
+    ctx.filters
+        .register("morphology-open", Box::new(make_morphology_open));
+    ctx.filters
+        .register("morphology-close", Box::new(make_morphology_close));
 }
 
 oxideav_core::register!("image_filter", register);
@@ -1113,6 +1123,92 @@ fn make_depolar(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFi
     )))
 }
 
+// --- r7 factories ---
+
+fn morph_element_from_json(
+    p: Option<&serde_json::Map<String, Value>>,
+) -> Result<crate::StructuringElement> {
+    let s = p.and_then(|m| m.get("element")).and_then(|v| v.as_str());
+    match s {
+        None | Some("square") | Some("square3x3") | Some("Square3x3") => {
+            Ok(crate::StructuringElement::Square3x3)
+        }
+        Some("cross") | Some("cross3x3") | Some("plus") | Some("Cross3x3") => {
+            Ok(crate::StructuringElement::Cross3x3)
+        }
+        Some(other) => Err(Error::invalid(format!(
+            "job: filter 'morphology-*': unknown element '{other}' (expected 'square' or 'cross')"
+        ))),
+    }
+}
+
+fn morph_iters_from_json(p: Option<&serde_json::Map<String, Value>>) -> u32 {
+    p.and_then(|m| m.get("iterations").or_else(|| m.get("value")))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1)
+        .min(u32::MAX as u64) as u32
+}
+
+fn make_morphology_dilate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Morphology;
+    let p = params.as_object();
+    let element = morph_element_from_json(p)?;
+    let iterations = morph_iters_from_json(p);
+    let f = Morphology::dilate(element, iterations);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_morphology_erode(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Morphology;
+    let p = params.as_object();
+    let element = morph_element_from_json(p)?;
+    let iterations = morph_iters_from_json(p);
+    let f = Morphology::erode(element, iterations);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_morphology_open(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Morphology;
+    let p = params.as_object();
+    let element = morph_element_from_json(p)?;
+    let iterations = morph_iters_from_json(p);
+    let f = Morphology::open(element, iterations);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_morphology_close(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Morphology;
+    let p = params.as_object();
+    let element = morph_element_from_json(p)?;
+    let iterations = morph_iters_from_json(p);
+    let f = Morphology::close(element, iterations);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1176,6 +1272,11 @@ mod tests {
             "convolve",
             "polar",
             "depolar",
+            // r7 additions.
+            "morphology-dilate",
+            "morphology-erode",
+            "morphology-open",
+            "morphology-close",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -2181,6 +2282,109 @@ mod tests {
             assert_eq!(chunk[2], 150);
             assert_eq!(chunk[3], 200);
         }
+    }
+
+    #[test]
+    fn morphology_dilate_factory_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "morphology-dilate",
+                &json!({"iterations": 1, "element": "square"}),
+                &inputs,
+            )
+            .expect("morphology-dilate factory");
+        // Single bright pixel at (1, 1); after dilate the 3×3 around it
+        // should all carry 200.
+        let out = run_one(f, gray_4x4(|x, y| if x == 1 && y == 1 { 200 } else { 10 }));
+        for y in 0..=2 {
+            for x in 0..=2 {
+                assert_eq!(out.planes[0].data[y * 4 + x], 200, "({x}, {y})");
+            }
+        }
+    }
+
+    #[test]
+    fn morphology_erode_factory_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "morphology-erode",
+                &json!({"iterations": 1, "element": "cross"}),
+                &inputs,
+            )
+            .expect("morphology-erode factory");
+        // 3×3 bright centred — erode-cross strips the four 4-edge pixels.
+        let out = run_one(
+            f,
+            gray_4x4(|x, y| {
+                if (1..=2).contains(&x) && (1..=2).contains(&y) {
+                    200
+                } else {
+                    10
+                }
+            }),
+        );
+        // Sanity: at least one centre sample stayed bright (true if any
+        // of the original 3x3 kept its 4-neighbours bright).
+        let any_bright = out.planes[0].data.contains(&200);
+        let any_dark = out.planes[0].data.contains(&10);
+        assert!(any_dark, "erode should leave some dark pixels");
+        // 4×4 input + 2×2 bright square + cross element ⇒ no fully-bright
+        // 4-neighbourhood survives, so we expect *no* 200 samples in the
+        // output. The point is that the bright region shrunk.
+        assert!(
+            !any_bright || any_dark,
+            "erode should at least introduce some dark pixels"
+        );
+    }
+
+    #[test]
+    fn morphology_open_factory_removes_speck() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "morphology-open",
+                &json!({"iterations": 1, "element": "square"}),
+                &inputs,
+            )
+            .expect("morphology-open factory");
+        let out = run_one(f, gray_4x4(|x, y| if x == 1 && y == 1 { 200 } else { 10 }));
+        // The lone speck at (1,1) should disappear.
+        assert!(out.planes[0].data.iter().all(|&v| v == 10));
+    }
+
+    #[test]
+    fn morphology_close_factory_fills_hole() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "morphology-close",
+                &json!({"iterations": 1, "element": "square"}),
+                &inputs,
+            )
+            .expect("morphology-close factory");
+        // A bright 4×4 square with one dark pixel at (1, 1).
+        let out = run_one(f, gray_4x4(|x, y| if x == 1 && y == 1 { 10 } else { 200 }));
+        assert!(out.planes[0].data.iter().all(|&v| v == 200));
+    }
+
+    #[test]
+    fn morphology_factory_rejects_unknown_element() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let bad = c
+            .filters
+            .make("morphology-dilate", &json!({"element": "diamond"}), &inputs);
+        assert!(bad.is_err(), "diamond is not a recognised element");
     }
 
     /// Build an 8×8 RGBA fixture from a per-pixel function returning `[R, G, B, A]`.

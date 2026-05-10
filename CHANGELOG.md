@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r7: implement `Morphology` (greyscale dilate / erode with a 3×3 square
+  or cross structuring element + N iterations) and `MorphologyChain`
+  (open / close composition). Wires four factory names —
+  `morphology-dilate`, `morphology-erode`, `morphology-open`,
+  `morphology-close` — into `register()`. Supports Gray8 / Rgb24 / Rgba
+  (alpha pass-through) and planar YUV; out-of-bounds taps clamp to the
+  nearest edge.
 - Wire `sharpen`, `gamma`, `brightness-contrast`, `brightness`, and `contrast`
   filter factories into the runtime registry so pipeline jobs and
   oxideav-cli-convert IM-flag mapping can resolve them by name.
