@@ -96,6 +96,10 @@ pub fn register(ctx: &mut RuntimeContext) {
         .register("morphology-open", Box::new(make_morphology_open));
     ctx.filters
         .register("morphology-close", Box::new(make_morphology_close));
+
+    // r7 factory (perspective).
+    ctx.filters
+        .register("perspective", Box::new(make_perspective));
 }
 
 oxideav_core::register!("image_filter", register);
@@ -1209,6 +1213,116 @@ fn make_morphology_close(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn 
     )))
 }
 
+/// Parse a quad-corner array out of the JSON params.
+///
+/// Accepts either a flat 8-element array `[x0, y0, x1, y1, x2, y2, x3, y3]`
+/// or a 4-element array of 2-element arrays `[[x, y], ...]`. Returns
+/// the canonical `[(x, y); 4]` tuple.
+fn parse_corners(value: &Value, key: &str) -> Result<[(f32, f32); 4]> {
+    let arr = value.as_array().ok_or_else(|| {
+        Error::invalid(format!(
+            "job: filter 'perspective': '{key}' must be an array"
+        ))
+    })?;
+    if arr.len() == 8 {
+        let mut out = [(0f32, 0f32); 4];
+        for i in 0..4 {
+            let x = arr[i * 2].as_f64().ok_or_else(|| {
+                Error::invalid(format!(
+                    "job: filter 'perspective': '{key}[{}]' must be a number",
+                    i * 2
+                ))
+            })? as f32;
+            let y = arr[i * 2 + 1].as_f64().ok_or_else(|| {
+                Error::invalid(format!(
+                    "job: filter 'perspective': '{key}[{}]' must be a number",
+                    i * 2 + 1
+                ))
+            })? as f32;
+            out[i] = (x, y);
+        }
+        Ok(out)
+    } else if arr.len() == 4 {
+        let mut out = [(0f32, 0f32); 4];
+        for (i, v) in arr.iter().enumerate() {
+            let pair = v.as_array().ok_or_else(|| {
+                Error::invalid(format!(
+                    "job: filter 'perspective': '{key}[{i}]' must be a 2-element array"
+                ))
+            })?;
+            if pair.len() != 2 {
+                return Err(Error::invalid(format!(
+                    "job: filter 'perspective': '{key}[{i}]' must have 2 elements"
+                )));
+            }
+            let x = pair[0].as_f64().ok_or_else(|| {
+                Error::invalid(format!(
+                    "job: filter 'perspective': '{key}[{i}][0]' must be a number"
+                ))
+            })? as f32;
+            let y = pair[1].as_f64().ok_or_else(|| {
+                Error::invalid(format!(
+                    "job: filter 'perspective': '{key}[{i}][1]' must be a number"
+                ))
+            })? as f32;
+            out[i] = (x, y);
+        }
+        Ok(out)
+    } else {
+        Err(Error::invalid(format!(
+            "job: filter 'perspective': '{key}' must have 4 (nested) or 8 (flat) elements, got {}",
+            arr.len()
+        )))
+    }
+}
+
+fn make_perspective(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Perspective;
+    let p = params.as_object();
+
+    let src_v = p
+        .and_then(|m| m.get("src_corners").or_else(|| m.get("src")))
+        .ok_or_else(|| Error::invalid("job: filter 'perspective' needs `src_corners`"))?;
+    let dst_v = p
+        .and_then(|m| m.get("dst_corners").or_else(|| m.get("dst")))
+        .ok_or_else(|| Error::invalid("job: filter 'perspective' needs `dst_corners`"))?;
+    let src = parse_corners(src_v, "src_corners")?;
+    let dst = parse_corners(dst_v, "dst_corners")?;
+
+    let mut f = Perspective::new(src, dst);
+    if let Some(arr) = p
+        .and_then(|m| m.get("background"))
+        .and_then(|v| v.as_array())
+    {
+        if arr.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'perspective': background must be a 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        let mut bg = [0u8; 4];
+        for (i, v) in arr.iter().enumerate() {
+            bg[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid(
+                        "job: filter 'perspective': background array must contain unsigned ints",
+                    )
+                })?
+                .min(255) as u8;
+        }
+        f = f.with_background(bg);
+    }
+
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1277,6 +1391,7 @@ mod tests {
             "morphology-erode",
             "morphology-open",
             "morphology-close",
+            "perspective",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -2385,6 +2500,54 @@ mod tests {
             .filters
             .make("morphology-dilate", &json!({"element": "diamond"}), &inputs);
         assert!(bad.is_err(), "diamond is not a recognised element");
+    }
+
+    #[test]
+    fn perspective_identity_corners_pass_through() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "perspective",
+                &json!({
+                    "src_corners": [0.0, 0.0, 3.0, 0.0, 3.0, 3.0, 0.0, 3.0],
+                    "dst_corners": [0.0, 0.0, 3.0, 0.0, 3.0, 3.0, 0.0, 3.0]
+                }),
+                &inputs,
+            )
+            .expect("perspective factory");
+        let frame = rgba_4x4(|x, y| [(x * 60) as u8, (y * 60) as u8, 50, 255]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn perspective_factory_rejects_missing_dst() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c.filters.make(
+            "perspective",
+            &json!({"src_corners": [0.0, 0.0, 3.0, 0.0, 3.0, 3.0, 0.0, 3.0]}),
+            &inputs,
+        );
+        assert!(bad.is_err(), "missing dst_corners must fail");
+    }
+
+    #[test]
+    fn perspective_factory_accepts_nested_corner_arrays() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        c.filters
+            .make(
+                "perspective",
+                &json!({
+                    "src_corners": [[0.0, 0.0], [3.0, 0.0], [3.0, 3.0], [0.0, 3.0]],
+                    "dst_corners": [[0.0, 0.0], [3.0, 0.0], [3.0, 3.0], [0.0, 3.0]]
+                }),
+                &inputs,
+            )
+            .expect("nested corner arrays must work");
     }
 
     /// Build an 8×8 RGBA fixture from a per-pixel function returning `[R, G, B, A]`.

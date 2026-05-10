@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `morphology-close` — into `register()`. Supports Gray8 / Rgb24 / Rgba
   (alpha pass-through) and planar YUV; out-of-bounds taps clamp to the
   nearest edge.
+- r7: implement `Perspective` — 4-corner perspective warp. Solves the
+  3×3 homography between source and destination quads via 8×8
+  Gauss-Jordan elimination, then inverse-maps every output pixel
+  through `H⁻¹` with bilinear sampling. Out-of-bounds back-maps fall
+  back to a configurable `with_background([R, G, B, A])` colour
+  (default opaque black). Operates on Rgb24 / Rgba; rejects YUV /
+  planar / higher-bit formats. Wires the `perspective` factory into
+  `register()` accepting either flat 8-element or nested 4×2 corner
+  arrays.
 - Wire `sharpen`, `gamma`, `brightness-contrast`, `brightness`, and `contrast`
   filter factories into the runtime registry so pipeline jobs and
   oxideav-cli-convert IM-flag mapping can resolve them by name.

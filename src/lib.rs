@@ -56,6 +56,9 @@
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Normalize`](normalize::Normalize) — auto-levels: stretch the
 //!   observed luma range to fill `[0, 255]` (ImageMagick `-normalize`).
+//! - [`Perspective`](perspective::Perspective) — 4-corner perspective
+//!   warp (homography solved from src/dst quads, inverse-mapped with
+//!   bilinear sampling). IM: `-distort Perspective "..."`.
 //! - [`Polar`](polar::Polar) — Cartesian ⇄ polar coordinate distortion
 //!   (`-distort Polar` / `-distort DePolar`). Bends an image into a fan
 //!   or unrolls a fan back into a rectangle; bilinear-sampled.
@@ -123,6 +126,7 @@ pub mod morphology;
 pub mod motion_blur;
 pub mod negate;
 pub mod normalize;
+pub mod perspective;
 pub mod polar;
 pub mod posterize;
 pub mod registry;
@@ -163,6 +167,7 @@ pub use morphology::{Morphology, MorphologyChain, MorphologyOp, StructuringEleme
 pub use motion_blur::MotionBlur;
 pub use negate::Negate;
 pub use normalize::Normalize;
+pub use perspective::Perspective;
 pub use polar::{Polar, PolarDirection};
 pub use posterize::Posterize;
 pub use registry::{__oxideav_entry, register};
