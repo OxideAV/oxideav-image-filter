@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r9: extend `Distort` with the standard Brown-Conrady tangential
+  ("decentering") coefficients `p1` and `p2`. Both default to `0.0`
+  — the pre-r9 pure-radial output is bit-exact preserved when
+  tangential coefficients are not supplied. Non-zero values warp the
+  image off-axis (the asymmetry produced when lens elements are not
+  perfectly aligned with the sensor). New public surface:
+  `Distort::p1`, `Distort::p2` fields, `Distort::with_tangential(p1, p2)`
+  builder, JSON keys `p1` + `p2` on the `distort` factory. Source-
+  rectangle bounds checks pick up a tiny epsilon so floating-point
+  round-off on identity back-maps doesn't kick on-boundary pixels
+  into the background fill.
+
 - r9: add an optional output canvas size to `Perspective` (new
   `output_size: Option<(u32, u32)>` field + `Perspective::with_output_size`
   builder; new JSON keys `output_width` + `output_height`, both

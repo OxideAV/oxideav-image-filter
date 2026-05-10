@@ -154,8 +154,10 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   sampling. Optional `output_size: (w, h)` (JSON keys `output_width`
   + `output_height`) emits a custom canvas size — useful when the dst
   quad escapes the source rectangle. IM: `-distort Perspective "..."`.
-- **`Distort`** — radial-polynomial barrel / pincushion lens
-  distortion (`k1` quadratic + `k2` quartic coefficients). IM:
+- **`Distort`** — full Brown-Conrady lens distortion model: radial
+  (`k1` quadratic + `k2` quartic) plus optional tangential
+  (`p1` + `p2`, default `0`) decentering coefficients. Pure-radial
+  mode (`p1 = p2 = 0`) is bit-identical to the legacy r7 output. IM:
   `-distort barrel "k1 k2 ..."`.
 - **`TiltShift`** — selective Gaussian blur masked by a horizontal
   in-focus band (miniature-photography depth-of-field). Configurable

@@ -1605,7 +1605,15 @@ fn make_distort(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
             "job: filter 'distort': k1 / k2 must be finite numbers",
         ));
     }
-    let mut f = Distort::new(k1, k2);
+    // r9: optional Brown-Conrady tangential coefficients (default 0).
+    let p1 = get_f64("p1").unwrap_or(0.0) as f32;
+    let p2 = get_f64("p2").unwrap_or(0.0) as f32;
+    if !p1.is_finite() || !p2.is_finite() {
+        return Err(Error::invalid(
+            "job: filter 'distort': p1 / p2 must be finite numbers",
+        ));
+    }
+    let mut f = Distort::new(k1, k2).with_tangential(p1, p2);
     if let (Some(cx), Some(cy)) = (get_f64("cx"), get_f64("cy")) {
         f = f.with_centre(cx as f32, cy as f32);
     }
@@ -3056,6 +3064,60 @@ mod tests {
             .filters
             .make("distort", &json!({"mode": "fisheye"}), &inputs);
         assert!(bad.is_err(), "unknown mode must fail");
+    }
+
+    #[test]
+    fn distort_factory_accepts_tangential_p1_p2() {
+        // r9: p1 / p2 are the Brown-Conrady tangential coefficients.
+        // The factory must accept them and produce a filter whose
+        // output differs from the pure-radial baseline at at least
+        // one pixel. We use an asymmetric pattern so the difference
+        // is observable.
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let with_tang = c
+            .filters
+            .make(
+                "distort",
+                &json!({"k1": 0.0, "k2": 0.0, "p1": 0.3, "p2": 0.0}),
+                &inputs,
+            )
+            .expect("distort factory with tangential p1 / p2");
+        let radial_only = c
+            .filters
+            .make("distort", &json!({"k1": 0.0, "k2": 0.0}), &inputs)
+            .expect("distort factory pure radial");
+        let frame = rgba_4x4(|x, y| [(x * 60) as u8, (y * 60) as u8, 100, 200]);
+        let a = run_one(with_tang, frame.clone());
+        let b = run_one(radial_only, frame);
+        assert_ne!(
+            a.planes[0].data, b.planes[0].data,
+            "tangential p1 must shift at least one sample relative to the pure-radial baseline"
+        );
+    }
+
+    #[test]
+    fn distort_factory_zero_tangential_matches_radial_baseline() {
+        // p1 = p2 = 0 must be bit-exact identical to the pre-r9
+        // radial-only Distort.
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let a = c
+            .filters
+            .make(
+                "distort",
+                &json!({"k1": 0.2, "k2": 0.0, "p1": 0.0, "p2": 0.0}),
+                &inputs,
+            )
+            .expect("with explicit zero tangential");
+        let b = c
+            .filters
+            .make("distort", &json!({"k1": 0.2, "k2": 0.0}), &inputs)
+            .expect("without tangential keys");
+        let frame = rgba_4x4(|x, y| [(x * 60) as u8, (y * 60) as u8, 100, 255]);
+        let out_a = run_one(a, frame.clone());
+        let out_b = run_one(b, frame);
+        assert_eq!(out_a.planes[0].data, out_b.planes[0].data);
     }
 
     #[test]

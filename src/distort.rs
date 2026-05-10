@@ -1,4 +1,6 @@
-//! Radial-polynomial lens distortion (barrel / pincushion).
+//! Radial-polynomial lens distortion (barrel / pincushion) with
+//! optional tangential ("decentering") terms — the full Brown-Conrady
+//! lens-distortion model.
 //!
 //! For each output pixel `(px, py)` compute its normalised offset from
 //! the centre `(cx, cy)`:
@@ -7,9 +9,11 @@
 //!   nx = (px - cx) / r_norm
 //!   ny = (py - cy) / r_norm
 //!   r² = nx² + ny²
-//!   scale = 1 + k1·r² + k2·r⁴
-//!   sx = cx + nx · scale · r_norm
-//!   sy = cy + ny · scale · r_norm
+//!   scale = 1 + k1·r² + k2·r⁴            // radial component
+//!   dx_t  = 2·p1·nx·ny + p2·(r² + 2·nx²)  // tangential component
+//!   dy_t  = p1·(r² + 2·ny²) + 2·p2·nx·ny
+//!   sx = cx + (nx · scale + dx_t) · r_norm
+//!   sy = cy + (ny · scale + dy_t) · r_norm
 //! ```
 //!
 //! `r_norm` defaults to half the smaller image side, so `r = 1` falls
@@ -27,7 +31,13 @@
 //!   image, so the image appears to bulge outward.
 //!
 //! `k2` is a higher-order correction that mostly affects the corners;
-//! pass `0.0` if you don't need it.
+//! pass `0.0` if you don't need it. `p1` and `p2` are the standard
+//! tangential decentering coefficients (Brown-Conrady) — they model
+//! the asymmetry produced when the lens elements are not perfectly
+//! aligned with the sensor. Both default to `0.0` (pure-radial mode);
+//! non-zero values shift samples off-axis (a `p1`-only model warps
+//! the image vertically near the y-axis, `p2`-only warps it
+//! horizontally near the x-axis).
 //!
 //! Operates on packed `Rgb24` / `Rgba`. Output dimensions match the
 //! input (no canvas grow). Use [`Distort::with_background`] to set the
@@ -45,6 +55,12 @@ pub struct Distort {
     pub k1: f32,
     /// Quartic radial coefficient. Pass 0.0 if not needed.
     pub k2: f32,
+    /// First tangential (decentering) coefficient — Brown-Conrady
+    /// `p1`. Defaults to `0.0` for the pure-radial model.
+    pub p1: f32,
+    /// Second tangential (decentering) coefficient — Brown-Conrady
+    /// `p2`. Defaults to `0.0` for the pure-radial model.
+    pub p2: f32,
     /// Optional centre override (in pixels). `None` means image centre.
     pub centre: Option<(f32, f32)>,
     /// Optional normalisation radius (in pixels). `None` means
@@ -56,12 +72,15 @@ pub struct Distort {
 
 impl Distort {
     /// Construct with `k1` and `k2`. Centre and normalisation radius
-    /// default to image-derived values; background defaults to opaque
-    /// black.
+    /// default to image-derived values; tangential coefficients
+    /// default to `0.0` (pure-radial mode); background defaults to
+    /// opaque black.
     pub fn new(k1: f32, k2: f32) -> Self {
         Self {
             k1,
             k2,
+            p1: 0.0,
+            p2: 0.0,
             centre: None,
             r_norm: None,
             background: [0, 0, 0, 255],
@@ -96,6 +115,16 @@ impl Distort {
         self.background = bg;
         self
     }
+
+    /// Set the Brown-Conrady tangential ("decentering") coefficients
+    /// `p1` and `p2`. Both default to `0.0` (pure-radial Distort);
+    /// non-zero values introduce the standard off-axis lens-mis-alignment
+    /// component. Pass both as `0.0` to revert to the pure-radial model.
+    pub fn with_tangential(mut self, p1: f32, p2: f32) -> Self {
+        self.p1 = p1;
+        self.p2 = p2;
+        self
+    }
 }
 
 impl ImageFilter for Distort {
@@ -109,7 +138,11 @@ impl ImageFilter for Distort {
                 )));
             }
         };
-        if !self.k1.is_finite() || !self.k2.is_finite() {
+        if !self.k1.is_finite()
+            || !self.k2.is_finite()
+            || !self.p1.is_finite()
+            || !self.p2.is_finite()
+        {
             return Err(Error::invalid(
                 "oxideav-image-filter: Distort coefficients must be finite",
             ));
@@ -147,10 +180,27 @@ impl ImageFilter for Distort {
                 let dx = (px as f32 - cx) * inv_r;
                 let r2 = dx * dx + dy * dy;
                 let scale = 1.0 + self.k1 * r2 + self.k2 * r2 * r2;
-                let sx = cx + dx * scale * r_norm;
-                let sy = cy + dy * scale * r_norm;
+                // Brown-Conrady tangential ("decentering") component.
+                // When p1 == p2 == 0 these terms vanish and the model
+                // collapses back to the pure-radial form — keeping
+                // existing zero-tangential outputs bit-exact.
+                let dx_t = 2.0 * self.p1 * dx * dy + self.p2 * (r2 + 2.0 * dx * dx);
+                let dy_t = self.p1 * (r2 + 2.0 * dy * dy) + 2.0 * self.p2 * dx * dy;
+                let sx = cx + (dx * scale + dx_t) * r_norm;
+                let sy = cy + (dy * scale + dy_t) * r_norm;
                 let base = px * bpp;
-                if sx < 0.0 || sx > (w as f32 - 1.0) || sy < 0.0 || sy > (h as f32 - 1.0) {
+                // A tiny epsilon absorbs floating-point round-off at
+                // the source-rectangle boundary so an `sx` that
+                // computes to -3e-7 for the leftmost column still
+                // hits the inside branch (and clamps to 0.0 inside
+                // `bilinear_sample_into`) instead of getting flushed
+                // to background.
+                const EPS: f32 = 1e-4;
+                if sx < -EPS
+                    || sx > (w as f32 - 1.0) + EPS
+                    || sy < -EPS
+                    || sy > (h as f32 - 1.0) + EPS
+                {
                     write_background(&mut dst_row[base..base + bpp], &self.background, bpp);
                     continue;
                 }
@@ -336,6 +386,77 @@ mod tests {
             .unwrap();
         // Background fill should be visible at the corner.
         assert_eq!(&out.planes[0].data[0..3], &[7, 7, 7]);
+    }
+
+    #[test]
+    fn tangential_zero_matches_radial_only() {
+        // r9: with p1 = p2 = 0 the full Brown-Conrady model must
+        // produce a bit-exact match against the previous radial-only
+        // path for any radial-coefficient choice.
+        let input = rgb(15, 15, |x, y| (x as u8 * 17, y as u8 * 17, 0));
+
+        let radial = Distort::new(0.2, -0.05)
+            .apply(&input, params_rgb(15, 15))
+            .unwrap();
+        let with_zeros = Distort::new(0.2, -0.05)
+            .with_tangential(0.0, 0.0)
+            .apply(&input, params_rgb(15, 15))
+            .unwrap();
+
+        assert_eq!(radial.planes[0].data, with_zeros.planes[0].data);
+    }
+
+    #[test]
+    fn tangential_centre_pixel_unchanged() {
+        // At the lens centre dx = dy = r² = 0 ⇒ both tangential
+        // contributions vanish (every term has at least one of dx,
+        // dy, r² as a factor). The centre pixel must therefore equal
+        // the input centre pixel even with strong tangential terms.
+        let input = rgb(15, 15, |x, y| (x as u8 * 17, y as u8 * 17, 5));
+        let out = Distort::new(0.0, 0.0)
+            .with_tangential(0.4, -0.3)
+            .apply(&input, params_rgb(15, 15))
+            .unwrap();
+        let centre_off = (7 * 15 + 7) * 3;
+        assert_eq!(out.planes[0].data[centre_off], 7 * 17);
+        assert_eq!(out.planes[0].data[centre_off + 1], 7 * 17);
+        assert_eq!(out.planes[0].data[centre_off + 2], 5);
+    }
+
+    #[test]
+    fn tangential_p1_breaks_horizontal_symmetry() {
+        // A purely tangential `p1`-only model adds dy_t = p1 * r²
+        // along the y-axis (where dx = 0) and 2·p1·dx·dy elsewhere.
+        // The resulting flow is anti-symmetric across the horizontal
+        // axis, so a vertically-symmetric input becomes
+        // vertically-asymmetric in the output.
+        let input = rgb(15, 15, |_, y| {
+            // Symmetric Y-axis pattern: bright band centred on y=7.
+            let dy = (y as i32 - 7).unsigned_abs() as u8;
+            (200u8.saturating_sub(dy * 20), 0, 0)
+        });
+        let out_radial = Distort::new(0.0, 0.0)
+            .apply(&input, params_rgb(15, 15))
+            .unwrap();
+        let out_tang = Distort::new(0.0, 0.0)
+            .with_tangential(0.5, 0.0)
+            .apply(&input, params_rgb(15, 15))
+            .unwrap();
+        // Pure radial (k1=k2=0) is identity ⇒ output equals input.
+        assert_eq!(out_radial.planes[0].data, input.planes[0].data);
+        // Tangential output must differ from the input at at least
+        // one pixel — the warp actually shifts samples.
+        assert_ne!(out_tang.planes[0].data, input.planes[0].data);
+    }
+
+    #[test]
+    fn rejects_non_finite_tangential() {
+        let input = rgb(4, 4, |_, _| (0, 0, 0));
+        let err = Distort::new(0.0, 0.0)
+            .with_tangential(f32::NAN, 0.0)
+            .apply(&input, params_rgb(4, 4))
+            .unwrap_err();
+        assert!(format!("{err}").contains("finite"));
     }
 
     #[test]
