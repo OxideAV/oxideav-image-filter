@@ -128,8 +128,18 @@ pub fn register(ctx: &mut RuntimeContext) {
         Box::new(make_morphology_edge_magnitude),
     );
 
+    // r11 factories: per-pixel arithmetic + windowed statistic + 2-D
+    // affine / SRT geometric warps.
+    ctx.filters.register("evaluate", Box::new(make_evaluate));
+    ctx.filters.register("cycle", Box::new(make_cycle));
+    ctx.filters.register("statistic", Box::new(make_statistic));
+    ctx.filters.register("affine", Box::new(make_affine));
+    ctx.filters.register("srt", Box::new(make_srt));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
-    // (two-input). Mirrors ImageMagick's `-compose <op>` family.
+    // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
+    // adds the four overlay-family ops (HardLight / SoftLight /
+    // ColorDodge / ColorBurn).
     for op in [
         CompositeOp::Over,
         CompositeOp::In,
@@ -143,6 +153,10 @@ pub fn register(ctx: &mut RuntimeContext) {
         CompositeOp::Darken,
         CompositeOp::Lighten,
         CompositeOp::Difference,
+        CompositeOp::HardLight,
+        CompositeOp::SoftLight,
+        CompositeOp::ColorDodge,
+        CompositeOp::ColorBurn,
     ] {
         let name = format!("composite-{}", op.name());
         ctx.filters.register(
@@ -1991,6 +2005,230 @@ fn make_morphology_edge_magnitude(
     let f = MorphologyEdge::edge_magnitude(element);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+// --- r11 factories (evaluate / cycle / statistic / affine / srt) ---
+
+fn make_evaluate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Evaluate, EvaluateOp};
+    let p = params.as_object();
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let op_name = get_str("op").or_else(|| get_str("operator")).ok_or_else(|| {
+        Error::invalid("job: filter 'evaluate' needs string `op` (one of add/sub/mul/div/pow/max/min/set/and/or/xor/threshold)")
+    })?;
+    let op = EvaluateOp::from_name(op_name).ok_or_else(|| {
+        Error::invalid(format!(
+            "job: filter 'evaluate': unknown op '{op_name}' (expected add/subtract/multiply/divide/pow/max/min/set/and/or/xor/threshold)"
+        ))
+    })?;
+    let value = get_f64("value")
+        .or_else(|| get_f64("amount"))
+        .ok_or_else(|| Error::invalid("job: filter 'evaluate' needs numeric `value`"))?
+        as f32;
+    let f = Evaluate::new(op, value);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_cycle(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Cycle;
+    let p = params.as_object();
+    let get_i64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
+    let amount = get_i64("amount")
+        .or_else(|| get_i64("value"))
+        .or_else(|| get_i64("n"))
+        .unwrap_or(0) as i32;
+    let f = Cycle::new(amount);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_statistic(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Statistic, StatisticOp};
+    let p = params.as_object();
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let op_name = get_str("op")
+        .or_else(|| get_str("operator"))
+        .ok_or_else(|| {
+            Error::invalid("job: filter 'statistic' needs string `op` (median/min/max/mean)")
+        })?;
+    let op = StatisticOp::from_name(op_name).ok_or_else(|| {
+        Error::invalid(format!(
+            "job: filter 'statistic': unknown op '{op_name}' (expected median/min/max/mean)"
+        ))
+    })?;
+    let width = get_u64("width").unwrap_or(3) as u32;
+    let height = get_u64("height").unwrap_or(3) as u32;
+    if width == 0 || height == 0 {
+        return Err(Error::invalid(
+            "job: filter 'statistic': width and height must be > 0",
+        ));
+    }
+    let f = Statistic::new(op, width, height);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+/// Pull six affine coefficients from JSON. Accepts either an array
+/// `matrix: [sx, ry, rx, sy, tx, ty]` or six per-named keys
+/// (`sx`/`ry`/`rx`/`sy`/`tx`/`ty`). Defaults to identity.
+fn parse_affine_matrix(p: Option<&serde_json::Map<String, Value>>) -> Result<[f32; 6]> {
+    if let Some(arr) = p.and_then(|m| m.get("matrix")).and_then(|v| v.as_array()) {
+        if arr.len() != 6 {
+            return Err(Error::invalid(format!(
+                "job: filter 'affine': `matrix` must have exactly 6 numbers, got {}",
+                arr.len()
+            )));
+        }
+        let mut m = [0f32; 6];
+        for (i, v) in arr.iter().enumerate() {
+            m[i] = v.as_f64().ok_or_else(|| {
+                Error::invalid(format!("job: filter 'affine': matrix[{i}] is not a number"))
+            })? as f32;
+        }
+        return Ok(m);
+    }
+    let get_f = |k: &str, dflt: f32| -> f32 {
+        p.and_then(|m| m.get(k))
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or(dflt)
+    };
+    Ok([
+        get_f("sx", 1.0),
+        get_f("ry", 0.0),
+        get_f("rx", 0.0),
+        get_f("sy", 1.0),
+        get_f("tx", 0.0),
+        get_f("ty", 0.0),
+    ])
+}
+
+fn parse_background_rgba(p: Option<&serde_json::Map<String, Value>>, key: &str) -> Option<[u8; 4]> {
+    let arr = p.and_then(|m| m.get(key)).and_then(|v| v.as_array())?;
+    if arr.is_empty() {
+        return None;
+    }
+    let mut bg = [0u8, 0, 0, 255];
+    for (i, slot) in bg.iter_mut().enumerate().take(4.min(arr.len())) {
+        if let Some(v) = arr.get(i).and_then(|v| v.as_u64()) {
+            *slot = v.min(255) as u8;
+        }
+    }
+    Some(bg)
+}
+
+fn make_affine(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Affine;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let matrix = parse_affine_matrix(p)?;
+    let mut f = Affine::new(matrix);
+    if let Some(bg) = parse_background_rgba(p, "background") {
+        f = f.with_background(bg);
+    }
+    let out_w = get_u64("output_width").unwrap_or(0) as u32;
+    let out_h = get_u64("output_height").unwrap_or(0) as u32;
+    if out_w > 0 && out_h > 0 {
+        f = f.with_output_size(out_w, out_h);
+    }
+    let in_port = video_in_port(inputs);
+    // The output port may have a different (w, h) — match the canvas
+    // size we produce. Format stays the same as input.
+    let out_port = match (&in_port.params, f.output_size) {
+        (
+            PortParams::Video {
+                format, time_base, ..
+            },
+            Some((w, h)),
+        ) => PortSpec::video("video", w, h, *format, *time_base),
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_srt(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Srt;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let in_port = video_in_port(inputs);
+    let (in_w, in_h) = match &in_port.params {
+        PortParams::Video { width, height, .. } => (*width, *height),
+        _ => (0, 0),
+    };
+    // Default origin = image centre (matches IM SRT convention).
+    let cx = (in_w.max(1) as f32 - 1.0) * 0.5;
+    let cy = (in_h.max(1) as f32 - 1.0) * 0.5;
+    let ox = get_f64("ox")
+        .or_else(|| get_f64("origin_x"))
+        .unwrap_or(cx as f64) as f32;
+    let oy = get_f64("oy")
+        .or_else(|| get_f64("origin_y"))
+        .unwrap_or(cy as f64) as f32;
+    // Scale: `scale` (uniform) overrides `sx`/`sy` if present.
+    let uniform = get_f64("scale");
+    let sx = uniform.or_else(|| get_f64("sx")).unwrap_or(1.0) as f32;
+    let sy = uniform.or_else(|| get_f64("sy")).unwrap_or(1.0) as f32;
+    let angle = get_f64("angle")
+        .or_else(|| get_f64("angle_degrees"))
+        .unwrap_or(0.0) as f32;
+    // Translation defaults to (ox, oy) — pure rotation/scale around origin.
+    let tx = get_f64("tx")
+        .or_else(|| get_f64("translate_x"))
+        .unwrap_or(ox as f64) as f32;
+    let ty = get_f64("ty")
+        .or_else(|| get_f64("translate_y"))
+        .unwrap_or(oy as f64) as f32;
+
+    let mut f = Srt::new((ox, oy), (sx, sy), angle, (tx, ty));
+    if let Some(bg) = parse_background_rgba(p, "background") {
+        f = f.with_background(bg);
+    }
+    let out_w = get_u64("output_width").unwrap_or(0) as u32;
+    let out_h = get_u64("output_height").unwrap_or(0) as u32;
+    if out_w > 0 && out_h > 0 {
+        f = f.with_output_size(out_w, out_h);
+    }
+    let out_port = match (&in_port.params, f.output_size) {
+        (
+            PortParams::Video {
+                format, time_base, ..
+            },
+            Some((w, h)),
+        ) => PortSpec::video("video", w, h, *format, *time_base),
+        _ => passthrough_out_port(&in_port),
+    };
     Ok(Box::new(ImageFilterAdapter::new(
         Box::new(f),
         in_port,

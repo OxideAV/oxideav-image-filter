@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r11: land five new ImageMagick-style filters plus four overlay-family
+  composite operators. New filters: `Evaluate` (per-pixel arithmetic
+  LUT — `Add` / `Subtract` / `Multiply` / `Divide` / `Pow` / `Max` /
+  `Min` / `Set` / `And` / `Or` / `Xor` / `Threshold`, IM
+  `-evaluate <op> N`), `Cycle` (modular per-channel value rotation
+  `out = (src + amount) mod 256`, IM analogue `-cycle N`),
+  `Statistic` (rolling-window `Median` / `Min` / `Max` / `Mean` over
+  a `WxH` neighbourhood, IM `-statistic <op> WxH`), `Affine`
+  (six-coefficient 2-D affine warp with bilinear resampling, IM
+  `-distort Affine "sx,ry,rx,sy,tx,ty"`), and `Srt` (Scale / Rotate
+  / Translate composite warp collapsing to a single 2×3 affine
+  matrix, IM `-distort SRT "ox,oy sx[,sy] angle tx,ty"`). The
+  `Composite` family also gains `HardLight`, `SoftLight`,
+  `ColorDodge`, `ColorBurn` (PDF 1.7 §11.3.5 conventions, with
+  Pegtop's smooth soft-light formula). Five new single-input
+  factories wired into `register()`: `evaluate`, `cycle`,
+  `statistic`, `affine`, `srt`. Four new two-input factories:
+  `composite-hardlight`, `composite-softlight`,
+  `composite-colordodge`, `composite-colorburn`. Filter count:
+  45 → 50 named types; factory count: 51 → 60 names.
+
 - r10: land six ImageMagick-style geometric / channel / morphology
   filters: `Roll` (circular pixel shift, IM `-roll +X+Y`), `Shave`
   (uniform border trim, IM `-shave XxY`), `Extent` (set canvas to

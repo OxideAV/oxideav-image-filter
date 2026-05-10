@@ -1,6 +1,6 @@
 //! Porter–Duff and arithmetic composite operators.
 //!
-//! Implements the twelve standard two-input pixel composites that
+//! Implements the sixteen standard two-input pixel composites that
 //! mirror ImageMagick's `-compose <op>` family. Every operator takes
 //! a foreground (`src`) and a background (`dst`) frame of identical
 //! shape and pixel format, and produces a new frame.
@@ -81,6 +81,24 @@ pub enum CompositeOp {
     Lighten,
     /// Absolute per-channel difference: `out = |src - dst|`.
     Difference,
+    /// Like `Overlay` but with `src` and `dst` reversed — hard-light is
+    /// overlay driven by the foreground rather than the background.
+    /// Per-channel: `if src < 128 { 2*src*dst/255 } else { 255 - 2*(255-src)*(255-dst)/255 }`.
+    HardLight,
+    /// Pegtop's continuous soft-light formula: `out = (1 - 2*sn) * dn² + 2*sn*dn`,
+    /// where `sn = src/255`, `dn = dst/255`. Smooth (no branch on `src`);
+    /// `src = 0.5` is identity. Same family as PDF 1.7 §11.3.5 SoftLight.
+    SoftLight,
+    /// Brightening blend that drives `dst` toward white as `src`
+    /// approaches white. `out = dst / (1 - src/255)`, clamped to
+    /// `[0, 255]`. `src = 255` saturates non-zero `dst` to 255;
+    /// `src = 0` is identity (`out = dst`).
+    ColorDodge,
+    /// Darkening blend that drives `dst` toward black as `src`
+    /// approaches black. `out = 255 - (255 - dst) / (src/255)`,
+    /// clamped to `[0, 255]`. `src = 0` saturates non-255 `dst` to 0;
+    /// `src = 255` is identity (`out = dst`).
+    ColorBurn,
 }
 
 impl CompositeOp {
@@ -99,6 +117,10 @@ impl CompositeOp {
             CompositeOp::Darken => "darken",
             CompositeOp::Lighten => "lighten",
             CompositeOp::Difference => "difference",
+            CompositeOp::HardLight => "hardlight",
+            CompositeOp::SoftLight => "softlight",
+            CompositeOp::ColorDodge => "colordodge",
+            CompositeOp::ColorBurn => "colorburn",
         }
     }
 
@@ -119,6 +141,10 @@ impl CompositeOp {
             "darken" => CompositeOp::Darken,
             "lighten" => CompositeOp::Lighten,
             "difference" => CompositeOp::Difference,
+            "hardlight" | "hard-light" | "hard_light" => CompositeOp::HardLight,
+            "softlight" | "soft-light" | "soft_light" => CompositeOp::SoftLight,
+            "colordodge" | "color-dodge" | "color_dodge" => CompositeOp::ColorDodge,
+            "colorburn" | "color-burn" | "color_burn" => CompositeOp::ColorBurn,
             _ => return None,
         })
     }
@@ -392,7 +418,97 @@ fn composite_pixel_rgba(op: CompositeOp, s: [u8; 4], d: [u8; 4]) -> [u8; 4] {
             out[3] = u8_round(out_a * 255.0);
             out
         }
+        CompositeOp::HardLight => {
+            let inv_sa = 1.0 - sa;
+            let out_a = sa + da * inv_sa;
+            let mut out = [0u8; 4];
+            for i in 0..3 {
+                out[i] = hard_light(s[i], d[i]);
+            }
+            out[3] = u8_round(out_a * 255.0);
+            out
+        }
+        CompositeOp::SoftLight => {
+            let inv_sa = 1.0 - sa;
+            let out_a = sa + da * inv_sa;
+            let mut out = [0u8; 4];
+            for i in 0..3 {
+                out[i] = soft_light(s[i], d[i]);
+            }
+            out[3] = u8_round(out_a * 255.0);
+            out
+        }
+        CompositeOp::ColorDodge => {
+            let inv_sa = 1.0 - sa;
+            let out_a = sa + da * inv_sa;
+            let mut out = [0u8; 4];
+            for i in 0..3 {
+                out[i] = color_dodge(s[i], d[i]);
+            }
+            out[3] = u8_round(out_a * 255.0);
+            out
+        }
+        CompositeOp::ColorBurn => {
+            let inv_sa = 1.0 - sa;
+            let out_a = sa + da * inv_sa;
+            let mut out = [0u8; 4];
+            for i in 0..3 {
+                out[i] = color_burn(s[i], d[i]);
+            }
+            out[3] = u8_round(out_a * 255.0);
+            out
+        }
     }
+}
+
+/// Per-channel HardLight: like Overlay but driven by `src` instead of
+/// `dst`.
+#[inline]
+fn hard_light(src: u8, dst: u8) -> u8 {
+    let sv = src as u32;
+    let dv = dst as u32;
+    let m = if sv < 128 {
+        (2 * sv * dv + 127) / 255
+    } else {
+        let inv_s = 255 - sv;
+        let inv_d = 255 - dv;
+        let p = (2 * inv_s * inv_d + 127) / 255;
+        255 - p.min(255)
+    };
+    m.min(255) as u8
+}
+
+/// Per-channel SoftLight (Pegtop formula).
+#[inline]
+fn soft_light(src: u8, dst: u8) -> u8 {
+    let sn = src as f32 / 255.0;
+    let dn = dst as f32 / 255.0;
+    let v = (1.0 - 2.0 * sn) * dn * dn + 2.0 * sn * dn;
+    u8_round(v * 255.0)
+}
+
+/// Per-channel ColorDodge: brighten `dst` toward white as `src` heads
+/// to white. Edge cases match PDF 1.7 §11.3.5 — `src == 255` pins to
+/// 255 unless `dst == 0` (which stays 0); `src == 0` is identity.
+#[inline]
+fn color_dodge(src: u8, dst: u8) -> u8 {
+    if src == 255 {
+        return if dst == 0 { 0 } else { 255 };
+    }
+    let v = (dst as f32) / (1.0 - src as f32 / 255.0);
+    u8_round(v)
+}
+
+/// Per-channel ColorBurn: darken `dst` toward black as `src` heads to
+/// black. Edge cases mirror ColorDodge — `src == 0` pins to 0 unless
+/// `dst == 255` (stays 255); `src == 255` is identity.
+#[inline]
+fn color_burn(src: u8, dst: u8) -> u8 {
+    if src == 0 {
+        return if dst == 255 { 255 } else { 0 };
+    }
+    let v = 255.0 - (255.0 - dst as f32) / (src as f32 / 255.0);
+    u8_round(v)
 }
 
 /// Composite path for `Rgb24` (`bpp = 3`) and `Gray8` (`bpp = 1`).
@@ -457,6 +573,10 @@ fn composite_rgb_or_gray(
                 CompositeOp::Darken => s.min(d),
                 CompositeOp::Lighten => s.max(d),
                 CompositeOp::Difference => (s as i16 - d as i16).unsigned_abs() as u8,
+                CompositeOp::HardLight => hard_light(s, d),
+                CompositeOp::SoftLight => soft_light(s, d),
+                CompositeOp::ColorDodge => color_dodge(s, d),
+                CompositeOp::ColorBurn => color_burn(s, d),
             };
         }
     }
@@ -774,10 +894,104 @@ mod tests {
             CompositeOp::Darken,
             CompositeOp::Lighten,
             CompositeOp::Difference,
+            CompositeOp::HardLight,
+            CompositeOp::SoftLight,
+            CompositeOp::ColorDodge,
+            CompositeOp::ColorBurn,
         ] {
             assert_eq!(CompositeOp::from_name(op.name()), Some(op));
         }
+        assert_eq!(
+            CompositeOp::from_name("hard-light"),
+            Some(CompositeOp::HardLight)
+        );
+        assert_eq!(
+            CompositeOp::from_name("soft_light"),
+            Some(CompositeOp::SoftLight)
+        );
+        assert_eq!(
+            CompositeOp::from_name("color-dodge"),
+            Some(CompositeOp::ColorDodge)
+        );
+        assert_eq!(
+            CompositeOp::from_name("color_burn"),
+            Some(CompositeOp::ColorBurn)
+        );
         assert_eq!(CompositeOp::from_name("nope"), None);
+    }
+
+    #[test]
+    fn hardlight_dark_src_uses_multiply() {
+        let r = rgba_pixel(
+            [100, 100, 100, 255],
+            [200, 200, 200, 255],
+            CompositeOp::HardLight,
+        );
+        assert!((r[0] as i16 - 157).abs() <= 2, "got {}", r[0]);
+    }
+
+    #[test]
+    fn hardlight_bright_src_uses_screen() {
+        let r = rgba_pixel(
+            [200, 200, 200, 255],
+            [100, 100, 100, 255],
+            CompositeOp::HardLight,
+        );
+        assert!((r[0] as i16 - 188).abs() <= 2, "got {}", r[0]);
+    }
+
+    #[test]
+    fn softlight_half_src_is_identity() {
+        // sn = 128/255 ≈ 0.502 ⇒ very close to identity (within ±2).
+        let r = rgba_pixel(
+            [128, 128, 128, 255],
+            [180, 60, 220, 255],
+            CompositeOp::SoftLight,
+        );
+        for i in 0..3 {
+            let d = [180, 60, 220][i] as i16;
+            assert!((r[i] as i16 - d).abs() <= 2, "ch {i}: got {} vs {d}", r[i]);
+        }
+    }
+
+    #[test]
+    fn colordodge_white_src_saturates_nonzero_dst() {
+        let r = rgba_pixel(
+            [255, 255, 255, 255],
+            [50, 50, 50, 255],
+            CompositeOp::ColorDodge,
+        );
+        assert_eq!(&r[0..3], &[255, 255, 255]);
+        let r = rgba_pixel(
+            [255, 255, 255, 255],
+            [0, 0, 0, 255],
+            CompositeOp::ColorDodge,
+        );
+        assert_eq!(&r[0..3], &[0, 0, 0]);
+    }
+
+    #[test]
+    fn colordodge_black_src_is_identity() {
+        let r = rgba_pixel([0, 0, 0, 255], [123, 45, 67, 255], CompositeOp::ColorDodge);
+        assert_eq!(&r[0..3], &[123, 45, 67]);
+    }
+
+    #[test]
+    fn colorburn_black_src_pins_nonwhite_to_zero() {
+        let r = rgba_pixel([0, 0, 0, 255], [100, 100, 100, 255], CompositeOp::ColorBurn);
+        assert_eq!(&r[0..3], &[0, 0, 0]);
+        let r = rgba_pixel([0, 0, 0, 255], [255, 255, 255, 255], CompositeOp::ColorBurn);
+        assert_eq!(&r[0..3], &[255, 255, 255]);
+    }
+
+    #[test]
+    fn colorburn_white_src_is_identity() {
+        let r = rgba_pixel(
+            [255, 255, 255, 255],
+            [123, 45, 67, 255],
+            CompositeOp::ColorBurn,
+        );
+        assert_eq!(&r[0..3], &[123, 45, 67]);
     }
 
     #[test]

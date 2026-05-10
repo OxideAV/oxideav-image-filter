@@ -114,6 +114,17 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `-auto-gamma`.
 - **`SigmoidalContrast`** — sigmoid-curve contrast around a midpoint.
   IM: `-sigmoidal-contrast CxM%`.
+- **`Evaluate`** + **`EvaluateOp`** — per-pixel arithmetic LUT with a
+  single scalar operand. Operators: `Add`, `Subtract`, `Multiply`,
+  `Divide`, `Pow`, `Max`, `Min`, `Set`, `And`, `Or`, `Xor`,
+  `Threshold`. Alpha (RGBA) and chroma (YUV) pass through. IM:
+  `-evaluate <op> N`.
+- **`Cycle`** — modular per-channel value rotation
+  (`out = (src + amount) mod 256`); alpha and chroma preserved. IM
+  analogue: `-cycle N`.
+- **`Statistic`** + **`StatisticOp`** — rolling-window per-pixel
+  `Median` / `Min` / `Max` / `Mean` over a `WxH` neighbourhood
+  (border-clamped). 1×1 window is identity. IM: `-statistic <op> WxH`.
 
 ### Colour
 
@@ -176,6 +187,16 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   sampling. Optional `output_size: (w, h)` (JSON keys `output_width`
   + `output_height`) emits a custom canvas size — useful when the dst
   quad escapes the source rectangle. IM: `-distort Perspective "..."`.
+- **`Affine`** — 2-D affine warp with bilinear resampling. Six
+  coefficients in `(sx, ry, rx, sy, tx, ty)` order; supplied either
+  as `matrix: [...]` or per-named keys on the JSON factory.
+  Optional `output_size` for translation off-canvas. IM: `-distort
+  Affine "sx,ry,rx,sy,tx,ty"`.
+- **`Srt`** — Scale / Rotate / Translate composite warp. Collapses
+  `T(tx,ty) · R(θ) · S(sx,sy) · T(-ox,-oy)` into a single 2×3 affine
+  matrix and reuses the [`Affine`] machinery. Origin defaults to the
+  image centre on the JSON factory; uniform `scale` overrides
+  `sx`/`sy`. IM: `-distort SRT "ox,oy sx[,sy] angle tx,ty"`.
 - **`Distort`** — full Brown-Conrady lens distortion model: radial
   (`k1` quadratic + `k2` quartic) plus optional tangential
   (`p1` + `p2`, default `0`) decentering coefficients. Pure-radial
@@ -200,12 +221,16 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 
 - **`Composite`** + **`CompositeOp`** — Porter–Duff and arithmetic
   blends of a foreground (`src`) over a background (`dst`) frame.
-  Twelve operators registered as `composite-<op>` factories:
+  Sixteen operators registered as `composite-<op>` factories:
   - Porter–Duff coverage: `over`, `in`, `out`, `atop`, `xor`.
   - Arithmetic / per-channel: `plus` (clamped sum), `multiply`,
     `screen`, `overlay` (multiply-or-screen on `dst < 128`),
     `darken` (per-channel min), `lighten` (per-channel max),
     `difference` (`|src - dst|`).
+  - Overlay family (r11): `hardlight` (overlay driven by `src` instead
+    of `dst`), `softlight` (Pegtop continuous formula),
+    `colordodge` (`dst / (1 - src/255)`), `colorburn`
+    (`255 - (255 - dst) / (src/255)`).
   - Operates on `Gray8` / `Rgb24` / `Rgba` with **straight (non-
     premultiplied)** alpha throughout. The new `TwoInputImageFilter`
     trait formalises the two-port shape; the

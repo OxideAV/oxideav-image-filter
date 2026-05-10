@@ -9,6 +9,9 @@
 //!
 //! # Available filters
 //!
+//! - [`Affine`](affine::Affine) — 2-D affine transform with bilinear
+//!   resampling. Six-coefficient `(sx, ry, rx, sy, tx, ty)` matrix
+//!   matching ImageMagick's `-distort Affine` argument convention.
 //! - [`AutoGamma`](auto_gamma::AutoGamma) — auto-gamma: pick a per-channel
 //!   gamma so the geometric mean lands at 0.5.
 //! - [`Blur`](blur::Blur) — separable Gaussian blur with configurable
@@ -23,7 +26,8 @@
 //! - [`Composite`](composite::Composite) — two-input Porter–Duff and
 //!   arithmetic blend (`over`, `in`, `out`, `atop`, `xor`, `plus`,
 //!   `multiply`, `screen`, `overlay`, `darken`, `lighten`,
-//!   `difference`). Implements [`TwoInputImageFilter`].
+//!   `difference`, `hardlight`, `softlight`, `colordodge`,
+//!   `colorburn`). Implements [`TwoInputImageFilter`].
 //! - [`Convolve`](convolve::Convolve) — user-supplied square `N×N`
 //!   convolution kernel (odd `N`); optional bias / divisor; alpha
 //!   pass-through on RGBA. IM: `-convolve "..."`.
@@ -32,6 +36,10 @@
 //!   IM: `-channel <ch> -separate`.
 //! - [`Crop`](crop::Crop) — extract a rectangular subregion
 //!   `(x, y, width, height)` (ImageMagick `-crop WxH+X+Y`).
+//! - [`Cycle`](cycle::Cycle) — modular per-channel value rotation
+//!   (`out = (src + amount) mod 256` per RGB / luma byte; alpha and
+//!   chroma preserved). IM analogue: `-cycle N` (paletted-style sample
+//!   shift on direct-colour data).
 //! - [`Despeckle`](despeckle::Despeckle) — median-window
 //!   edge-preserving noise reduction; alpha pass-through.
 //! - [`Distort`](distort::Distort) — radial-polynomial barrel /
@@ -43,6 +51,9 @@
 //!   on YUV, every channel on RGB.
 //! - [`Equalize`](equalize::Equalize) — per-channel histogram
 //!   equalisation via CDF mapping.
+//! - [`Evaluate`](evaluate::Evaluate) — per-pixel arithmetic LUT
+//!   (Add / Sub / Mul / Div / Pow / Max / Min / Set / And / Or / Xor /
+//!   Threshold) with a single scalar operand. IM: `-evaluate <op> N`.
 //! - [`Extent`](extent::Extent) — set the output canvas to a fixed
 //!   `(width, height)` with a placement offset, padding the gaps with a
 //!   configurable background colour. IM: `-extent WxH+X+Y`.
@@ -95,6 +106,12 @@
 //! - [`Spread`](spread::Spread) — random pixel-position perturbation
 //!   inside a `[-radius, radius]²` neighbourhood with a deterministic
 //!   PRNG (ImageMagick `-spread N`).
+//! - [`Srt`](srt::Srt) — Scale / Rotate / Translate composite warp
+//!   collapsing to a single 2×3 affine matrix; mirrors ImageMagick's
+//!   `-distort SRT "ox,oy sx[,sy] angle tx,ty"` shorthand.
+//! - [`Statistic`](statistic::Statistic) — rolling-window per-pixel
+//!   statistic (`Median` / `Min` / `Max` / `Mean`) over a configurable
+//!   `WxH` neighbourhood. IM: `-statistic <op> WxH`.
 //! - [`Shave`](shave::Shave) — strip a uniform `(x_border, y_border)`
 //!   margin off every edge (centred crop). IM: `-shave XxY`.
 //! - [`Sharpen`](sharpen::Sharpen) — unsharp-mask sharpening with
@@ -132,6 +149,7 @@
 
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
+pub mod affine;
 pub mod auto_gamma;
 pub mod blur;
 pub mod brightness_contrast;
@@ -141,11 +159,13 @@ pub mod colorize;
 pub mod composite;
 pub mod convolve;
 pub mod crop;
+pub mod cycle;
 pub mod despeckle;
 pub mod distort;
 pub mod edge;
 pub mod emboss;
 pub mod equalize;
+pub mod evaluate;
 pub mod extent;
 pub mod flip;
 pub mod flop;
@@ -171,6 +191,8 @@ pub mod shave;
 pub mod sigmoidal_contrast;
 pub mod solarize;
 pub mod spread;
+pub mod srt;
+pub mod statistic;
 pub mod swirl;
 pub mod threshold;
 pub mod tilt_shift;
@@ -181,6 +203,7 @@ pub mod unsharp;
 pub mod vignette;
 pub mod wave;
 
+pub use affine::Affine;
 pub use auto_gamma::AutoGamma;
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
@@ -190,11 +213,13 @@ pub use colorize::Colorize;
 pub use composite::{Composite, CompositeOp};
 pub use convolve::Convolve;
 pub use crop::Crop;
+pub use cycle::Cycle;
 pub use despeckle::Despeckle;
 pub use distort::Distort;
 pub use edge::Edge;
 pub use emboss::Emboss;
 pub use equalize::Equalize;
+pub use evaluate::{Evaluate, EvaluateOp};
 pub use extent::Extent;
 pub use flip::Flip;
 pub use flop::Flop;
@@ -222,6 +247,8 @@ pub use shave::Shave;
 pub use sigmoidal_contrast::SigmoidalContrast;
 pub use solarize::Solarize;
 pub use spread::Spread;
+pub use srt::Srt;
+pub use statistic::{Statistic, StatisticOp};
 pub use swirl::Swirl;
 pub use threshold::Threshold;
 pub use tilt_shift::TiltShift;
