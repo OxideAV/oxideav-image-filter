@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r9: add an optional output canvas size to `Perspective` (new
+  `output_size: Option<(u32, u32)>` field + `Perspective::with_output_size`
+  builder; new JSON keys `output_width` + `output_height`, both
+  required together). When set, the filter emits a `w × h` frame
+  regardless of the input shape — pixels outside the destination
+  quad's footprint receive the configured background colour. The
+  `make_perspective` factory rebuilds the output port spec to the new
+  shape so downstream pipeline nodes see the updated dimensions.
+  Source-rectangle bounds checks pick up a tiny epsilon to keep
+  floating-point round-off from kicking on-boundary back-maps into
+  the background fill. Three new tests
+  (`output_size_grows_canvas_and_preserves_quad_mapping`,
+  `output_size_shrink_canvas_clamps_to_quad_footprint`,
+  `perspective_factory_accepts_output_size_keys`,
+  `perspective_factory_rejects_partial_output_size`).
+
 - r9: extend `Charcoal` with an optional Gaussian pre-blur (new
   `radius: u32` field + `Charcoal::with_radius` builder; new JSON key
   `radius`). Default `radius = 0` is bit-exact identical to the r6

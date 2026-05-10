@@ -151,7 +151,9 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Perspective`** — 4-corner perspective warp; solves the 3×3
   homography from src/dst quads with 8×8 Gauss-Jordan elimination,
   then inverse-maps each output pixel via `H⁻¹` with bilinear
-  sampling. IM: `-distort Perspective "..."`.
+  sampling. Optional `output_size: (w, h)` (JSON keys `output_width`
+  + `output_height`) emits a custom canvas size — useful when the dst
+  quad escapes the source rectangle. IM: `-distort Perspective "..."`.
 - **`Distort`** — radial-polynomial barrel / pincushion lens
   distortion (`k1` quadratic + `k2` quartic coefficients). IM:
   `-distort barrel "k1 k2 ..."`.

@@ -28,10 +28,14 @@
 //!      3──────2             3──────2
 //! ```
 //!
-//! Operates on packed `Rgb24` / `Rgba`. Output dimensions match the
-//! input (no canvas grow); pixels falling outside the destination
-//! quad keep the background colour. Use [`Perspective::with_background`]
-//! to override the background.
+//! Operates on packed `Rgb24` / `Rgba`. By default output dimensions
+//! match the input (no canvas grow); pixels falling outside the
+//! destination quad keep the background colour. Use
+//! [`Perspective::with_background`] to override the background, and
+//! [`Perspective::with_output_size`] to emit a larger / smaller canvas
+//! than the input (useful when the destination quad escapes the
+//! source rectangle, e.g. mapping onto a virtual screen wider than
+//! the source).
 //!
 //! Solving the homography uses an 8×8 linear system: the eight
 //! unknowns are the first eight entries of `H` (we fix `H[2][2] = 1`).
@@ -54,6 +58,12 @@ pub struct Perspective {
     pub src_corners: [(f32, f32); 4],
     pub dst_corners: [(f32, f32); 4],
     pub background: [u8; 4],
+    /// Optional explicit output canvas size in pixels. `None` (the
+    /// default) means "use the input frame's `(width, height)`". When
+    /// `Some((w, h))` the filter emits a `w × h` frame regardless of
+    /// the input dimensions — handy when the destination quad escapes
+    /// the source rectangle.
+    pub output_size: Option<(u32, u32)>,
 }
 
 impl Perspective {
@@ -63,6 +73,7 @@ impl Perspective {
             src_corners,
             dst_corners,
             background: [0, 0, 0, 255],
+            output_size: None,
         }
     }
 
@@ -70,6 +81,15 @@ impl Perspective {
     /// outputs and ignored on Rgb24).
     pub fn with_background(mut self, bg: [u8; 4]) -> Self {
         self.background = bg;
+        self
+    }
+
+    /// Override the output canvas size. The destination quad can sit
+    /// anywhere in this `[0, w-1] × [0, h-1]` rectangle — pixels
+    /// outside the quad's footprint receive the background fill.
+    /// Pass `(0, 0)` to disable (matches `output_size = None`).
+    pub fn with_output_size(mut self, w: u32, h: u32) -> Self {
+        self.output_size = if w == 0 || h == 0 { None } else { Some((w, h)) };
         self
     }
 }
@@ -86,13 +106,21 @@ impl ImageFilter for Perspective {
             }
         };
 
-        let w = params.width as usize;
-        let h = params.height as usize;
-        let src = &input.planes[0];
-        let row_bytes = w * bpp;
-        let mut out = vec![0u8; row_bytes * h];
+        let src_w = params.width as usize;
+        let src_h = params.height as usize;
+        // Destination canvas size — defaults to the input shape, can be
+        // overridden by `with_output_size` to emit a wider / taller
+        // canvas when the dst quad escapes the source rectangle.
+        let (dst_w, dst_h) = self
+            .output_size
+            .map(|(w, h)| (w as usize, h as usize))
+            .unwrap_or((src_w, src_h));
 
-        if w == 0 || h == 0 {
+        let src = &input.planes[0];
+        let row_bytes = dst_w * bpp;
+        let mut out = vec![0u8; row_bytes * dst_h];
+
+        if dst_w == 0 || dst_h == 0 || src_w == 0 || src_h == 0 {
             return Ok(VideoFrame {
                 pts: input.pts,
                 planes: vec![VideoPlane {
@@ -109,9 +137,9 @@ impl ImageFilter for Perspective {
         let inverse = invert_3x3(&forward)
             .ok_or_else(|| Error::invalid("Perspective: forward homography is non-invertible"))?;
 
-        for py in 0..h {
+        for py in 0..dst_h {
             let dst_row = &mut out[py * row_bytes..(py + 1) * row_bytes];
-            for px in 0..w {
+            for px in 0..dst_w {
                 let (sx, sy, w_h) = apply_homography(&inverse, px as f32, py as f32);
                 let base = px * bpp;
                 if w_h.abs() < 1e-9 {
@@ -120,15 +148,26 @@ impl ImageFilter for Perspective {
                 }
                 let sx = sx / w_h;
                 let sy = sy / w_h;
-                if sx < 0.0 || sx > (w as f32 - 1.0) || sy < 0.0 || sy > (h as f32 - 1.0) {
+                // A tiny epsilon absorbs floating-point round-off at
+                // the source-rectangle boundary so e.g. an sx that
+                // computes to `15.0000005` for a 16-pixel-wide source
+                // still hits the inside branch (and clamps to 15.0
+                // inside `bilinear_sample_into`) instead of falling
+                // through to the background fill.
+                const EPS: f32 = 1e-4;
+                if sx < -EPS
+                    || sx > (src_w as f32 - 1.0) + EPS
+                    || sy < -EPS
+                    || sy > (src_h as f32 - 1.0) + EPS
+                {
                     write_background(&mut dst_row[base..base + bpp], &self.background, bpp);
                     continue;
                 }
                 bilinear_sample_into(
                     &src.data,
                     src.stride,
-                    w,
-                    h,
+                    src_w,
+                    src_h,
                     bpp,
                     sx,
                     sy,
@@ -392,6 +431,63 @@ mod tests {
             )
             .unwrap_err();
         assert!(format!("{err}").contains("Perspective"));
+    }
+
+    #[test]
+    fn output_size_grows_canvas_and_preserves_quad_mapping() {
+        // r9: emit a 32×32 canvas from a 16×16 input. The src quad is
+        // the full input rect; the dst quad maps the input into the
+        // top-left 16×16 corner of the output. Pixels outside that
+        // sub-rectangle must carry the background colour, and the
+        // top-left 16×16 region must be a near-byte-copy of the input.
+        let src = [(0.0, 0.0), (15.0, 0.0), (15.0, 15.0), (0.0, 15.0)];
+        let dst = [(0.0, 0.0), (15.0, 0.0), (15.0, 15.0), (0.0, 15.0)];
+        let f = Perspective::new(src, dst)
+            .with_output_size(32, 32)
+            .with_background([7, 8, 9, 255]);
+        let input = rgb(16, 16, |x, y| (x as u8 * 16, y as u8 * 16, 50));
+        let out = f.apply(&input, params_rgb(16, 16)).unwrap();
+
+        // Output frame is 32×32 ⇒ stride = 32*3 = 96.
+        assert_eq!(out.planes[0].data.len(), 32 * 32 * 3);
+        assert_eq!(out.planes[0].stride, 96);
+
+        // (20, 20) is outside the 16×16 dst quad ⇒ background.
+        let off = (20 * 32 + 20) * 3;
+        assert_eq!(&out.planes[0].data[off..off + 3], &[7, 8, 9]);
+
+        // (5, 7) is inside the dst quad ⇒ should match the input pixel
+        // at (5, 7) modulo bilinear-sampling rounding (identity quad ⇒
+        // exact integer back-map ⇒ exact match).
+        let in_off = (7 * 16 + 5) * 3;
+        let out_off = (7 * 32 + 5) * 3;
+        assert_eq!(
+            &out.planes[0].data[out_off..out_off + 3],
+            &input.planes[0].data[in_off..in_off + 3]
+        );
+    }
+
+    #[test]
+    fn output_size_shrink_canvas_clamps_to_quad_footprint() {
+        // Emit an 8×8 canvas from a 16×16 input by pinning the dst
+        // quad to (0, 0)..(7, 7). The whole 8×8 canvas should be
+        // covered by the quad (no background pixels visible).
+        let src = [(0.0, 0.0), (15.0, 0.0), (15.0, 15.0), (0.0, 15.0)];
+        let dst = [(0.0, 0.0), (7.0, 0.0), (7.0, 7.0), (0.0, 7.0)];
+        let f = Perspective::new(src, dst)
+            .with_output_size(8, 8)
+            .with_background([222, 222, 222, 255]);
+        let input = rgb(16, 16, |_, _| (40, 60, 80));
+        let out = f.apply(&input, params_rgb(16, 16)).unwrap();
+        assert_eq!(out.planes[0].data.len(), 8 * 8 * 3);
+        // Every pixel should sample the flat input colour, NOT the
+        // background.
+        for y in 0..8 {
+            for x in 0..8 {
+                let off = (y * 8 + x) * 3;
+                assert_eq!(&out.planes[0].data[off..off + 3], &[40, 60, 80]);
+            }
+        }
     }
 
     #[test]

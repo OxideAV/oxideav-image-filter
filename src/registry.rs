@@ -1499,6 +1499,7 @@ fn parse_corners(value: &Value, key: &str) -> Result<[(f32, f32); 4]> {
 fn make_perspective(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::Perspective;
     let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
 
     let src_v = p
         .and_then(|m| m.get("src_corners").or_else(|| m.get("src")))
@@ -1534,8 +1535,37 @@ fn make_perspective(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Strea
         f = f.with_background(bg);
     }
 
+    // r9: optional explicit output canvas size — both keys must be
+    // present together, or both absent (the default "match input"
+    // behaviour). One-without-the-other is rejected to avoid silent
+    // axis-default surprises.
+    let out_w_opt = get_u64("output_width");
+    let out_h_opt = get_u64("output_height");
+    let configured_size = match (out_w_opt, out_h_opt) {
+        (Some(w), Some(h)) => {
+            f = f.with_output_size(w as u32, h as u32);
+            Some((w as u32, h as u32))
+        }
+        (None, None) => None,
+        _ => {
+            return Err(Error::invalid(
+                "job: filter 'perspective': output_width and output_height must be supplied together",
+            ));
+        }
+    };
+
     let in_port = video_in_port(inputs);
-    let out_port = passthrough_out_port(&in_port);
+    // When the output canvas size differs from the input, rebuild the
+    // output port spec so the downstream pipeline sees the new shape.
+    let out_port = match (configured_size, &in_port.params) {
+        (
+            Some((w, h)),
+            PortParams::Video {
+                format, time_base, ..
+            },
+        ) => PortSpec::video("video", w, h, *format, *time_base),
+        _ => passthrough_out_port(&in_port),
+    };
     Ok(Box::new(ImageFilterAdapter::new(
         Box::new(f),
         in_port,
@@ -2928,6 +2958,55 @@ mod tests {
                 &inputs,
             )
             .expect("nested corner arrays must work");
+    }
+
+    #[test]
+    fn perspective_factory_accepts_output_size_keys() {
+        // r9: explicit output canvas size — both keys together rebuild
+        // the output port spec to the new shape.
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "perspective",
+                &json!({
+                    "src_corners": [0.0, 0.0, 3.0, 0.0, 3.0, 3.0, 0.0, 3.0],
+                    "dst_corners": [0.0, 0.0, 3.0, 0.0, 3.0, 3.0, 0.0, 3.0],
+                    "output_width": 8,
+                    "output_height": 6,
+                }),
+                &inputs,
+            )
+            .expect("perspective factory with output_size");
+        match &f.output_ports()[0].params {
+            PortParams::Video { width, height, .. } => {
+                assert_eq!(*width, 8);
+                assert_eq!(*height, 6);
+            }
+            _ => panic!("perspective output port is not video"),
+        }
+    }
+
+    #[test]
+    fn perspective_factory_rejects_partial_output_size() {
+        // Only one of (output_width, output_height) ⇒ explicit error
+        // rather than a silent axis default.
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c.filters.make(
+            "perspective",
+            &json!({
+                "src_corners": [0.0, 0.0, 3.0, 0.0, 3.0, 3.0, 0.0, 3.0],
+                "dst_corners": [0.0, 0.0, 3.0, 0.0, 3.0, 3.0, 0.0, 3.0],
+                "output_width": 8,
+            }),
+            &inputs,
+        );
+        assert!(
+            bad.is_err(),
+            "perspective: output_width without output_height should fail"
+        );
     }
 
     #[test]
