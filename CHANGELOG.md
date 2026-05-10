@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r10: land six ImageMagick-style geometric / channel / morphology
+  filters: `Roll` (circular pixel shift, IM `-roll +X+Y`), `Shave`
+  (uniform border trim, IM `-shave XxY`), `Extent` (set canvas to
+  `WxH+X+Y` with configurable background, IM `-extent`), `Trim`
+  (auto-crop to non-background bbox with `fuzz` tolerance, IM
+  `-fuzz N% -trim`), `ChannelExtract` (pull one channel out as a
+  single-plane `Gray8` frame, IM `-channel <ch> -separate`), and
+  `MorphologyEdge` (morphological edge / gradient operators —
+  `EdgeIn`, `EdgeOut`, `EdgeMagnitude` — built on the existing
+  dilate / erode primitives, IM `-morphology EdgeIn|EdgeOut|Edge`).
+  Eight new factory names wired into `register()`: `roll`, `shave`,
+  `extent`, `trim`, `channel-extract`, `morphology-edgein`,
+  `morphology-edgeout`, `morphology-edge-magnitude`. Filter count:
+  39 → 45 named types; factory count: 43 → 51 names (+8 new
+  factories on top of the existing twelve `composite-<op>` ones).
+
 - r9: rotate the `TiltShift` focus band around the image centre via a
   new `angle_degrees: f32` parameter (default `0.0` = the legacy
   horizontal band; `90.0` = vertical band; any finite angle works).

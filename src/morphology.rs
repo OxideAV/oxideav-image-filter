@@ -174,6 +174,170 @@ impl ImageFilter for MorphologyChain {
     }
 }
 
+/// Morphological edge operators built on top of dilate / erode.
+///
+/// All three pick out per-pixel changes induced by the structuring
+/// element relative to the source — i.e. the boundary between
+/// "inside" and "outside" of bright regions:
+///
+/// - `EdgeIn = src - erode(src)`. Highlights pixels that are present in
+///   the source but disappear after erosion. These sit on the **inner
+///   boundary** of bright regions.
+/// - `EdgeOut = dilate(src) - src`. Highlights pixels that the
+///   structuring element grows into but the source didn't hold —
+///   the **outer boundary** of bright regions.
+/// - `EdgeMagnitude = dilate(src) - erode(src)`. The full per-pixel
+///   "morphological gradient" — brightest along edges, dark inside
+///   uniform regions.
+///
+/// Subtraction is per-channel and clamped at 0 (saturating). Built from
+/// the same primitives as [`Morphology`] so the structuring element
+/// behaviour matches exactly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeOp {
+    /// `src - erode(src)` (inner boundary).
+    EdgeIn,
+    /// `dilate(src) - src` (outer boundary).
+    EdgeOut,
+    /// `dilate(src) - erode(src)` (full morphological gradient).
+    EdgeMagnitude,
+}
+
+/// Morphological edge / gradient filter — see [`EdgeOp`] for the
+/// operator family.
+///
+/// Operates on `Gray8`, `Rgb24`, `Rgba`, and planar YUV. On RGBA the
+/// alpha channel passes through unchanged (matching `Morphology`'s
+/// "alpha isn't tonal" rule). On planar YUV every plane is processed.
+#[derive(Clone, Debug)]
+pub struct MorphologyEdge {
+    pub op: EdgeOp,
+    pub element: StructuringElement,
+}
+
+impl MorphologyEdge {
+    /// Build an edge filter with the given operator and structuring
+    /// element.
+    pub fn new(op: EdgeOp, element: StructuringElement) -> Self {
+        Self { op, element }
+    }
+
+    /// Convenience: inner-boundary edge.
+    pub fn edge_in(element: StructuringElement) -> Self {
+        Self::new(EdgeOp::EdgeIn, element)
+    }
+
+    /// Convenience: outer-boundary edge.
+    pub fn edge_out(element: StructuringElement) -> Self {
+        Self::new(EdgeOp::EdgeOut, element)
+    }
+
+    /// Convenience: full morphological gradient.
+    pub fn edge_magnitude(element: StructuringElement) -> Self {
+        Self::new(EdgeOp::EdgeMagnitude, element)
+    }
+}
+
+impl ImageFilter for MorphologyEdge {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        // Reuse the same code path as `Morphology` for both passes.
+        let dilated_or_erode = match self.op {
+            EdgeOp::EdgeIn => Morphology::erode(self.element, 1).apply(input, params)?,
+            EdgeOp::EdgeOut | EdgeOp::EdgeMagnitude => {
+                Morphology::dilate(self.element, 1).apply(input, params)?
+            }
+        };
+        let other = match self.op {
+            EdgeOp::EdgeIn | EdgeOp::EdgeOut => None,
+            EdgeOp::EdgeMagnitude => Some(Morphology::erode(self.element, 1).apply(input, params)?),
+        };
+
+        // Per-channel saturating subtract, alpha-preserving on RGBA.
+        let alpha_passthrough = matches!(params.format, PixelFormat::Rgba);
+        let mut out = input.clone();
+        for (idx, plane) in out.planes.iter_mut().enumerate() {
+            let bpp = bytes_per_plane_pixel(params.format, idx);
+            // Choose source operands per op:
+            //   EdgeIn        : src - erode
+            //   EdgeOut       : dilate - src
+            //   EdgeMagnitude : dilate - erode
+            let (a_data, b_data) = match self.op {
+                EdgeOp::EdgeIn => (
+                    input.planes[idx].data.as_slice(),
+                    dilated_or_erode.planes[idx].data.as_slice(),
+                ),
+                EdgeOp::EdgeOut => (
+                    dilated_or_erode.planes[idx].data.as_slice(),
+                    input.planes[idx].data.as_slice(),
+                ),
+                EdgeOp::EdgeMagnitude => (
+                    dilated_or_erode.planes[idx].data.as_slice(),
+                    other.as_ref().unwrap().planes[idx].data.as_slice(),
+                ),
+            };
+            let a_stride = match self.op {
+                EdgeOp::EdgeIn => input.planes[idx].stride,
+                EdgeOp::EdgeOut | EdgeOp::EdgeMagnitude => dilated_or_erode.planes[idx].stride,
+            };
+            let b_stride = match self.op {
+                EdgeOp::EdgeIn => dilated_or_erode.planes[idx].stride,
+                EdgeOp::EdgeOut => input.planes[idx].stride,
+                EdgeOp::EdgeMagnitude => other.as_ref().unwrap().planes[idx].stride,
+            };
+            sub_plane(
+                plane,
+                a_data,
+                a_stride,
+                b_data,
+                b_stride,
+                bpp,
+                alpha_passthrough,
+            );
+        }
+
+        Ok(out)
+    }
+}
+
+/// In-place per-channel saturating subtract `out = a - b`. Skips the
+/// alpha channel on RGBA so the original alpha survives the edge pass.
+fn sub_plane(
+    out: &mut VideoPlane,
+    a: &[u8],
+    a_stride: usize,
+    b: &[u8],
+    b_stride: usize,
+    bpp: usize,
+    alpha_passthrough: bool,
+) {
+    // Output rows are tightly packed (no padding) — Morphology emits
+    // them that way and the input plane (when used as `a` in EdgeIn)
+    // may have different stride. We respect that.
+    let out_stride = out.stride;
+    let row_bytes = out_stride; // tightly packed for our generated planes
+    let h = out.data.len() / out_stride;
+    for y in 0..h {
+        for x in 0..(row_bytes / bpp) {
+            for ch in 0..bpp {
+                let off = x * bpp + ch;
+                if alpha_passthrough && bpp == 4 && ch == 3 {
+                    // Preserve whichever alpha lives at `a` — by
+                    // construction (above) `a` is always the operand
+                    // whose alpha we want to keep (input or dilate-of-
+                    // input; both carry the original alpha because
+                    // dilate alpha-passes-through too).
+                    let _ = b;
+                    out.data[y * out_stride + off] = a[y * a_stride + off];
+                    continue;
+                }
+                let av = a[y * a_stride + off];
+                let bv = b[y * b_stride + off];
+                out.data[y * out_stride + off] = av.saturating_sub(bv);
+            }
+        }
+    }
+}
+
 fn morph_plane(
     plane: &VideoPlane,
     w: u32,
@@ -393,6 +557,79 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn edge_in_picks_inner_boundary() {
+        // 3×3 bright square at the centre of a 5×5 dark field. With
+        // EdgeIn we keep only the pixels that erode wipes out — the
+        // outer ring of the bright square. The dead-centre pixel
+        // (whose 8-neighbours are all bright) survives erosion and so
+        // gets subtracted to zero.
+        let input = gray_frame(5, 5, |x, y| {
+            if (1..=3).contains(&x) && (1..=3).contains(&y) {
+                200
+            } else {
+                0
+            }
+        });
+        let out = MorphologyEdge::edge_in(StructuringElement::Square3x3)
+            .apply(&input, params_gray(5, 5))
+            .unwrap();
+        // Centre survives erosion: src - erode = 200 - 200 = 0.
+        assert_eq!(out.planes[0].data[2 * 5 + 2], 0);
+        // Ring pixels are bright in src but were eroded to 0 → 200 - 0 = 200.
+        assert_eq!(out.planes[0].data[5 + 1], 200);
+        assert_eq!(out.planes[0].data[5 + 2], 200);
+        assert_eq!(out.planes[0].data[5 + 3], 200);
+        // Background pixels are 0 in src → 0 - 0 = 0.
+        assert_eq!(out.planes[0].data[0], 0);
+    }
+
+    #[test]
+    fn edge_out_picks_outer_boundary() {
+        // 1×1 bright pixel on a dark field. EdgeOut should highlight
+        // exactly the 8-neighbour ring (those pixels go from 0 to 200
+        // through dilation). The original bright pixel is preserved by
+        // dilation and so subtracts to 0.
+        let input = gray_frame(5, 5, |x, y| if x == 2 && y == 2 { 200 } else { 0 });
+        let out = MorphologyEdge::edge_out(StructuringElement::Square3x3)
+            .apply(&input, params_gray(5, 5))
+            .unwrap();
+        // Original centre: dilate = 200, src = 200 → 0.
+        assert_eq!(out.planes[0].data[2 * 5 + 2], 0);
+        // 8-neighbour pixels: dilate = 200, src = 0 → 200.
+        assert_eq!(out.planes[0].data[5 + 1], 200);
+        assert_eq!(out.planes[0].data[5 + 2], 200);
+        assert_eq!(out.planes[0].data[5 + 3], 200);
+        assert_eq!(out.planes[0].data[3 * 5 + 1], 200);
+        // Outside the 3×3 neighbourhood: dilate = 0, src = 0 → 0.
+        assert_eq!(out.planes[0].data[0], 0);
+    }
+
+    #[test]
+    fn edge_magnitude_lights_full_boundary() {
+        // 1×1 bright pixel — gradient lights the centre + the 8-ring.
+        let input = gray_frame(5, 5, |x, y| if x == 2 && y == 2 { 200 } else { 0 });
+        let out = MorphologyEdge::edge_magnitude(StructuringElement::Square3x3)
+            .apply(&input, params_gray(5, 5))
+            .unwrap();
+        // Centre: dilate = 200, erode = 0 → 200.
+        assert_eq!(out.planes[0].data[2 * 5 + 2], 200);
+        // 8-neighbour: dilate = 200, erode = 0 → 200.
+        assert_eq!(out.planes[0].data[5 + 2], 200);
+        // Outside 3×3 neighbourhood: dilate = 0, erode = 0 → 0.
+        assert_eq!(out.planes[0].data[0], 0);
+    }
+
+    #[test]
+    fn flat_image_edge_is_zero() {
+        // Flat field: dilate = src = erode → all three operators produce 0.
+        let input = gray_frame(4, 4, |_, _| 77);
+        let out = MorphologyEdge::edge_magnitude(StructuringElement::Cross3x3)
+            .apply(&input, params_gray(4, 4))
+            .unwrap();
+        assert!(out.planes[0].data.iter().all(|&v| v == 0));
     }
 
     #[test]

@@ -27,6 +27,9 @@
 //! - [`Convolve`](convolve::Convolve) — user-supplied square `N×N`
 //!   convolution kernel (odd `N`); optional bias / divisor; alpha
 //!   pass-through on RGBA. IM: `-convolve "..."`.
+//! - [`ChannelExtract`](channel_extract::ChannelExtract) — pull one
+//!   channel (R/G/B/A or Y/U/V) out as a single-plane `Gray8` frame.
+//!   IM: `-channel <ch> -separate`.
 //! - [`Crop`](crop::Crop) — extract a rectangular subregion
 //!   `(x, y, width, height)` (ImageMagick `-crop WxH+X+Y`).
 //! - [`Despeckle`](despeckle::Despeckle) — median-window
@@ -40,6 +43,9 @@
 //!   on YUV, every channel on RGB.
 //! - [`Equalize`](equalize::Equalize) — per-channel histogram
 //!   equalisation via CDF mapping.
+//! - [`Extent`](extent::Extent) — set the output canvas to a fixed
+//!   `(width, height)` with a placement offset, padding the gaps with a
+//!   configurable background colour. IM: `-extent WxH+X+Y`.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
 //! - [`Flop`](flop::Flop) — mirror horizontally (left col ↔ right col).
 //! - [`Gamma`](gamma::Gamma) — power-law gamma curve applied per tone
@@ -57,6 +63,10 @@
 //!   dilate / erode with a 3×3 square or cross structuring element;
 //!   plus [`MorphologyChain`](morphology::MorphologyChain) for the
 //!   open / close compositions. IM: `-morphology Dilate|Erode|Open|Close`.
+//! - [`MorphologyEdge`](morphology::MorphologyEdge) — morphological
+//!   edge / gradient operators (`EdgeIn`, `EdgeOut`, `EdgeMagnitude`)
+//!   built from the same dilate / erode primitives. IM:
+//!   `-morphology EdgeIn|EdgeOut|Edge`.
 //! - [`MotionBlur`](motion_blur::MotionBlur) — directional 1-D Gaussian
 //!   blur along `angle_degrees` (ImageMagick `-motion-blur RxS+A`).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
@@ -73,6 +83,8 @@
 //!   intensity levels (ImageMagick `-posterize`).
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
 //!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear.
+//! - [`Roll`](roll::Roll) — circular pixel shift `(dx, dy)`; rows /
+//!   columns wrap around the borders. IM: `-roll +X+Y`.
 //! - [`Rotate`](rotate::Rotate) — arbitrary-angle rotation with bilinear
 //!   resampling; grows the canvas and fills gaps with a configurable
 //!   background colour.
@@ -83,6 +95,8 @@
 //! - [`Spread`](spread::Spread) — random pixel-position perturbation
 //!   inside a `[-radius, radius]²` neighbourhood with a deterministic
 //!   PRNG (ImageMagick `-spread N`).
+//! - [`Shave`](shave::Shave) — strip a uniform `(x_border, y_border)`
+//!   margin off every edge (centred crop). IM: `-shave XxY`.
 //! - [`Sharpen`](sharpen::Sharpen) — unsharp-mask sharpening with
 //!   `radius`/`sigma`/`amount`; YUV touches only luma.
 //! - [`SigmoidalContrast`](sigmoidal_contrast::SigmoidalContrast) —
@@ -99,6 +113,9 @@
 //! - [`Tint`](tint::Tint) — luminance-weighted tint toward a target
 //!   colour (ImageMagick `-tint`); bright pixels reach the target,
 //!   dark pixels stay put.
+//! - [`Trim`](trim::Trim) — crop to the bounding box of pixels that
+//!   differ from a reference background colour by more than `fuzz` per
+//!   channel. IM: `-fuzz N% -trim`.
 //! - [`Unsharp`](unsharp::Unsharp) — threshold-gated unsharp-mask
 //!   (ImageMagick `-unsharp RxS+A+T`).
 //! - [`Vignette`](vignette::Vignette) — Gaussian radial darkening
@@ -118,6 +135,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 pub mod auto_gamma;
 pub mod blur;
 pub mod brightness_contrast;
+pub mod channel_extract;
 pub mod charcoal;
 pub mod colorize;
 pub mod composite;
@@ -128,6 +146,7 @@ pub mod distort;
 pub mod edge;
 pub mod emboss;
 pub mod equalize;
+pub mod extent;
 pub mod flip;
 pub mod flop;
 pub mod gamma;
@@ -144,9 +163,11 @@ pub mod polar;
 pub mod posterize;
 pub mod registry;
 pub mod resize;
+pub mod roll;
 pub mod rotate;
 pub mod sepia;
 pub mod sharpen;
+pub mod shave;
 pub mod sigmoidal_contrast;
 pub mod solarize;
 pub mod spread;
@@ -155,6 +176,7 @@ pub mod threshold;
 pub mod tilt_shift;
 pub mod tint;
 pub(crate) mod tonal_lut;
+pub mod trim;
 pub mod unsharp;
 pub mod vignette;
 pub mod wave;
@@ -162,6 +184,7 @@ pub mod wave;
 pub use auto_gamma::AutoGamma;
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
+pub use channel_extract::{Channel, ChannelExtract};
 pub use charcoal::Charcoal;
 pub use colorize::Colorize;
 pub use composite::{Composite, CompositeOp};
@@ -172,6 +195,7 @@ pub use distort::Distort;
 pub use edge::Edge;
 pub use emboss::Emboss;
 pub use equalize::Equalize;
+pub use extent::Extent;
 pub use flip::Flip;
 pub use flop::Flop;
 pub use gamma::Gamma;
@@ -179,7 +203,9 @@ pub use grayscale::Grayscale;
 pub use implode::Implode;
 pub use level::Level;
 pub use modulate::Modulate;
-pub use morphology::{Morphology, MorphologyChain, MorphologyOp, StructuringElement};
+pub use morphology::{
+    EdgeOp, Morphology, MorphologyChain, MorphologyEdge, MorphologyOp, StructuringElement,
+};
 pub use motion_blur::MotionBlur;
 pub use negate::Negate;
 pub use normalize::Normalize;
@@ -188,9 +214,11 @@ pub use polar::{Polar, PolarDirection};
 pub use posterize::Posterize;
 pub use registry::{__oxideav_entry, register};
 pub use resize::{Interpolation, Resize};
+pub use roll::Roll;
 pub use rotate::Rotate;
 pub use sepia::Sepia;
 pub use sharpen::Sharpen;
+pub use shave::Shave;
 pub use sigmoidal_contrast::SigmoidalContrast;
 pub use solarize::Solarize;
 pub use spread::Spread;
@@ -198,6 +226,7 @@ pub use swirl::Swirl;
 pub use threshold::Threshold;
 pub use tilt_shift::TiltShift;
 pub use tint::Tint;
+pub use trim::Trim;
 pub use unsharp::Unsharp;
 pub use vignette::Vignette;
 pub use wave::Wave;

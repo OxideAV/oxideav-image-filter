@@ -74,6 +74,22 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   exact axis-aligned fast path. IM: `-rotate N`.
 - **`Crop`** — `(x, y, width, height)` subregion extraction; chroma
   rects are ceil/floor-aligned for YUV subsampling. IM: `-crop WxH+X+Y`.
+- **`Roll`** — circular pixel shift `(dx, dy)`; rows / columns wrap
+  around the borders. Chroma offsets on planar YUV are scaled by the
+  subsampling factor so the visible image translates as a rigid block.
+  IM: `-roll +X+Y`.
+- **`Shave`** — strip a uniform `(x_border, y_border)` margin off
+  every edge (centred crop). Backed by `Crop` so YUV chroma alignment
+  matches. IM: `-shave XxY`.
+- **`Extent`** — set the output canvas to a fixed `(width, height)`
+  with a placement offset, padding the gaps with a configurable
+  background colour. Negative offsets translate the input toward the
+  upper-left so its right / bottom edge can land inside the window.
+  IM: `-extent WxH+X+Y`.
+- **`Trim`** — auto-crop to the bounding box of pixels that differ
+  from a reference background colour by more than `fuzz` per channel
+  (Chebyshev / L-infinity tolerance). Background defaults to the
+  source's `(0, 0)` pixel. IM: `-fuzz N% -trim`.
 
 ### Tonal (LUT-based, typically fast)
 
@@ -148,6 +164,12 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   dilate / erode with a 3×3 square or cross structuring element; plus
   `open` (erode → dilate) and `close` (dilate → erode) compositions.
   IM: `-morphology Dilate|Erode|Open|Close`.
+- **`MorphologyEdge`** — morphological edge / gradient operators
+  built on the dilate / erode primitives:
+  - `EdgeIn`  = `src - erode(src)`     — inner boundary.
+  - `EdgeOut` = `dilate(src) - src`    — outer boundary.
+  - `EdgeMagnitude` = `dilate - erode` — full per-pixel gradient.
+  IM: `-morphology EdgeIn|EdgeOut|Edge`.
 - **`Perspective`** — 4-corner perspective warp; solves the 3×3
   homography from src/dst quads with 8×8 Gauss-Jordan elimination,
   then inverse-maps each output pixel via `H⁻¹` with bilinear
@@ -165,6 +187,14 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   underlying blur `radius` / `sigma`. Optional `angle_degrees`
   (default `0` = horizontal band; `90` = vertical band) rotates the
   focus band around the image centre.
+
+### Channel ops
+
+- **`ChannelExtract`** + **`Channel`** — pull one channel out of a
+  multi-channel frame as a single-plane `Gray8` frame. Accepts
+  `R` / `G` / `B` / `A` on packed RGB / RGBA and `Y` / `U` / `V` on
+  planar YUV (chroma channels return at the subsampled grid size).
+  IM rough analogue: `-channel <ch> -separate`.
 
 ### Two-input compositing
 

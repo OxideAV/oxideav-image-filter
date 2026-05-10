@@ -111,6 +111,23 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("tilt-shift", Box::new(make_tilt_shift));
 
+    // r10 factories: geometric re-windowing + channel ops + morphology
+    // edge / gradient operators.
+    ctx.filters.register("roll", Box::new(make_roll));
+    ctx.filters.register("shave", Box::new(make_shave));
+    ctx.filters.register("extent", Box::new(make_extent));
+    ctx.filters.register("trim", Box::new(make_trim));
+    ctx.filters
+        .register("channel-extract", Box::new(make_channel_extract));
+    ctx.filters
+        .register("morphology-edgein", Box::new(make_morphology_edgein));
+    ctx.filters
+        .register("morphology-edgeout", Box::new(make_morphology_edgeout));
+    ctx.filters.register(
+        "morphology-edge-magnitude",
+        Box::new(make_morphology_edge_magnitude),
+    );
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family.
     for op in [
@@ -1704,6 +1721,283 @@ fn make_tilt_shift(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Stream
     )))
 }
 
+// --- r10 factories: geometry + channel ops + morphology edges ---
+
+fn make_roll(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Roll;
+    let p = params.as_object();
+    let get_i64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
+
+    let dx = get_i64("dx")
+        .or_else(|| get_i64("x"))
+        .unwrap_or(0)
+        .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    let dy = get_i64("dy")
+        .or_else(|| get_i64("y"))
+        .unwrap_or(0)
+        .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    let f = Roll::new(dx, dy);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_shave(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Shave;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let x_border = get_u64("x_border")
+        .or_else(|| get_u64("x"))
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32;
+    let y_border = get_u64("y_border")
+        .or_else(|| get_u64("y"))
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32;
+    let f = Shave::new(x_border, y_border);
+    let in_port = video_in_port(inputs);
+    // Shave changes the output dimensions — reflect that on the spec.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format,
+            width,
+            height,
+            time_base,
+        } => {
+            let new_w = width.saturating_sub(x_border.saturating_mul(2));
+            let new_h = height.saturating_sub(y_border.saturating_mul(2));
+            PortSpec::video("video", new_w, new_h, *format, *time_base)
+        }
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_extent(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Extent;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_i64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
+
+    let w = get_u64("width")
+        .ok_or_else(|| Error::invalid("job: filter 'extent' needs unsigned `width`"))?
+        .min(u32::MAX as u64) as u32;
+    let h = get_u64("height")
+        .ok_or_else(|| Error::invalid("job: filter 'extent' needs unsigned `height`"))?
+        .min(u32::MAX as u64) as u32;
+    let ox = get_i64("offset_x")
+        .or_else(|| get_i64("x"))
+        .unwrap_or(0)
+        .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    let oy = get_i64("offset_y")
+        .or_else(|| get_i64("y"))
+        .unwrap_or(0)
+        .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    let mut f = Extent::new(w, h).with_offset(ox, oy);
+    if let Some(arr) = p
+        .and_then(|m| m.get("background"))
+        .and_then(|v| v.as_array())
+    {
+        if arr.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'extent': background must be a 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        let mut bg = [0u8; 4];
+        for (i, v) in arr.iter().enumerate() {
+            bg[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid(
+                        "job: filter 'extent': background array must contain unsigned ints",
+                    )
+                })?
+                .min(255) as u8;
+        }
+        f = f.with_background(bg);
+    }
+
+    let in_port = video_in_port(inputs);
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format, time_base, ..
+        } => PortSpec::video("video", w, h, *format, *time_base),
+        _ => PortSpec::video("video", w, h, PixelFormat::Rgba, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_trim(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Trim;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let fuzz = get_u64("fuzz").unwrap_or(0).min(255) as u8;
+    let mut f = Trim::new().with_fuzz(fuzz);
+    if let Some(arr) = p
+        .and_then(|m| m.get("background"))
+        .and_then(|v| v.as_array())
+    {
+        if !(3..=4).contains(&arr.len()) {
+            return Err(Error::invalid(format!(
+                "job: filter 'trim': background must be a 3- or 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        let mut bg = [0u8, 0, 0, 255];
+        for (i, v) in arr.iter().enumerate() {
+            bg[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid(
+                        "job: filter 'trim': background array must contain unsigned ints",
+                    )
+                })?
+                .min(255) as u8;
+        }
+        f = f.with_background(bg);
+    }
+    let in_port = video_in_port(inputs);
+    // Output dimensions are not known until the bbox is computed at
+    // apply()-time; advertise the input shape and let the downstream
+    // node re-read the produced VideoPlane stride.
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_channel_extract(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Channel, ChannelExtract};
+    let p = params.as_object();
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+
+    let name = get_str("channel").ok_or_else(|| {
+        Error::invalid(
+            "job: filter 'channel-extract' needs `channel` (e.g. 'r', 'g', 'b', 'a', 'y', 'u', 'v')",
+        )
+    })?;
+    let channel = Channel::parse(name).ok_or_else(|| {
+        Error::invalid(format!(
+            "job: filter 'channel-extract': unknown channel '{name}' \
+             (expected r/g/b/a/y/u/v)"
+        ))
+    })?;
+    let f = ChannelExtract::new(channel);
+    let in_port = video_in_port(inputs);
+    // Output is a single-plane Gray8 frame at the dimensions of the
+    // plane the channel lives on. For packed formats that's
+    // width × height; for planar YUV chroma channels it's the chroma
+    // grid (width / cx, height / cy). Compute the size up-front so the
+    // port spec is accurate at construction.
+    let (out_w, out_h) = match (&in_port.params, channel) {
+        (PortParams::Video { width, height, .. }, Channel::U | Channel::V)
+            if matches!(
+                extract_video_format(&in_port.params),
+                Some(PixelFormat::Yuv420P) | Some(PixelFormat::Yuv422P)
+            ) =>
+        {
+            let (cx, cy) = match extract_video_format(&in_port.params).unwrap() {
+                PixelFormat::Yuv420P => (2u32, 2u32),
+                PixelFormat::Yuv422P => (2, 1),
+                _ => (1, 1),
+            };
+            (width.div_ceil(cx), height.div_ceil(cy))
+        }
+        (PortParams::Video { width, height, .. }, _) => (*width, *height),
+        _ => (0, 0),
+    };
+    let out_port = match &in_port.params {
+        PortParams::Video { time_base, .. } => {
+            PortSpec::video("video", out_w, out_h, PixelFormat::Gray8, *time_base)
+        }
+        _ => PortSpec::video(
+            "video",
+            out_w,
+            out_h,
+            PixelFormat::Gray8,
+            TimeBase::new(1, 30),
+        ),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+/// Helper: pull the pixel format out of a port's params, or return
+/// `None` if the port isn't a video port. Used by the channel-extract
+/// factory to size the output grid for chroma channels.
+fn extract_video_format(params: &PortParams) -> Option<PixelFormat> {
+    if let PortParams::Video { format, .. } = params {
+        Some(*format)
+    } else {
+        None
+    }
+}
+
+fn make_morphology_edgein(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::MorphologyEdge;
+    let p = params.as_object();
+    let element = morph_element_from_json(p)?;
+    let f = MorphologyEdge::edge_in(element);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_morphology_edgeout(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::MorphologyEdge;
+    let p = params.as_object();
+    let element = morph_element_from_json(p)?;
+    let f = MorphologyEdge::edge_out(element);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_morphology_edge_magnitude(
+    params: &Value,
+    inputs: &[PortSpec],
+) -> Result<Box<dyn StreamFilter>> {
+    use crate::MorphologyEdge;
+    let p = params.as_object();
+    let element = morph_element_from_json(p)?;
+    let f = MorphologyEdge::edge_magnitude(element);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1775,6 +2069,15 @@ mod tests {
             "perspective",
             "distort",
             "tilt-shift",
+            // r10 additions (geometry + channel ops + morphology edges).
+            "roll",
+            "shave",
+            "extent",
+            "trim",
+            "channel-extract",
+            "morphology-edgein",
+            "morphology-edgeout",
+            "morphology-edge-magnitude",
             // r8 additions (Porter–Duff + arithmetic composites).
             "composite-over",
             "composite-in",
@@ -3500,6 +3803,189 @@ mod tests {
         VideoFrame {
             pts: None,
             planes: vec![VideoPlane { stride: 32, data }],
+        }
+    }
+
+    // --- r10 smoke tests (geometry + channel ops + morphology edges) ---
+
+    #[test]
+    fn roll_factory_wraps_columns() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 1)];
+        let f = c
+            .filters
+            .make("roll", &json!({"dx": 1, "dy": 0}), &inputs)
+            .expect("roll factory");
+        let out = run_one(f, gray_arbitrary(4, 1, |x, _| x as u8));
+        assert_eq!(out.planes[0].data, vec![3, 0, 1, 2]);
+    }
+
+    #[test]
+    fn shave_factory_resizes_canvas() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("shave", &json!({"x_border": 1, "y_border": 1}), &inputs)
+            .expect("shave factory");
+        let out = run_one(f, gray_4x4(|_, _| 99));
+        // Output is 2×2.
+        assert_eq!(out.planes[0].stride, 2);
+        assert_eq!(out.planes[0].data.len(), 4);
+        assert!(out.planes[0].data.iter().all(|&v| v == 99));
+    }
+
+    #[test]
+    fn extent_factory_pads_with_background() {
+        let c = ctx();
+        let inputs = [gray_in_port(2, 2)];
+        let f = c
+            .filters
+            .make(
+                "extent",
+                &json!({"width": 4, "height": 4, "background": [10, 0, 0, 255]}),
+                &inputs,
+            )
+            .expect("extent factory");
+        let out = run_one(f, gray_arbitrary(2, 2, |_, _| 50));
+        assert_eq!(out.planes[0].stride, 4);
+        // Top-left 2×2 retains the source.
+        assert_eq!(out.planes[0].data[0], 50);
+        assert_eq!(out.planes[0].data[1], 50);
+        // Padding rows are 10.
+        assert_eq!(out.planes[0].data[3], 10);
+        assert_eq!(out.planes[0].data[4 * 4 - 1], 10);
+    }
+
+    #[test]
+    fn extent_factory_rejects_partial_size() {
+        let c = ctx();
+        let inputs = [gray_in_port(2, 2)];
+        assert!(c
+            .filters
+            .make("extent", &json!({"width": 4}), &inputs)
+            .is_err());
+        assert!(c
+            .filters
+            .make("extent", &json!({"height": 4}), &inputs)
+            .is_err());
+    }
+
+    #[test]
+    fn trim_factory_crops_solid_border() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("trim", &json!({}), &inputs)
+            .expect("trim factory");
+        // 4×4: zeros around a single 200 at the centre.
+        let out = run_one(
+            f,
+            gray_arbitrary(4, 4, |x, y| if x == 1 && y == 1 { 200 } else { 0 }),
+        );
+        assert_eq!(out.planes[0].stride, 1);
+        assert_eq!(out.planes[0].data, vec![200]);
+    }
+
+    #[test]
+    fn channel_extract_factory_pulls_red() {
+        let c = ctx();
+        let inputs = [rgba_in_port(2, 1)];
+        let f = c
+            .filters
+            .make("channel-extract", &json!({"channel": "r"}), &inputs)
+            .expect("channel-extract factory");
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 8,
+                data: vec![10, 20, 30, 255, 70, 80, 90, 255],
+            }],
+        };
+        let out = run_one(f, frame);
+        // Output is a single-plane Gray8 frame holding R0, R1.
+        assert_eq!(out.planes[0].stride, 2);
+        assert_eq!(out.planes[0].data, vec![10, 70]);
+    }
+
+    #[test]
+    fn channel_extract_factory_rejects_unknown_channel() {
+        let c = ctx();
+        let inputs = [rgba_in_port(1, 1)];
+        assert!(c
+            .filters
+            .make("channel-extract", &json!({"channel": "garbage"}), &inputs)
+            .is_err());
+        assert!(c
+            .filters
+            .make("channel-extract", &json!({}), &inputs)
+            .is_err());
+    }
+
+    #[test]
+    fn morphology_edgein_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("morphology-edgein", &json!({"element": "square"}), &inputs)
+            .expect("morphology-edgein factory");
+        // Solid bright field — every pixel survives erosion → edge = 0.
+        let out = run_one(f, gray_4x4(|_, _| 200));
+        assert!(out.planes[0].data.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn morphology_edgeout_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("morphology-edgeout", &json!({"element": "cross"}), &inputs)
+            .expect("morphology-edgeout factory");
+        let out = run_one(f, gray_4x4(|_, _| 200));
+        // Flat field → dilate = src → edge = 0.
+        assert!(out.planes[0].data.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn morphology_edge_magnitude_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(5, 5)];
+        let f = c
+            .filters
+            .make(
+                "morphology-edge-magnitude",
+                &json!({"element": "square"}),
+                &inputs,
+            )
+            .expect("morphology-edge-magnitude factory");
+        let out = run_one(
+            f,
+            gray_arbitrary(5, 5, |x, y| if x == 2 && y == 2 { 200 } else { 0 }),
+        );
+        // Centre + 8-neighbour ring all = 200.
+        assert_eq!(out.planes[0].data[2 * 5 + 2], 200);
+        assert_eq!(out.planes[0].data[5 + 2], 200);
+        assert_eq!(out.planes[0].data[0], 0);
+    }
+
+    /// Helper: build an arbitrary-sized Gray8 frame for r10 tests.
+    /// The existing `gray_4x4` helper is hard-coded to 4×4.
+    fn gray_arbitrary(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
+        let mut data = Vec::with_capacity((w * h) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                data.push(pattern(x, y));
+            }
+        }
+        VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: w as usize,
+                data,
+            }],
         }
     }
 }
