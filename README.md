@@ -159,10 +159,12 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   (`p1` + `p2`, default `0`) decentering coefficients. Pure-radial
   mode (`p1 = p2 = 0`) is bit-identical to the legacy r7 output. IM:
   `-distort barrel "k1 k2 ..."`.
-- **`TiltShift`** — selective Gaussian blur masked by a horizontal
-  in-focus band (miniature-photography depth-of-field). Configurable
+- **`TiltShift`** — selective Gaussian blur masked by an in-focus
+  band (miniature-photography depth-of-field). Configurable
   `focus_centre`, `focus_height`, `falloff_height`, plus the
-  underlying blur `radius` / `sigma`.
+  underlying blur `radius` / `sigma`. Optional `angle_degrees`
+  (default `0` = horizontal band; `90` = vertical band) rotates the
+  focus band around the image centre.
 
 ### Two-input compositing
 

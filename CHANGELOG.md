@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r9: rotate the `TiltShift` focus band around the image centre via a
+  new `angle_degrees: f32` parameter (default `0.0` = the legacy
+  horizontal band; `90.0` = vertical band; any finite angle works).
+  The pre-r9 row-only fast path is kept for `angle_degrees == 0` so
+  existing horizontal-band outputs stay bit-exact identical; non-zero
+  angles fall back to a per-pixel `focus_weight_xy` evaluator. New
+  public surface: `TiltShift::angle_degrees` field,
+  `TiltShift::with_angle_degrees(angle)` builder, JSON keys
+  `angle_degrees` (long) + `angle` (alias) on the `tilt-shift`
+  factory.
+
 - r9: extend `Distort` with the standard Brown-Conrady tangential
   ("decentering") coefficients `p1` and `p2`. Both default to `0.0`
   — the pre-r9 pure-radial output is bit-exact preserved when

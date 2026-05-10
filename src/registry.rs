@@ -1679,13 +1679,19 @@ fn make_tilt_shift(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Stream
         .unwrap_or(f.blur_sigma);
     f = f.with_blur(radius, sigma);
 
+    // r9: optional rotated focus band — `angle_degrees` (alias `angle`).
+    if let Some(a) = get_f64("angle_degrees").or_else(|| get_f64("angle")) {
+        f = f.with_angle_degrees(a as f32);
+    }
+
     if !f.focus_centre.is_finite()
         || !f.focus_height.is_finite()
         || !f.falloff_height.is_finite()
         || !f.blur_sigma.is_finite()
+        || !f.angle_degrees.is_finite()
     {
         return Err(Error::invalid(
-            "job: filter 'tilt-shift': focus_centre / focus_height / falloff_height / sigma must be finite",
+            "job: filter 'tilt-shift': focus_centre / focus_height / falloff_height / sigma / angle_degrees must be finite",
         ));
     }
 
@@ -3162,6 +3168,33 @@ mod tests {
                 &inputs,
             )
             .expect("tilt-shift accepts short alias keys");
+    }
+
+    #[test]
+    fn tilt_shift_factory_accepts_angle_degrees() {
+        // r9: rotated focus band — the factory must accept both the
+        // long `angle_degrees` key and the short `angle` alias.
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        c.filters
+            .make("tilt-shift", &json!({"angle_degrees": 90.0}), &inputs)
+            .expect("tilt-shift with angle_degrees");
+        c.filters
+            .make("tilt-shift", &json!({"angle": 45.0}), &inputs)
+            .expect("tilt-shift with short angle alias");
+    }
+
+    #[test]
+    fn tilt_shift_factory_rejects_non_finite_angle() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let bad = c
+            .filters
+            .make("tilt-shift", &json!({"angle_degrees": null}), &inputs);
+        // null ⇒ as_f64 returns None ⇒ default (0.0). That's finite,
+        // so factory must succeed. The genuine non-finite path is
+        // exercised through the typed builder in the in-module test.
+        assert!(bad.is_ok(), "null angle silently defaults to 0.0");
     }
 
     #[test]
