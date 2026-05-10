@@ -1219,6 +1219,7 @@ fn make_charcoal(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFi
     use crate::Charcoal;
     let p = params.as_object();
     let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
 
     let factor = get_f64("factor")
         .or_else(|| get_f64("amount"))
@@ -1229,7 +1230,9 @@ fn make_charcoal(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFi
             "job: filter 'charcoal': factor must be a non-negative finite number (got {factor})"
         )));
     }
-    let f = Charcoal::new(factor);
+    // r9: optional Gaussian pre-blur radius (default 0 — no pre-blur).
+    let radius = get_u64("radius").unwrap_or(0) as u32;
+    let f = Charcoal::new(factor).with_radius(radius);
     let in_port = video_in_port(inputs);
     // Charcoal collapses any input to single-plane luma — same shape
     // change as Edge.
@@ -2665,6 +2668,34 @@ mod tests {
             .filters
             .make("charcoal", &json!({"factor": -0.5}), &inputs);
         assert!(bad.is_err(), "negative factor should be rejected");
+    }
+
+    #[test]
+    fn charcoal_factory_accepts_radius_key() {
+        // r9: optional `radius` key thickens the strokes via Gaussian
+        // pre-blur. Default 0 = identical to no-radius behaviour;
+        // radius > 0 must construct cleanly and produce a valid Gray8
+        // output.
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("charcoal", &json!({"factor": 1.0, "radius": 2}), &inputs)
+            .expect("charcoal factory with radius=2");
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 8,
+                data: vec![100u8; 64],
+            }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 64);
+        // Flat input ⇒ Sobel sees no edges ⇒ pre-blur leaves it flat ⇒
+        // pure white.
+        for &v in &out.planes[0].data {
+            assert_eq!(v, 255);
+        }
     }
 
     #[test]

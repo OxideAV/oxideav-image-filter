@@ -133,8 +133,10 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Spread`** — random pixel-position perturbation inside a
   `[-radius, radius]²` neighbourhood, with a deterministic seed for
   reproducibility. IM: `-spread N`.
-- **`Charcoal`** — non-photorealistic stylise: Sobel-on-luma + invert
-  ⇒ `Gray8` sketch. IM: `-charcoal R`.
+- **`Charcoal`** — non-photorealistic stylise: optional Gaussian
+  pre-blur (`radius`, default `0`) ⇒ Sobel-on-luma ⇒ invert ⇒ `Gray8`
+  sketch. Larger pre-blur radii thicken the strokes by suppressing
+  fine texture before the edge pass. IM: `-charcoal R`.
 - **`Convolve`** — user-supplied square `N×N` kernel (odd `N`); optional
   bias / divisor; alpha pass-through on RGBA. IM: `-convolve "..."`.
 - **`Polar`** / **`PolarDirection::DePolar`** — Cartesian ⇄ polar

@@ -3,10 +3,15 @@
 //! Pipeline (per-pixel, all in 8-bit luma space):
 //!
 //! 1. Reduce input to a tight `Gray8` luma plane.
-//! 2. Apply a 3×3 Sobel edge magnitude (`|Gx| + |Gy|`).
-//! 3. Scale the magnitude by the configured `factor` (≥ 0.0; 1.0 means
+//! 2. Optionally Gaussian-blur the luma plane in place (when
+//!    [`radius`](Charcoal::radius) > 0). The blur is separable with
+//!    sigma = `radius / 2` — the same heuristic used by [`Blur`].
+//!    A larger pre-blur softens fine texture so the Sobel pass picks
+//!    up only the larger structural edges, producing thicker strokes.
+//! 3. Apply a 3×3 Sobel edge magnitude (`|Gx| + |Gy|`).
+//! 4. Scale the magnitude by the configured `factor` (≥ 0.0; 1.0 means
 //!    "as-is", >1.0 sharpens contrast).
-//! 4. Invert: `out = 255 - clamp(magnitude * factor, 0, 255)`.
+//! 5. Invert: `out = 255 - clamp(magnitude * factor, 0, 255)`.
 //!
 //! The output is always a single-plane `Gray8` frame the same size as
 //! the input — same shape change as [`Edge`](crate::Edge), so the
@@ -14,27 +19,38 @@
 //!
 //! `factor = 0.0` produces a pure-white image (every output is `255`),
 //! the limit case "no edges visible". `factor = 1.0` is the default.
+//! `radius = 0` (the default) skips the pre-blur entirely.
 
+use crate::blur::gaussian_kernel;
 use crate::{is_supported_format, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Charcoal-sketch stylise filter.
 ///
 /// `factor` scales the Sobel edge magnitude before inversion. Larger
-/// values darken the strokes; smaller values fade them out.
+/// values darken the strokes; smaller values fade them out. `radius`
+/// controls an optional Gaussian pre-blur on the luma plane: `0` (the
+/// default) skips it, `> 0` thickens the strokes by suppressing fine
+/// texture before the Sobel pass.
 #[derive(Clone, Copy, Debug)]
 pub struct Charcoal {
     pub factor: f32,
+    pub radius: u32,
 }
 
 impl Default for Charcoal {
     fn default() -> Self {
-        Self { factor: 1.0 }
+        Self {
+            factor: 1.0,
+            radius: 0,
+        }
     }
 }
 
 impl Charcoal {
-    /// Build a charcoal filter with explicit edge-magnitude scale.
+    /// Build a charcoal filter with explicit edge-magnitude scale and
+    /// no pre-blur (`radius = 0`). Use [`Self::with_radius`] to enable
+    /// the Gaussian pre-blur.
     pub fn new(factor: f32) -> Self {
         Self {
             factor: if factor.is_finite() && factor >= 0.0 {
@@ -42,7 +58,17 @@ impl Charcoal {
             } else {
                 1.0
             },
+            radius: 0,
         }
+    }
+
+    /// Set the Gaussian pre-blur radius (in samples on each side, so
+    /// the kernel length is `2 * radius + 1`). Sigma is auto-derived
+    /// from the radius (`sigma = radius / 2`). `radius = 0` skips the
+    /// pre-blur entirely — exactly matching the r6 charcoal output.
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
     }
 }
 
@@ -56,7 +82,10 @@ impl ImageFilter for Charcoal {
         }
         let w = params.width as usize;
         let h = params.height as usize;
-        let luma = build_luma_plane(input, params)?;
+        let mut luma = build_luma_plane(input, params)?;
+        if self.radius > 0 {
+            luma = gaussian_blur_luma(&luma, w, h, self.radius);
+        }
         let out = sobel3_invert(&luma, w, h, self.factor);
         Ok(VideoFrame {
             pts: input.pts,
@@ -66,6 +95,46 @@ impl ImageFilter for Charcoal {
             }],
         })
     }
+}
+
+/// Separable Gaussian blur on a single-plane `Gray8` luma buffer.
+///
+/// Mirrors the two-pass row-then-column structure used by [`Blur`] but
+/// keeps a tight stride throughout (the input is always a tight-stride
+/// scratch buffer built by [`build_luma_plane`]). Edge taps clamp to
+/// the nearest in-bounds sample. Sigma is derived as `radius / 2`,
+/// matching `Blur::new(radius)`'s default.
+fn gaussian_blur_luma(luma: &[u8], w: usize, h: usize, radius: u32) -> Vec<u8> {
+    if w == 0 || h == 0 {
+        return luma.to_vec();
+    }
+    let kernel = gaussian_kernel(radius.max(1), (radius as f32).max(1.0) * 0.5);
+    let r = (kernel.len() - 1) / 2;
+    // Pass 1: horizontal blur.
+    let mut horiz = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0f32;
+            for (ki, kv) in kernel.iter().enumerate() {
+                let sx = (x as i32 + ki as i32 - r as i32).clamp(0, w as i32 - 1) as usize;
+                acc += *kv * luma[y * w + sx] as f32;
+            }
+            horiz[y * w + x] = acc.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    // Pass 2: vertical blur back into a fresh buffer.
+    let mut out = vec![0u8; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0.0f32;
+            for (ki, kv) in kernel.iter().enumerate() {
+                let sy = (y as i32 + ki as i32 - r as i32).clamp(0, h as i32 - 1) as usize;
+                acc += *kv * horiz[sy * w + x] as f32;
+            }
+            out[y * w + x] = acc.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    out
 }
 
 /// Build a tight-stride Gray8 buffer from any supported input. Mirrors
@@ -222,6 +291,72 @@ mod tests {
         assert_eq!(out.planes.len(), 1);
         assert_eq!(out.planes[0].data.len(), 64);
         assert_eq!(out.planes[0].stride, 8);
+    }
+
+    #[test]
+    fn radius_zero_matches_no_preblur() {
+        // radius = 0 must be byte-identical to the legacy r6 charcoal
+        // (no pre-blur). Build the same input and compare.
+        let input = gray(16, 16, |x, y| {
+            ((x.wrapping_mul(13) ^ y.wrapping_mul(7)) & 0xFF) as u8
+        });
+        let plain = Charcoal::new(1.0)
+            .apply(&input, params_gray(16, 16))
+            .unwrap();
+        let r0 = Charcoal::new(1.0)
+            .with_radius(0)
+            .apply(&input, params_gray(16, 16))
+            .unwrap();
+        assert_eq!(r0.planes[0].data, plain.planes[0].data);
+    }
+
+    #[test]
+    fn radius_thickens_strokes_on_step_edge() {
+        // Step edge between two halves of the image. With no pre-blur
+        // the Sobel response is concentrated in a single column on
+        // each side of the seam. With radius = 2 the pre-blur smears
+        // the step over a wider neighbourhood, so the inverted (dark)
+        // strokes occupy more columns ⇒ more dark pixels overall.
+        let input = gray(32, 32, |x, _| if x < 16 { 0 } else { 220 });
+
+        let no_blur = Charcoal::new(1.0)
+            .with_radius(0)
+            .apply(&input, params_gray(32, 32))
+            .unwrap();
+        let blurred = Charcoal::new(1.0)
+            .with_radius(2)
+            .apply(&input, params_gray(32, 32))
+            .unwrap();
+
+        // Count dark pixels (output < 200 ⇒ "stroke ink").
+        let count = |p: &VideoPlane| p.data.iter().filter(|&&v| v < 200).count();
+        let n0 = count(&no_blur.planes[0]);
+        let n2 = count(&blurred.planes[0]);
+        assert!(
+            n2 > n0,
+            "pre-blur radius=2 should thicken strokes; got n0={n0}, n2={n2}"
+        );
+    }
+
+    #[test]
+    fn radius_heavy_stylisation_keeps_white_outside_strokes() {
+        // radius = 10 is heavy stylisation; verify the filter still
+        // returns a Gray8 image of the right shape and that pixels far
+        // from any edge stay close to white.
+        let input = gray(48, 48, |x, _| if x == 24 { 200 } else { 60 });
+        let out = Charcoal::new(1.0)
+            .with_radius(10)
+            .apply(&input, params_gray(48, 48))
+            .unwrap();
+        assert_eq!(out.planes.len(), 1);
+        assert_eq!(out.planes[0].data.len(), 48 * 48);
+        // Top-left corner is far from the edge column 24 — should be
+        // nearly white (inverted near-zero edge magnitude).
+        assert!(
+            out.planes[0].data[0] > 240,
+            "corner should be nearly white under heavy pre-blur, got {}",
+            out.planes[0].data[0]
+        );
     }
 
     #[test]

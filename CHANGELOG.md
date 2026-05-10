@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r9: extend `Charcoal` with an optional Gaussian pre-blur (new
+  `radius: u32` field + `Charcoal::with_radius` builder; new JSON key
+  `radius`). Default `radius = 0` is bit-exact identical to the r6
+  charcoal output (no pre-blur). Larger radii thicken the strokes by
+  smoothing fine texture before the Sobel pass. The pre-blur uses a
+  separable Gaussian with sigma = `radius / 2` (matching `Blur`'s
+  default heuristic), edge-clamped at the borders.
+
 - r8: introduce a two-input filter contract (`TwoInputImageFilter`
   trait + `TwoInputImageFilterAdapter` `StreamFilter` shim) and land
   the Porter–Duff and arithmetic `Composite` family. Twelve operator
