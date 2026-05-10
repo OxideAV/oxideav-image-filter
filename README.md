@@ -128,6 +128,18 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Swirl`** — radius-decaying rotational distortion. IM: `-swirl N`.
 - **`Despeckle`** — median-window edge-preserving noise reduction
   (alpha pass-through). IM: `-despeckle`.
+- **`Wave`** — sinusoidal vertical pixel displacement (amplitude /
+  wavelength in pixels). IM: `-wave AxL`.
+- **`Spread`** — random pixel-position perturbation inside a
+  `[-radius, radius]²` neighbourhood, with a deterministic seed for
+  reproducibility. IM: `-spread N`.
+- **`Charcoal`** — non-photorealistic stylise: Sobel-on-luma + invert
+  ⇒ `Gray8` sketch. IM: `-charcoal R`.
+- **`Convolve`** — user-supplied square `N×N` kernel (odd `N`); optional
+  bias / divisor; alpha pass-through on RGBA. IM: `-convolve "..."`.
+- **`Polar`** / **`PolarDirection::DePolar`** — Cartesian ⇄ polar
+  coordinate distortion (`-distort Polar` / `-distort DePolar`). Bends
+  an image into a fan or unrolls a fan back to a rectangle.
 
 All filters listed here share the `ImageFilter` trait — chain them
 manually with repeated `.apply()` calls, or feed them through

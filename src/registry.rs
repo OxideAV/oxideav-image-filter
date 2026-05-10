@@ -26,6 +26,10 @@ use crate::{ImageFilter, Planes, VideoStreamParams};
 ///   `grayscale`, `motion-blur`, `emboss`.
 /// - Round-next additions: `vignette`, `colorize`, `equalize`,
 ///   `auto-gamma`.
+/// - r5 additions: `tint`, `sigmoidal-contrast`, `implode`, `swirl`,
+///   `despeckle`.
+/// - r6 additions: `wave`, `spread`, `charcoal`, `convolve`,
+///   `polar`, `depolar`.
 ///
 /// Also wired into [`oxideav_meta::register_all`] via the
 /// [`oxideav_core::register!`] macro below.
@@ -74,6 +78,14 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("implode", Box::new(make_implode));
     ctx.filters.register("swirl", Box::new(make_swirl));
     ctx.filters.register("despeckle", Box::new(make_despeckle));
+
+    // r6 factories (wave / spread / charcoal / convolve / polar).
+    ctx.filters.register("wave", Box::new(make_wave));
+    ctx.filters.register("spread", Box::new(make_spread));
+    ctx.filters.register("charcoal", Box::new(make_charcoal));
+    ctx.filters.register("convolve", Box::new(make_convolve));
+    ctx.filters.register("polar", Box::new(make_polar));
+    ctx.filters.register("depolar", Box::new(make_depolar));
 }
 
 oxideav_core::register!("image_filter", register);
@@ -946,6 +958,161 @@ fn make_despeckle(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamF
     )))
 }
 
+// --- r6 factories ---
+
+fn make_wave(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Wave;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let amplitude = get_f64("amplitude").unwrap_or(5.0) as f32;
+    let wavelength = get_f64("wavelength").unwrap_or(25.0) as f32;
+    if !amplitude.is_finite() || !wavelength.is_finite() {
+        return Err(Error::invalid(
+            "job: filter 'wave': amplitude and wavelength must be finite",
+        ));
+    }
+    let f = Wave::new(amplitude, wavelength);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_spread(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Spread;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let radius = get_u64("radius").unwrap_or(3).min(u32::MAX as u64) as u32;
+    let mut f = Spread::new(radius);
+    if let Some(seed) = get_u64("seed") {
+        f = f.with_seed(seed);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_charcoal(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Charcoal;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let factor = get_f64("factor")
+        .or_else(|| get_f64("amount"))
+        .or_else(|| get_f64("value"))
+        .unwrap_or(1.0) as f32;
+    if !factor.is_finite() || factor < 0.0 {
+        return Err(Error::invalid(format!(
+            "job: filter 'charcoal': factor must be a non-negative finite number (got {factor})"
+        )));
+    }
+    let f = Charcoal::new(factor);
+    let in_port = video_in_port(inputs);
+    // Charcoal collapses any input to single-plane luma — same shape
+    // change as Edge.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_convolve(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Convolve;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let kernel_arr = p
+        .and_then(|m| m.get("kernel"))
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            Error::invalid(
+                "job: filter 'convolve' needs `kernel` as a flat array of numbers (row-major)",
+            )
+        })?;
+    let kernel: Vec<f32> = kernel_arr
+        .iter()
+        .map(|v| {
+            v.as_f64().map(|x| x as f32).ok_or_else(|| {
+                Error::invalid("job: filter 'convolve': kernel array must contain numbers")
+            })
+        })
+        .collect::<Result<_>>()?;
+
+    // Allow `size` to be omitted when the array length is a perfect
+    // square (3, 5, 7, ...) — auto-derive in that case.
+    let size = if let Some(s) = get_u64("size") {
+        s as u32
+    } else {
+        let n = kernel.len();
+        let s = (n as f64).sqrt().round() as usize;
+        if s * s != n {
+            return Err(Error::invalid(format!(
+                "job: filter 'convolve': kernel length {n} is not a perfect square; \
+                 specify `size` explicitly"
+            )));
+        }
+        s as u32
+    };
+    let mut f = Convolve::new(size, kernel)?;
+    if let Some(b) = get_f64("bias") {
+        f = f.with_bias(b as f32);
+    }
+    if let Some(d) = get_f64("divisor") {
+        f = f.with_divisor(Some(d as f32));
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_polar(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Polar;
+    let f = Polar::forward();
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_depolar(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Polar;
+    let f = Polar::inverse();
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1002,6 +1169,13 @@ mod tests {
             "implode",
             "swirl",
             "despeckle",
+            // r6 additions.
+            "wave",
+            "spread",
+            "charcoal",
+            "convolve",
+            "polar",
+            "depolar",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -1805,6 +1979,208 @@ mod tests {
         assert_eq!(out.planes[0].data[off], 100);
         assert_eq!(out.planes[0].data[off + 1], 100);
         assert_eq!(out.planes[0].data[off + 2], 100);
+    }
+
+    // --- r6 smoke tests ---
+
+    #[test]
+    fn wave_smoke_zero_amplitude_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make(
+                "wave",
+                &json!({"amplitude": 0.0, "wavelength": 16.0}),
+                &inputs,
+            )
+            .expect("wave factory");
+        let frame =
+            rgba_4x4_8x8(|x, y| [(x * 30) as u8, (y * 30) as u8, ((x + y) * 10) as u8, 222]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn wave_smoke_flat_image_invariant() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make(
+                "wave",
+                &json!({"amplitude": 3.0, "wavelength": 8.0}),
+                &inputs,
+            )
+            .expect("wave factory");
+        let frame = rgba_4x4_8x8(|_, _| [100, 150, 200, 222]);
+        let out = run_one(f, frame);
+        for chunk in out.planes[0].data.chunks(4) {
+            assert_eq!(chunk[0], 100);
+            assert_eq!(chunk[1], 150);
+            assert_eq!(chunk[2], 200);
+            assert_eq!(chunk[3], 222);
+        }
+    }
+
+    #[test]
+    fn spread_smoke_radius_zero_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("spread", &json!({"radius": 0}), &inputs)
+            .expect("spread factory");
+        let frame =
+            rgba_4x4_8x8(|x, y| [(x * 30) as u8, (y * 30) as u8, ((x + y) * 10) as u8, 222]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn spread_smoke_seed_changes_output() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f1 = c
+            .filters
+            .make("spread", &json!({"radius": 2, "seed": 1}), &inputs)
+            .expect("spread factory");
+        let f2 = c
+            .filters
+            .make("spread", &json!({"radius": 2, "seed": 999}), &inputs)
+            .expect("spread factory");
+        let frame =
+            rgba_4x4_8x8(|x, y| [(x * 30) as u8, (y * 30) as u8, ((x + y) * 10) as u8, 222]);
+        let a = run_one(f1, frame.clone());
+        let b = run_one(f2, frame);
+        assert_ne!(a.planes[0].data, b.planes[0].data);
+    }
+
+    #[test]
+    fn charcoal_smoke_flat_input_yields_white() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("charcoal", &json!({"factor": 1.0}), &inputs)
+            .expect("charcoal factory");
+        // Output port should be Gray8 with same dims.
+        match &f.output_ports()[0].params {
+            PortParams::Video {
+                format,
+                width,
+                height,
+                ..
+            } => {
+                assert_eq!(*format, PixelFormat::Gray8);
+                assert_eq!(*width, 8);
+                assert_eq!(*height, 8);
+            }
+            _ => panic!("charcoal output port is not video"),
+        }
+        // 8×8 Gray fixture, flat 100.
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 8,
+                data: vec![100u8; 64],
+            }],
+        };
+        let out = run_one(f, frame);
+        for &v in &out.planes[0].data {
+            assert_eq!(v, 255);
+        }
+    }
+
+    #[test]
+    fn charcoal_factory_rejects_negative_factor() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let bad = c
+            .filters
+            .make("charcoal", &json!({"factor": -0.5}), &inputs);
+        assert!(bad.is_err(), "negative factor should be rejected");
+    }
+
+    #[test]
+    fn convolve_smoke_identity_kernel_passes_through() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "convolve",
+                &json!({"kernel": [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]}),
+                &inputs,
+            )
+            .expect("convolve factory");
+        let frame = gray_4x4(|x, y| (x as u8 + y as u8 * 4) * 10);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn convolve_factory_rejects_bad_kernel_shape() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        // 8 elements (not a perfect square) and no `size` → error.
+        let bad = c.filters.make(
+            "convolve",
+            &json!({"kernel": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}),
+            &inputs,
+        );
+        assert!(bad.is_err(), "8-element kernel without size should fail");
+        // size=3 but 8-element kernel → error.
+        let bad = c.filters.make(
+            "convolve",
+            &json!({"size": 3, "kernel": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}),
+            &inputs,
+        );
+        assert!(bad.is_err(), "size mismatch should fail");
+    }
+
+    #[test]
+    fn convolve_factory_requires_kernel() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let bad = c.filters.make("convolve", &json!({}), &inputs);
+        assert!(bad.is_err(), "missing kernel should fail");
+    }
+
+    #[test]
+    fn polar_smoke_flat_image_invariant() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("polar", &json!({}), &inputs)
+            .expect("polar factory");
+        let frame = rgba_4x4_8x8(|_, _| [100, 150, 200, 222]);
+        let out = run_one(f, frame);
+        for chunk in out.planes[0].data.chunks(4) {
+            assert_eq!(chunk[0], 100);
+            assert_eq!(chunk[1], 150);
+            assert_eq!(chunk[2], 200);
+            assert_eq!(chunk[3], 222);
+        }
+    }
+
+    #[test]
+    fn depolar_smoke_flat_image_invariant() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("depolar", &json!({}), &inputs)
+            .expect("depolar factory");
+        let frame = rgba_4x4_8x8(|_, _| [50, 100, 150, 200]);
+        let out = run_one(f, frame);
+        for chunk in out.planes[0].data.chunks(4) {
+            assert_eq!(chunk[0], 50);
+            assert_eq!(chunk[1], 100);
+            assert_eq!(chunk[2], 150);
+            assert_eq!(chunk[3], 200);
+        }
     }
 
     /// Build an 8×8 RGBA fixture from a per-pixel function returning `[R, G, B, A]`.

@@ -16,8 +16,13 @@
 //!   specific plane / all).
 //! - [`BrightnessContrast`](brightness_contrast::BrightnessContrast) —
 //!   linear brightness + contrast adjustment (LUT-based).
+//! - [`Charcoal`](charcoal::Charcoal) — non-photorealistic stylise
+//!   (Sobel-on-luma + invert ⇒ Gray8 sketch). IM: `-charcoal R`.
 //! - [`Colorize`](colorize::Colorize) — linear blend toward a target
 //!   `[R, G, B, A]` colour by a `0.0..=1.0` amount.
+//! - [`Convolve`](convolve::Convolve) — user-supplied square `N×N`
+//!   convolution kernel (odd `N`); optional bias / divisor; alpha
+//!   pass-through on RGBA. IM: `-convolve "..."`.
 //! - [`Crop`](crop::Crop) — extract a rectangular subregion
 //!   `(x, y, width, height)` (ImageMagick `-crop WxH+X+Y`).
 //! - [`Despeckle`](despeckle::Despeckle) — median-window
@@ -47,6 +52,9 @@
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Normalize`](normalize::Normalize) — auto-levels: stretch the
 //!   observed luma range to fill `[0, 255]` (ImageMagick `-normalize`).
+//! - [`Polar`](polar::Polar) — Cartesian ⇄ polar coordinate distortion
+//!   (`-distort Polar` / `-distort DePolar`). Bends an image into a fan
+//!   or unrolls a fan back into a rectangle; bilinear-sampled.
 //! - [`Posterize`](posterize::Posterize) — reduce each channel to `N`
 //!   intensity levels (ImageMagick `-posterize`).
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
@@ -58,6 +66,9 @@
 //!   `-sepia-tone`); threshold controls the mix with the original.
 //! - [`Solarize`](solarize::Solarize) — invert samples above a
 //!   threshold (ImageMagick `-solarize N%`).
+//! - [`Spread`](spread::Spread) — random pixel-position perturbation
+//!   inside a `[-radius, radius]²` neighbourhood with a deterministic
+//!   PRNG (ImageMagick `-spread N`).
 //! - [`Sharpen`](sharpen::Sharpen) — unsharp-mask sharpening with
 //!   `radius`/`sigma`/`amount`; YUV touches only luma.
 //! - [`SigmoidalContrast`](sigmoidal_contrast::SigmoidalContrast) —
@@ -75,6 +86,8 @@
 //! - [`Vignette`](vignette::Vignette) — Gaussian radial darkening
 //!   centred at `(x, y)` with `radius` + `sigma` (ImageMagick
 //!   `-vignette RxS{+x{+y}}`).
+//! - [`Wave`](wave::Wave) — sinusoidal vertical displacement with
+//!   configurable amplitude (px) and wavelength (px). IM: `-wave AxL`.
 //!
 //! # Pixel formats
 //!
@@ -87,7 +100,9 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 pub mod auto_gamma;
 pub mod blur;
 pub mod brightness_contrast;
+pub mod charcoal;
 pub mod colorize;
+pub mod convolve;
 pub mod crop;
 pub mod despeckle;
 pub mod edge;
@@ -103,6 +118,7 @@ pub mod modulate;
 pub mod motion_blur;
 pub mod negate;
 pub mod normalize;
+pub mod polar;
 pub mod posterize;
 pub mod registry;
 pub mod resize;
@@ -111,17 +127,21 @@ pub mod sepia;
 pub mod sharpen;
 pub mod sigmoidal_contrast;
 pub mod solarize;
+pub mod spread;
 pub mod swirl;
 pub mod threshold;
 pub mod tint;
 pub(crate) mod tonal_lut;
 pub mod unsharp;
 pub mod vignette;
+pub mod wave;
 
 pub use auto_gamma::AutoGamma;
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
+pub use charcoal::Charcoal;
 pub use colorize::Colorize;
+pub use convolve::Convolve;
 pub use crop::Crop;
 pub use despeckle::Despeckle;
 pub use edge::Edge;
@@ -137,6 +157,7 @@ pub use modulate::Modulate;
 pub use motion_blur::MotionBlur;
 pub use negate::Negate;
 pub use normalize::Normalize;
+pub use polar::{Polar, PolarDirection};
 pub use posterize::Posterize;
 pub use registry::{__oxideav_entry, register};
 pub use resize::{Interpolation, Resize};
@@ -145,11 +166,13 @@ pub use sepia::Sepia;
 pub use sharpen::Sharpen;
 pub use sigmoidal_contrast::SigmoidalContrast;
 pub use solarize::Solarize;
+pub use spread::Spread;
 pub use swirl::Swirl;
 pub use threshold::Threshold;
 pub use tint::Tint;
 pub use unsharp::Unsharp;
 pub use vignette::Vignette;
+pub use wave::Wave;
 
 /// Stream-level video parameters threaded into [`ImageFilter::apply`].
 ///

@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (median-window edge-preserving noise reduction; Rgb24/Rgba with
   alpha pass-through). Each filter has identity-case bit-exact
   pass-through tests.
+- r6: implement five new filters and wire factories into `register()`
+  (six factory names; `Polar` ships under both `polar` and `depolar`):
+  `Wave` (sinusoidal vertical pixel displacement; Rgb24/Rgba),
+  `Spread` (random pixel perturbation with a deterministic PRNG;
+  Rgb24/Rgba), `Charcoal` (Sobel-on-luma + invert ⇒ Gray8 sketch;
+  Gray8/Rgb24/Rgba/YUV planar), `Convolve` (user-supplied square `N×N`
+  kernel with optional bias / divisor; Gray8/Rgb24/Rgba, alpha
+  pass-through on RGBA), and `Polar` / `DePolar` (Cartesian ⇄ polar
+  coordinate distortion with bilinear sampling; Rgb24/Rgba).
 
 ## [0.1.1](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.0...v0.1.1) - 2026-05-06
 
