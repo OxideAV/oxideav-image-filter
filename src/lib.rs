@@ -186,6 +186,23 @@
 //! - [`Wave`](wave::Wave) — sinusoidal vertical displacement with
 //!   configurable amplitude (px) and wavelength (px). IM: `-wave AxL`.
 //!
+//! r14 additions:
+//!
+//! - [`BarrelInverse`](barrel_inverse::BarrelInverse) — polynomial
+//!   inverse radial distortion `r → r / (a·r³+b·r²+c·r+d)`. IM:
+//!   `-distort BarrelInverse a,b,c,d`.
+//! - [`Deskew`](deskew::Deskew) — auto-deskew via projection-variance
+//!   scoring + corrective rotation. IM: `-deskew threshold`.
+//! - [`HoughLines`](hough_lines::HoughLines) — polar Hough-transform
+//!   line detection; emits a `Gray8` line-trace canvas. IM:
+//!   `-hough-lines WxH`.
+//! - [`Sketch`](sketch::Sketch) — pencil-sketch stylise (directional
+//!   blur + Sobel + invert). IM: `-sketch radius,sigma,angle`.
+//! - [`Stegano`](stegano::Stegano) — two-input LSB steganographic
+//!   embed: stamps `src`'s MSBs into `dst`'s LSBs. IM: `-stegano offset`.
+//! - [`Stereo`](stereo::Stereo) — two-input red/cyan anaglyph stereo
+//!   composition. IM: `-stereo`.
+//!
 //! # Pixel formats
 //!
 //! Filters operate natively on the 8-bit single-plane and planar YUV
@@ -197,6 +214,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 pub mod affine;
 pub mod auto_gamma;
 pub mod auto_level;
+pub mod barrel_inverse;
 pub mod blue_shift;
 pub mod blur;
 pub mod brightness_contrast;
@@ -212,6 +230,7 @@ pub mod contrast_stretch;
 pub mod convolve;
 pub mod crop;
 pub mod cycle;
+pub mod deskew;
 pub mod despeckle;
 pub mod distort;
 pub mod edge;
@@ -226,6 +245,7 @@ pub mod function;
 pub mod gamma;
 pub mod grayscale;
 pub mod hald_clut;
+pub mod hough_lines;
 pub mod implode;
 pub mod laplacian;
 pub mod level;
@@ -249,10 +269,13 @@ pub mod shade;
 pub mod sharpen;
 pub mod shave;
 pub mod sigmoidal_contrast;
+pub mod sketch;
 pub mod solarize;
 pub mod spread;
 pub mod srt;
 pub mod statistic;
+pub mod stegano;
+pub mod stereo;
 pub mod swirl;
 pub mod threshold;
 pub mod tilt_shift;
@@ -266,6 +289,7 @@ pub mod wave;
 pub use affine::Affine;
 pub use auto_gamma::AutoGamma;
 pub use auto_level::AutoLevel;
+pub use barrel_inverse::BarrelInverse;
 pub use blue_shift::BlueShift;
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
@@ -281,6 +305,7 @@ pub use contrast_stretch::ContrastStretch;
 pub use convolve::Convolve;
 pub use crop::Crop;
 pub use cycle::Cycle;
+pub use deskew::Deskew;
 pub use despeckle::Despeckle;
 pub use distort::Distort;
 pub use edge::Edge;
@@ -295,6 +320,7 @@ pub use function::{Function, FunctionOp};
 pub use gamma::Gamma;
 pub use grayscale::Grayscale;
 pub use hald_clut::HaldClut;
+pub use hough_lines::HoughLines;
 pub use implode::Implode;
 pub use laplacian::Laplacian;
 pub use level::Level;
@@ -320,10 +346,13 @@ pub use shade::Shade;
 pub use sharpen::Sharpen;
 pub use shave::Shave;
 pub use sigmoidal_contrast::SigmoidalContrast;
+pub use sketch::Sketch;
 pub use solarize::Solarize;
 pub use spread::Spread;
 pub use srt::Srt;
 pub use statistic::{Statistic, StatisticOp};
+pub use stegano::Stegano;
+pub use stereo::Stereo;
 pub use swirl::Swirl;
 pub use threshold::Threshold;
 pub use tilt_shift::TiltShift;

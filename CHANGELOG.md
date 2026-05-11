@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r14: land six new ImageMagick-compatible filters covering edge-aware
+  stylise, geometric correction, and stereo / steganography composition.
+  New filters: `Sketch` (pencil-sketch stylise: directional motion blur
+  + Sobel edge magnitude + invert; IM `-sketch radius,sigma,angle`),
+  `Deskew` (auto-deskew via histogram-variance scoring of rotated ink
+  projections then corrective rotation; IM `-deskew threshold`),
+  `HoughLines` (polar Hough-transform line detection on Sobel edge
+  magnitude with top-K peak picking and full-image line rendering on
+  `Gray8`; IM `-hough-lines WxH`), `BarrelInverse` (inverse-polynomial
+  radial distortion `r → r / (a·r³+b·r²+c·r+d)` — the pair to the
+  existing forward-radial `Distort`; IM `-distort BarrelInverse
+  a,b,c,d`), `Stegano` (two-input LSB-plane steganographic embed —
+  stamps `src`'s configurable bit position into `dst`'s LSB per
+  channel, alpha pass-through; IM `-stegano offset`), and `Stereo`
+  (two-input red/cyan anaglyph: R from `src`, G/B from `dst`, alpha
+  from `src`; IM `-stereo`). Six new factory names wired into
+  `register()`: `sketch`, `deskew`, `hough-lines`, `barrel-inverse`,
+  `stegano`, `stereo`. Filter count: 64 → 70 named types; factory
+  count: 76 → 82 names.
+
 - r13: land seven new ImageMagick-style filters: five single-input
   effects + two two-input colour-grading CLUTs. New filters:
   `BlueShift` (moonlight / scotopic-vision tint, per-pixel

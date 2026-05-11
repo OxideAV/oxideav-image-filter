@@ -165,6 +165,17 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("clut", Box::new(make_clut));
     ctx.filters.register("hald-clut", Box::new(make_hald_clut));
 
+    // r14 factories: pencil sketch / auto-deskew / Hough lines /
+    // inverse-barrel + two-input Stegano / Stereo.
+    ctx.filters.register("sketch", Box::new(make_sketch));
+    ctx.filters.register("deskew", Box::new(make_deskew));
+    ctx.filters
+        .register("hough-lines", Box::new(make_hough_lines));
+    ctx.filters
+        .register("barrel-inverse", Box::new(make_barrel_inverse));
+    ctx.filters.register("stegano", Box::new(make_stegano));
+    ctx.filters.register("stereo", Box::new(make_stereo));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -2719,6 +2730,250 @@ fn make_hald_clut(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Stream
     )))
 }
 
+// --- r14 factories ---
+
+fn make_sketch(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Sketch;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let radius = get_u64("radius").unwrap_or(3) as u32;
+    let sigma = get_f64("sigma").unwrap_or(1.5) as f32;
+    let angle = get_f64("angle_degrees")
+        .or_else(|| get_f64("angle"))
+        .unwrap_or(0.0) as f32;
+    if !sigma.is_finite() || !angle.is_finite() {
+        return Err(Error::invalid(
+            "job: filter 'sketch': sigma / angle_degrees must be finite numbers",
+        ));
+    }
+    let f = Sketch::new(radius, sigma, angle);
+    let in_port = video_in_port(inputs);
+    // Sketch always collapses to Gray8 (single-plane edge canvas).
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_deskew(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Deskew;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let threshold = get_u64("threshold").unwrap_or(64).min(255) as u8;
+    let mut f = Deskew::new(threshold);
+    if let Some(a) = get_f64("max_angle_degrees").or_else(|| get_f64("max_angle")) {
+        f = f.with_max_angle(a as f32);
+    }
+    if let Some(s) = get_f64("step_degrees").or_else(|| get_f64("step")) {
+        f = f.with_step(s as f32);
+    }
+    if let Some(arr) = p
+        .and_then(|m| m.get("background"))
+        .and_then(|v| v.as_array())
+    {
+        if arr.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'deskew': background must be a 4-element [R,G,B,A] array, got {}",
+                arr.len()
+            )));
+        }
+        let mut bg = [0u8; 4];
+        for (i, v) in arr.iter().enumerate() {
+            bg[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid("job: filter 'deskew': background entries must be unsigned ints")
+                })?
+                .min(255) as u8;
+        }
+        f = f.with_background(bg);
+    }
+    let in_port = video_in_port(inputs);
+    // Deskew may grow the canvas (rotated bounding box). The actual
+    // size depends on the per-frame skew estimate, so we keep the
+    // output port shape == input shape — downstream consumers must be
+    // prepared to handle a frame slightly larger or smaller. (This
+    // matches Rotate's existing behaviour through the registry shim.)
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_hough_lines(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::HoughLines;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let edge = get_u64("edge_threshold").unwrap_or(64) as u32;
+    let votes = get_u64("vote_threshold").unwrap_or(20) as u32;
+    let mut f = HoughLines::new(edge, votes);
+    if let Some(n) = get_u64("n_theta") {
+        f = f.with_n_theta(n as u32);
+    }
+    if let Some(k) = get_u64("top_k") {
+        f = f.with_top_k(k as u32);
+    }
+    let in_port = video_in_port(inputs);
+    // HoughLines always emits a Gray8 line-trace canvas.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_barrel_inverse(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::BarrelInverse;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let a = get_f64("a").unwrap_or(0.0) as f32;
+    let b = get_f64("b").unwrap_or(0.0) as f32;
+    let c = get_f64("c").unwrap_or(0.0) as f32;
+    let d = get_f64("d").unwrap_or(1.0) as f32;
+    if !a.is_finite() || !b.is_finite() || !c.is_finite() || !d.is_finite() {
+        return Err(Error::invalid(
+            "job: filter 'barrel-inverse': a / b / c / d must be finite numbers",
+        ));
+    }
+    let mut f = BarrelInverse::new(a, b, c, d);
+    if let (Some(cx), Some(cy)) = (get_f64("cx"), get_f64("cy")) {
+        f = f.with_centre(cx as f32, cy as f32);
+    }
+    if let Some(r) = get_f64("r_norm").or_else(|| get_f64("radius")) {
+        f = f.with_r_norm(r as f32);
+    }
+    if let Some(arr) = p
+        .and_then(|m| m.get("background"))
+        .and_then(|v| v.as_array())
+    {
+        if arr.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'barrel-inverse': background must be a 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        let mut bg = [0u8; 4];
+        for (i, v) in arr.iter().enumerate() {
+            bg[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid(
+                        "job: filter 'barrel-inverse': background entries must be unsigned ints",
+                    )
+                })?
+                .min(255) as u8;
+        }
+        f = f.with_background(bg);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_stegano(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Stegano;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let offset = get_u64("offset").unwrap_or(7).min(7) as u8;
+    let (src_port, dst_port) = two_video_in_ports(inputs);
+    if let (
+        PortParams::Video {
+            format: sf,
+            width: sw,
+            height: sh,
+            ..
+        },
+        PortParams::Video {
+            format: df,
+            width: dw,
+            height: dh,
+            ..
+        },
+    ) = (&src_port.params, &dst_port.params)
+    {
+        if sf != df || sw != dw || sh != dh {
+            return Err(Error::invalid(format!(
+                "job: filter 'stegano': src and dst ports must agree on \
+                 (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
+            )));
+        }
+    }
+    let out_port = PortSpec {
+        name: "video".to_string(),
+        ..src_port.clone()
+    };
+    Ok(Box::new(TwoInputImageFilterAdapter::new(
+        Box::new(Stegano::new(offset)),
+        src_port,
+        dst_port,
+        out_port,
+    )))
+}
+
+fn make_stereo(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Stereo;
+    let (src_port, dst_port) = two_video_in_ports(inputs);
+    if let (
+        PortParams::Video {
+            format: sf,
+            width: sw,
+            height: sh,
+            ..
+        },
+        PortParams::Video {
+            format: df,
+            width: dw,
+            height: dh,
+            ..
+        },
+    ) = (&src_port.params, &dst_port.params)
+    {
+        if sf != df || sw != dw || sh != dh {
+            return Err(Error::invalid(format!(
+                "job: filter 'stereo': src and dst ports must agree on \
+                 (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
+            )));
+        }
+    }
+    let out_port = PortSpec {
+        name: "video".to_string(),
+        ..src_port.clone()
+    };
+    Ok(Box::new(TwoInputImageFilterAdapter::new(
+        Box::new(Stereo::new()),
+        src_port,
+        dst_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2832,6 +3087,14 @@ mod tests {
             "quantize",
             "clut",
             "hald-clut",
+            // r14 additions (sketch / deskew / hough-lines /
+            // barrel-inverse / stegano / stereo).
+            "sketch",
+            "deskew",
+            "hough-lines",
+            "barrel-inverse",
+            "stegano",
+            "stereo",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
