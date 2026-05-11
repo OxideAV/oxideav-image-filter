@@ -90,6 +90,12 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   from a reference background colour by more than `fuzz` per channel
   (Chebyshev / L-infinity tolerance). Background defaults to the
   source's `(0, 0)` pixel. IM: `-fuzz N% -trim`.
+- **`GravityTranslate`** + **`Gravity`** — 9-point compass anchor
+  placement on a fixed `(width, height)` canvas (`NorthWest` /
+  `North` / `NorthEast` / `West` / `Centre` / `East` / `SouthWest` /
+  `South` / `SouthEast`). Backed by `Extent` so YUV chroma
+  subsampling alignment matches. Factory aliases: `gravity-translate`,
+  `gravity`. IM: `-gravity <anchor> -extent WxH`.
 
 ### Tonal (LUT-based, typically fast)
 
@@ -188,9 +194,39 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   inner / outer normalised radii. Smoother seam than the Gaussian
   [`Vignette`] because both endpoints have zero derivative. RGB /
   RGBA only.
+- **`HslShift`** — independent additive shifts for H (degrees), S,
+  and L (each in `[-1, 1]`) via the same RGB ⇄ HSL round-trip as
+  [`HslRotate`]. Achromatic greys keep their hue=undefined semantics
+  — only the L shift moves them. Alpha pass-through; RGB / RGBA only.
+- **`ColorBalance`** — three-way ASC CDL-style per-channel `lift` /
+  `gamma` / `gain` (`out = ((in × gain) + lift)^(1/gamma)`) folded
+  into a single 256-entry per-channel LUT so the cost is `O(W·H)`
+  regardless of how many adjustments are enabled. Alpha
+  pass-through; RGB / RGBA / Gray8.
+- **`Canvas`** — constant-colour generator: every output sample is
+  the configured `[R, G, B, A]`. YUV chroma planes are painted
+  neutral 128 (matching IM's behaviour when an RGB colour lands on
+  a YUV pipeline). Useful as a pipeline-head generator (a flat
+  backdrop for `composite-over`) or as a wipe step.
+- **`GradientRadial`** — radial gradient generator: per-pixel
+  distance from `(centre_x · w, centre_y · h)` is normalised against
+  `radius` (defaults to half-diagonal), then linearly interpolated
+  between an `inner` and `outer` colour per channel. Gray8 / RGB /
+  RGBA. Factory alias: `radial-gradient`.
+- **`GradientConic`** — angular sweep generator parameterised by
+  `(centre_x, centre_y)` + `start_angle` (degrees). `t = 0` lies
+  along the angle ray and increases counter-clockwise round to 1.
+  Gray8 / RGB / RGBA. Factory alias: `conic-gradient`.
 
 ### Sharpening + artistic
 
+- **`BilateralBlur`** — edge-preserving Gaussian blur: each tap is
+  weighted by both spatial proximity (`sigma_spatial`) and
+  intensity proximity (`sigma_range`), so step edges survive a
+  heavy smoothing pass. Border samples clamp to the nearest
+  in-bounds coordinate; alpha pass-through on RGBA. Gray8 / RGB /
+  RGBA. IM analogue: `-define blur:bilateral=1` on the Gaussian
+  blur path.
 - **`Sharpen`** — unsharp-mask (Gaussian-blurred subtract +
   re-addition). IM: `-sharpen RxS`.
 - **`Unsharp`** — explicit unsharp-mask with `threshold` gate: only

@@ -191,6 +191,27 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("adaptive-threshold", Box::new(make_adaptive_threshold));
 
+    // r16 factories: bilateral blur / canvas / gradient-radial /
+    // gradient-conic / gravity-translate / color-balance / hsl-shift.
+    ctx.filters
+        .register("bilateral-blur", Box::new(make_bilateral_blur));
+    ctx.filters.register("canvas", Box::new(make_canvas));
+    ctx.filters
+        .register("gradient-radial", Box::new(make_gradient_radial));
+    ctx.filters
+        .register("radial-gradient", Box::new(make_gradient_radial));
+    ctx.filters
+        .register("gradient-conic", Box::new(make_gradient_conic));
+    ctx.filters
+        .register("conic-gradient", Box::new(make_gradient_conic));
+    ctx.filters
+        .register("gravity-translate", Box::new(make_gravity_translate));
+    ctx.filters
+        .register("gravity", Box::new(make_gravity_translate));
+    ctx.filters
+        .register("color-balance", Box::new(make_color_balance));
+    ctx.filters.register("hsl-shift", Box::new(make_hsl_shift));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -3217,6 +3238,306 @@ fn make_adaptive_threshold(params: &Value, inputs: &[PortSpec]) -> Result<Box<dy
     )))
 }
 
+// --- r16 factories ---
+
+fn make_bilateral_blur(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::BilateralBlur;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let radius = get_u64("radius").unwrap_or(3).min(u32::MAX as u64) as u32;
+    let sigma_spatial = get_f64("sigma_spatial")
+        .or_else(|| get_f64("sigma"))
+        .unwrap_or((radius as f64 / 2.0).max(0.5)) as f32;
+    let sigma_range = get_f64("sigma_range")
+        .or_else(|| get_f64("range"))
+        .unwrap_or(30.0) as f32;
+    if !sigma_spatial.is_finite() || !sigma_range.is_finite() || sigma_range <= 0.0 {
+        return Err(Error::invalid(format!(
+            "job: filter 'bilateral-blur': sigma_spatial / sigma_range must be finite \
+             positive numbers (got {sigma_spatial} / {sigma_range})"
+        )));
+    }
+    let f = BilateralBlur::new(radius, sigma_spatial, sigma_range);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn parse_color4(v: &Value, name: &str) -> Result<[u8; 4]> {
+    let arr = v.as_array().ok_or_else(|| {
+        Error::invalid(format!(
+            "job: filter '{name}': colour must be a 3- or 4-element array"
+        ))
+    })?;
+    if arr.len() != 3 && arr.len() != 4 {
+        return Err(Error::invalid(format!(
+            "job: filter '{name}': colour must have 3 or 4 entries, got {}",
+            arr.len()
+        )));
+    }
+    let mut out = [0u8, 0, 0, 255];
+    for (i, e) in arr.iter().enumerate() {
+        let n = e.as_u64().ok_or_else(|| {
+            Error::invalid(format!(
+                "job: filter '{name}': colour entries must be unsigned 0..255 numbers"
+            ))
+        })?;
+        if n > 255 {
+            return Err(Error::invalid(format!(
+                "job: filter '{name}': colour entry {i} = {n} out of 0..255 range"
+            )));
+        }
+        out[i] = n as u8;
+    }
+    Ok(out)
+}
+
+fn make_canvas(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Canvas;
+    let p = params.as_object();
+    let colour = if let Some(v) = p.and_then(|m| m.get("color").or_else(|| m.get("colour"))) {
+        parse_color4(v, "canvas")?
+    } else {
+        [0, 0, 0, 255]
+    };
+    let f = Canvas::new(colour);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_gradient_radial(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::GradientRadial;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let inner = if let Some(v) = p.and_then(|m| m.get("inner")) {
+        parse_color4(v, "gradient-radial")?
+    } else {
+        [255, 255, 255, 255]
+    };
+    let outer = if let Some(v) = p.and_then(|m| m.get("outer")) {
+        parse_color4(v, "gradient-radial")?
+    } else {
+        [0, 0, 0, 255]
+    };
+    let mut f = GradientRadial::new(inner, outer);
+    if let Some(x) = get_f64("centre_x").or_else(|| get_f64("cx")) {
+        f.centre_x = x as f32;
+    }
+    if let Some(y) = get_f64("centre_y").or_else(|| get_f64("cy")) {
+        f.centre_y = y as f32;
+    }
+    if let Some(r) = get_f64("radius") {
+        f.radius = r as f32;
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_gradient_conic(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::GradientConic;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let inner = if let Some(v) = p.and_then(|m| m.get("inner")) {
+        parse_color4(v, "gradient-conic")?
+    } else {
+        [255, 255, 255, 255]
+    };
+    let outer = if let Some(v) = p.and_then(|m| m.get("outer")) {
+        parse_color4(v, "gradient-conic")?
+    } else {
+        [0, 0, 0, 255]
+    };
+    let mut f = GradientConic::new(inner, outer);
+    if let Some(x) = get_f64("centre_x").or_else(|| get_f64("cx")) {
+        f.centre_x = x as f32;
+    }
+    if let Some(y) = get_f64("centre_y").or_else(|| get_f64("cy")) {
+        f.centre_y = y as f32;
+    }
+    if let Some(a) = get_f64("start_angle").or_else(|| get_f64("angle")) {
+        f.start_angle = a as f32;
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_gravity_translate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Gravity, GravityTranslate};
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    let in_port = video_in_port(inputs);
+    let in_w = match &in_port.params {
+        PortParams::Video { width, .. } => *width,
+        _ => 0,
+    };
+    let in_h = match &in_port.params {
+        PortParams::Video { height, .. } => *height,
+        _ => 0,
+    };
+    let width = get_u64("width").unwrap_or(in_w as u64).min(u32::MAX as u64) as u32;
+    let height = get_u64("height")
+        .unwrap_or(in_h as u64)
+        .min(u32::MAX as u64) as u32;
+    let gravity_name = get_str("gravity").unwrap_or("centre");
+    let gravity = Gravity::from_name(gravity_name).ok_or_else(|| {
+        Error::invalid(format!(
+            "job: filter 'gravity-translate': unknown gravity '{gravity_name}' \
+             (expected one of north / south / east / west / centre + diagonals)"
+        ))
+    })?;
+    let mut f = GravityTranslate::new(width, height, gravity);
+    if let Some(arr) = p
+        .and_then(|m| m.get("background"))
+        .and_then(|v| v.as_array())
+    {
+        if arr.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'gravity-translate': background must be a 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        let mut bg = [0u8; 4];
+        for (i, v) in arr.iter().enumerate() {
+            let n = v.as_u64().ok_or_else(|| {
+                Error::invalid(
+                    "job: filter 'gravity-translate': background entries must be unsigned numbers",
+                )
+            })?;
+            if n > 255 {
+                return Err(Error::invalid(format!(
+                    "job: filter 'gravity-translate': background entry {i} = {n} out of range"
+                )));
+            }
+            bg[i] = n as u8;
+        }
+        f = f.with_background(bg);
+    }
+    // The output canvas is fixed (width × height) regardless of input.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format, time_base, ..
+        } => PortSpec::video("video", width, height, *format, *time_base),
+        _ => PortSpec::video(
+            "video",
+            width,
+            height,
+            PixelFormat::Rgba,
+            TimeBase::new(1, 30),
+        ),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn parse_f3(v: &Value, name: &str, key: &str) -> Result<[f32; 3]> {
+    let arr = v.as_array().ok_or_else(|| {
+        Error::invalid(format!(
+            "job: filter '{name}': '{key}' must be a 3-element array"
+        ))
+    })?;
+    if arr.len() != 3 {
+        return Err(Error::invalid(format!(
+            "job: filter '{name}': '{key}' must have exactly 3 entries, got {}",
+            arr.len()
+        )));
+    }
+    let mut out = [0.0f32; 3];
+    for (i, e) in arr.iter().enumerate() {
+        out[i] = e.as_f64().ok_or_else(|| {
+            Error::invalid(format!(
+                "job: filter '{name}': '{key}' entries must be numbers"
+            ))
+        })? as f32;
+    }
+    Ok(out)
+}
+
+fn make_color_balance(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::ColorBalance;
+    let p = params.as_object();
+    let lift = if let Some(v) = p.and_then(|m| m.get("lift")) {
+        parse_f3(v, "color-balance", "lift")?
+    } else {
+        [0.0; 3]
+    };
+    let gamma = if let Some(v) = p.and_then(|m| m.get("gamma")) {
+        parse_f3(v, "color-balance", "gamma")?
+    } else {
+        [1.0; 3]
+    };
+    let gain = if let Some(v) = p.and_then(|m| m.get("gain")) {
+        parse_f3(v, "color-balance", "gain")?
+    } else {
+        [1.0; 3]
+    };
+    for g in gamma.iter() {
+        if !g.is_finite() || *g <= 0.0 {
+            return Err(Error::invalid(format!(
+                "job: filter 'color-balance': gamma entries must be positive finite numbers \
+                 (got {g})"
+            )));
+        }
+    }
+    let f = ColorBalance::new(lift, gamma, gain);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_hsl_shift(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::HslShift;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let h = get_f64("h")
+        .or_else(|| get_f64("hue"))
+        .or_else(|| get_f64("h_shift"))
+        .unwrap_or(0.0) as f32;
+    let s = get_f64("s")
+        .or_else(|| get_f64("saturation"))
+        .or_else(|| get_f64("s_shift"))
+        .unwrap_or(0.0) as f32;
+    let l = get_f64("l")
+        .or_else(|| get_f64("lightness"))
+        .or_else(|| get_f64("l_shift"))
+        .unwrap_or(0.0) as f32;
+    let f = HslShift::new(h, s, l);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3348,6 +3669,19 @@ mod tests {
             "mosaic",
             "channel-mixer",
             "adaptive-threshold",
+            // r16 additions (bilateral-blur / canvas / gradient-radial
+            // + alias / gradient-conic + alias / gravity-translate +
+            // alias / color-balance / hsl-shift).
+            "bilateral-blur",
+            "canvas",
+            "gradient-radial",
+            "radial-gradient",
+            "gradient-conic",
+            "conic-gradient",
+            "gravity-translate",
+            "gravity",
+            "color-balance",
+            "hsl-shift",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -5865,5 +6199,200 @@ mod tests {
             .expect("adaptive-threshold factory");
         let out = run_one(f, gray_4x4(|_, _| 128));
         assert!(out.planes[0].data.iter().all(|&v| v == 0));
+    }
+
+    // --- r16 smoke tests ---
+
+    #[test]
+    fn bilateral_blur_factory_default_keeps_flat_input_flat() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("bilateral-blur", &json!({}), &inputs)
+            .expect("bilateral-blur factory");
+        let out = run_one(f, rgba_4x4(|_, _| [50, 100, 150, 222]));
+        // Constant input ⇒ constant output.
+        for chunk in out.planes[0].data.chunks(4) {
+            assert_eq!(chunk, &[50, 100, 150, 222]);
+        }
+    }
+
+    #[test]
+    fn bilateral_blur_factory_rejects_bad_sigma() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c
+            .filters
+            .make("bilateral-blur", &json!({"sigma_range": 0.0}), &inputs);
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn canvas_factory_paints_uniform_colour() {
+        let c = ctx();
+        let inputs = [rgba_in_port(3, 3)];
+        let f = c
+            .filters
+            .make("canvas", &json!({"color": [200, 100, 50, 255]}), &inputs)
+            .expect("canvas factory");
+        let out = run_one(f, rgba_4x4(|_, _| [0, 0, 0, 0]));
+        for chunk in out.planes[0].data.chunks(4) {
+            assert_eq!(chunk, &[200, 100, 50, 255]);
+        }
+    }
+
+    #[test]
+    fn canvas_factory_default_is_opaque_black() {
+        let c = ctx();
+        let inputs = [rgba_in_port(2, 2)];
+        let f = c
+            .filters
+            .make("canvas", &json!({}), &inputs)
+            .expect("canvas factory");
+        let out = run_one(f, rgba_4x4(|_, _| [200, 50, 30, 0]));
+        let stride = 8usize;
+        for y in 0..2 {
+            for x in 0..2 {
+                let p = y * stride + x * 4;
+                assert_eq!(&out.planes[0].data[p..p + 4], &[0, 0, 0, 255]);
+            }
+        }
+    }
+
+    #[test]
+    fn gradient_radial_factory_centre_is_inner() {
+        let c = ctx();
+        let inputs = [rgba_in_port(5, 5)];
+        let f = c
+            .filters
+            .make(
+                "gradient-radial",
+                &json!({"inner": [255, 255, 255, 255], "outer": [0, 0, 0, 255]}),
+                &inputs,
+            )
+            .expect("gradient-radial factory");
+        // 4×4 ctx fixture — the helper only emits 4×4. Build a 5×5
+        // Rgba directly so the centre pixel is well-defined.
+        let mut data = Vec::with_capacity(5 * 5 * 4);
+        for _ in 0..(5 * 5) {
+            data.extend_from_slice(&[0u8, 0, 0, 0]);
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 20, data }],
+        };
+        let out = run_one(f, frame);
+        let p = 2 * 20 + 2 * 4;
+        assert_eq!(out.planes[0].data[p], 255);
+    }
+
+    #[test]
+    fn radial_gradient_alias_resolves() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        c.filters
+            .make("radial-gradient", &json!({}), &inputs)
+            .expect("radial-gradient alias should resolve");
+    }
+
+    #[test]
+    fn gradient_conic_factory_builds() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        c.filters
+            .make(
+                "gradient-conic",
+                &json!({"inner": [255, 0, 0, 255], "outer": [0, 0, 255, 255]}),
+                &inputs,
+            )
+            .expect("gradient-conic factory");
+        c.filters
+            .make("conic-gradient", &json!({}), &inputs)
+            .expect("conic-gradient alias");
+    }
+
+    #[test]
+    fn gravity_translate_factory_resizes_canvas() {
+        let c = ctx();
+        let inputs = [rgba_in_port(2, 2)];
+        let f = c
+            .filters
+            .make(
+                "gravity-translate",
+                &json!({"width": 4, "height": 4, "gravity": "northwest"}),
+                &inputs,
+            )
+            .expect("gravity-translate factory");
+        match &f.output_ports()[0].params {
+            PortParams::Video { width, height, .. } => {
+                assert_eq!(*width, 4);
+                assert_eq!(*height, 4);
+            }
+            _ => panic!("gravity-translate output port is not video"),
+        }
+    }
+
+    #[test]
+    fn gravity_translate_factory_rejects_unknown_anchor() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c.filters.make(
+            "gravity-translate",
+            &json!({"width": 8, "height": 8, "gravity": "skyward"}),
+            &inputs,
+        );
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn gravity_alias_resolves() {
+        let c = ctx();
+        let inputs = [rgba_in_port(2, 2)];
+        c.filters
+            .make(
+                "gravity",
+                &json!({"width": 4, "height": 4, "gravity": "centre"}),
+                &inputs,
+            )
+            .expect("gravity alias");
+    }
+
+    #[test]
+    fn color_balance_factory_identity_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("color-balance", &json!({}), &inputs)
+            .expect("color-balance factory");
+        let frame = rgba_4x4(|x, y| [(x * 30) as u8, (y * 30) as u8, 100, 222]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn color_balance_factory_rejects_bad_gamma() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c
+            .filters
+            .make("color-balance", &json!({"gamma": [0.0, 1.0, 1.0]}), &inputs);
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn hsl_shift_factory_zero_is_passthrough_within_rounding() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("hsl-shift", &json!({}), &inputs)
+            .expect("hsl-shift factory");
+        let frame = rgba_4x4(|x, y| [(x * 30) as u8, (y * 30) as u8, 100, 222]);
+        let out = run_one(f, frame.clone());
+        for (a, b) in out.planes[0].data.iter().zip(frame.planes[0].data.iter()) {
+            assert!((*a as i16 - *b as i16).abs() <= 1);
+        }
     }
 }

@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r16: land seven new filters expanding generators, edge-preserving
+  smoothing, and colourist tonal control. New filters: `BilateralBlur`
+  (joint spatial + range Gaussian — edges are weighted by both pixel
+  distance and intensity similarity, so step edges survive a heavy
+  smoothing pass; alpha pass-through on RGBA; IM analogue
+  `-define blur:bilateral=1` on the Gaussian path), `Canvas`
+  (constant-colour generator — every output sample is the configured
+  `[R, G, B, A]`; YUV chroma planes are painted neutral 128;
+  `Gray8 / Rgb24 / Rgba` + planar YUV; the input frame is consumed
+  only for its `pts` so `Canvas` works as a pipeline-head generator),
+  `ColorBalance` (three-way ASC CDL-style per-channel `lift` /
+  `gamma` / `gain` folded into a single 256-entry per-channel LUT —
+  `O(W·H)` regardless of how many adjustments are enabled; alpha
+  pass-through on RGBA), `GradientRadial` (radial gradient generator
+  centred at `(cx, cy)` with explicit or default-half-diagonal
+  `radius`; per-channel linear interpolation between an inner and
+  outer colour; RGB / RGBA / Gray8), `GradientConic` (angular sweep
+  generator parameterised by `(cx, cy)` + `start_angle`; `t = 0` lies
+  along the angle ray and increases counter-clockwise round to 1;
+  RGB / RGBA / Gray8), `GravityTranslate` (9-point compass anchor
+  placement on a fixed canvas — `NorthWest` / `North` / ... /
+  `SouthEast` plus `Centre`; backed by `Extent` so YUV chroma
+  alignment matches; IM `-gravity` operator), and `HslShift`
+  (independent additive shifts for H (degrees), S, and L (each in
+  `[-1, 1]`) via the same RGB ⇄ HSL round-trip as `HslRotate`; alpha
+  pass-through; RGB / RGBA only). Ten new factory names wired into
+  `register()`: `bilateral-blur`, `canvas`, `gradient-radial`,
+  `radial-gradient` (alias), `gradient-conic`, `conic-gradient`
+  (alias), `gravity-translate`, `gravity` (alias), `color-balance`,
+  `hsl-shift`. Filter count: 76 → 83 named types; factory count:
+  89 → 99 names.
+
 - r15: land six new ImageMagick-compatible filters covering colour
   transforms, photographic stylise, and adaptive thresholding. New
   filters: `HslRotate` (rotate the hue channel by N degrees via an

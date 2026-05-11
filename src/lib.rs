@@ -222,6 +222,24 @@
 //!   soft vignette with separate inner / outer normalised radii;
 //!   smoother seam than the existing Gaussian `Vignette`.
 //!
+//! r16 additions:
+//!
+//! - [`BilateralBlur`](bilateral_blur::BilateralBlur) — edge-preserving
+//!   joint spatial + range Gaussian blur.
+//! - [`Canvas`](canvas::Canvas) — fixed-colour canvas generator
+//!   (output-only fill).
+//! - [`ColorBalance`](color_balance::ColorBalance) — three-way ASC
+//!   CDL-style lift / gamma / gain per RGB channel.
+//! - [`GradientConic`](gradient_conic::GradientConic) — angular
+//!   gradient generator (centre + start angle + colour endpoints).
+//! - [`GradientRadial`](gradient_radial::GradientRadial) — radial
+//!   gradient generator (centre + radius + colour endpoints).
+//! - [`GravityTranslate`](gravity_translate::GravityTranslate) —
+//!   gravity-anchored canvas placement (9-point compass anchors); IM
+//!   `-gravity` operator over `Extent`.
+//! - [`HslShift`](hsl_shift::HslShift) — independent H / S / L
+//!   shifts in HSL space.
+//!
 //! # Pixel formats
 //!
 //! Filters operate natively on the 8-bit single-plane and planar YUV
@@ -235,16 +253,19 @@ pub mod affine;
 pub mod auto_gamma;
 pub mod auto_level;
 pub mod barrel_inverse;
+pub mod bilateral_blur;
 pub mod blue_shift;
 pub mod blur;
 pub mod brightness_contrast;
 pub mod canny;
+pub mod canvas;
 pub mod channel_extract;
 pub mod channel_mixer;
 pub mod charcoal;
 pub mod chromatic_aberration;
 pub mod clamp;
 pub mod clut;
+pub mod color_balance;
 pub mod color_matrix;
 pub mod colorize;
 pub mod composite;
@@ -265,10 +286,14 @@ pub mod flop;
 pub mod frame;
 pub mod function;
 pub mod gamma;
+pub mod gradient_conic;
+pub mod gradient_radial;
+pub mod gravity_translate;
 pub mod grayscale;
 pub mod hald_clut;
 pub mod hough_lines;
 pub mod hsl_rotate;
+pub mod hsl_shift;
 pub mod implode;
 pub mod laplacian;
 pub mod level;
@@ -316,16 +341,19 @@ pub use affine::Affine;
 pub use auto_gamma::AutoGamma;
 pub use auto_level::AutoLevel;
 pub use barrel_inverse::BarrelInverse;
+pub use bilateral_blur::BilateralBlur;
 pub use blue_shift::BlueShift;
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
 pub use canny::Canny;
+pub use canvas::Canvas;
 pub use channel_extract::{Channel, ChannelExtract};
 pub use channel_mixer::ChannelMixer;
 pub use charcoal::Charcoal;
 pub use chromatic_aberration::ChromaticAberration;
 pub use clamp::Clamp;
 pub use clut::Clut;
+pub use color_balance::ColorBalance;
 pub use color_matrix::ColorMatrix;
 pub use colorize::Colorize;
 pub use composite::{Composite, CompositeOp};
@@ -346,10 +374,14 @@ pub use flop::Flop;
 pub use frame::Frame;
 pub use function::{Function, FunctionOp};
 pub use gamma::Gamma;
+pub use gradient_conic::GradientConic;
+pub use gradient_radial::GradientRadial;
+pub use gravity_translate::{Gravity, GravityTranslate};
 pub use grayscale::Grayscale;
 pub use hald_clut::HaldClut;
 pub use hough_lines::HoughLines;
 pub use hsl_rotate::HslRotate;
+pub use hsl_shift::HslShift;
 pub use implode::Implode;
 pub use laplacian::Laplacian;
 pub use level::Level;
