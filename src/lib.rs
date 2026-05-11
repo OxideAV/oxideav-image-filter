@@ -14,6 +14,21 @@
 //!   matching ImageMagick's `-distort Affine` argument convention.
 //! - [`AutoGamma`](auto_gamma::AutoGamma) — auto-gamma: pick a per-channel
 //!   gamma so the geometric mean lands at 0.5.
+//! - [`AutoLevel`](auto_level::AutoLevel) — per-channel auto-stretch:
+//!   independently fill `[0, 255]` for each of `R`/`G`/`B`. IM:
+//!   `-auto-level`.
+//! - [`Canny`](canny::Canny) — Canny edge detector (Gaussian → Sobel
+//!   → non-max suppression → hysteresis). Output is binary `Gray8`.
+//!   IM: `-canny RxS+L%+H%`.
+//! - [`Clamp`](clamp::Clamp) — clamp every tone sample into
+//!   `[low, high]`. IM: `-clamp` (extended with explicit endpoints).
+//! - [`ColorMatrix`](color_matrix::ColorMatrix) — 3×3 colour matrix
+//!   with optional offset. RGB / RGBA only. IM: `-color-matrix`,
+//!   `-recolor`.
+//! - [`ContrastStretch`](contrast_stretch::ContrastStretch) — burn the
+//!   darkest `black%` and brightest `white%` of pixels then linearly
+//!   stretch the rest (per-channel for RGB). IM:
+//!   `-contrast-stretch black%xwhite%`.
 //! - [`Blur`](blur::Blur) — separable Gaussian blur with configurable
 //!   radius + sigma, optional plane selector (luma only / chroma only /
 //!   specific plane / all).
@@ -57,6 +72,9 @@
 //! - [`Extent`](extent::Extent) — set the output canvas to a fixed
 //!   `(width, height)` with a placement offset, padding the gaps with a
 //!   configurable background colour. IM: `-extent WxH+X+Y`.
+//! - [`Function`](function::Function) — per-pixel mathematical
+//!   function map (`Polynomial`, `Sinusoid`, `ArcSin`, `ArcTan`)
+//!   evaluated in normalised `[0, 1]` space. IM: `-function`.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
 //! - [`Flop`](flop::Flop) — mirror horizontally (left col ↔ right col).
 //! - [`Gamma`](gamma::Gamma) — power-law gamma curve applied per tone
@@ -66,6 +84,12 @@
 //! - [`Implode`](implode::Implode) — radial pinch / explode (ImageMagick
 //!   `-implode N`); bilinear-resampled inverse mapping inside the
 //!   inscribed circle.
+//! - [`Laplacian`](laplacian::Laplacian) — 3×3 Laplacian
+//!   second-derivative filter; output is `|response|` clamped to
+//!   `[0, 255]`. IM: `-laplacian`.
+//! - [`LinearStretch`](linear_stretch::LinearStretch) — like
+//!   [`ContrastStretch`] but cut-offs are absolute pixel counts. IM:
+//!   `-linear-stretch black-pixels{xwhite-pixels}`.
 //! - [`Level`](level::Level) — remap `[black, white]` to `[0, 255]`
 //!   with optional mid-tone gamma (ImageMagick `-level`).
 //! - [`Modulate`](modulate::Modulate) — adjust brightness, saturation,
@@ -151,12 +175,17 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 pub mod affine;
 pub mod auto_gamma;
+pub mod auto_level;
 pub mod blur;
 pub mod brightness_contrast;
+pub mod canny;
 pub mod channel_extract;
 pub mod charcoal;
+pub mod clamp;
+pub mod color_matrix;
 pub mod colorize;
 pub mod composite;
+pub mod contrast_stretch;
 pub mod convolve;
 pub mod crop;
 pub mod cycle;
@@ -169,10 +198,13 @@ pub mod evaluate;
 pub mod extent;
 pub mod flip;
 pub mod flop;
+pub mod function;
 pub mod gamma;
 pub mod grayscale;
 pub mod implode;
+pub mod laplacian;
 pub mod level;
+pub mod linear_stretch;
 pub mod modulate;
 pub mod morphology;
 pub mod motion_blur;
@@ -205,12 +237,17 @@ pub mod wave;
 
 pub use affine::Affine;
 pub use auto_gamma::AutoGamma;
+pub use auto_level::AutoLevel;
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
+pub use canny::Canny;
 pub use channel_extract::{Channel, ChannelExtract};
 pub use charcoal::Charcoal;
+pub use clamp::Clamp;
+pub use color_matrix::ColorMatrix;
 pub use colorize::Colorize;
 pub use composite::{Composite, CompositeOp};
+pub use contrast_stretch::ContrastStretch;
 pub use convolve::Convolve;
 pub use crop::Crop;
 pub use cycle::Cycle;
@@ -223,10 +260,13 @@ pub use evaluate::{Evaluate, EvaluateOp};
 pub use extent::Extent;
 pub use flip::Flip;
 pub use flop::Flop;
+pub use function::{Function, FunctionOp};
 pub use gamma::Gamma;
 pub use grayscale::Grayscale;
 pub use implode::Implode;
+pub use laplacian::Laplacian;
 pub use level::Level;
+pub use linear_stretch::LinearStretch;
 pub use modulate::Modulate;
 pub use morphology::{
     EdgeOp, Morphology, MorphologyChain, MorphologyEdge, MorphologyOp, StructuringElement,

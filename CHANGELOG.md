@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r12: land seven new ImageMagick-style filters covering tonal range
+  control, colour matrices, parametric pixel-function maps, and
+  spectral edge detectors. New filters: `Clamp` (clamp every tone
+  sample into `[low, high]` with alpha / chroma preservation, IM
+  `-clamp`), `AutoLevel` (per-channel auto-stretch — independently
+  fill `[0, 255]` for each of R / G / B, IM `-auto-level`),
+  `ContrastStretch` (burn `black%` darkest + `white%` brightest
+  pixels per channel before linear remap, IM
+  `-contrast-stretch black%xwhite%`), `LinearStretch` (same algorithm
+  with absolute pixel-count cut-offs, IM `-linear-stretch`),
+  `ColorMatrix` (3×3 colour matrix with optional 3-vector offset,
+  RGB / RGBA only, IM `-color-matrix` / `-recolor`), `Function` +
+  `FunctionOp` (per-pixel mathematical map evaluated in normalised
+  `[0, 1]` space — `Polynomial` / `Sinusoid` / `ArcSin` / `ArcTan`,
+  IM `-function <kind> args`), `Laplacian` (3×3 second-derivative
+  Laplacian → `Gray8`, IM `-laplacian`), and `Canny` (textbook
+  4-step pipeline: Gaussian → Sobel + direction → non-max
+  suppression → hysteresis → binary `Gray8`, IM
+  `-canny RxS+L%+H%`). Nine new factory names wired into
+  `register()`: `clamp`, `auto-level`, `contrast-stretch`,
+  `linear-stretch`, `color-matrix`, `recolor` (alias for
+  `color-matrix`), `function`, `laplacian`, `canny`. Filter count:
+  50 → 57 named types; factory count: 60 → 69 names.
+
 - r11: land five new ImageMagick-style filters plus four overlay-family
   composite operators. New filters: `Evaluate` (per-pixel arithmetic
   LUT — `Add` / `Subtract` / `Multiply` / `Divide` / `Pow` / `Max` /

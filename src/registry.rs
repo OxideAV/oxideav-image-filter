@@ -136,6 +136,22 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("affine", Box::new(make_affine));
     ctx.filters.register("srt", Box::new(make_srt));
 
+    // r12 factories: tonal range/clamp + colour matrix + maths-fn map +
+    // Laplacian / Canny edges.
+    ctx.filters.register("clamp", Box::new(make_clamp));
+    ctx.filters
+        .register("auto-level", Box::new(make_auto_level));
+    ctx.filters
+        .register("contrast-stretch", Box::new(make_contrast_stretch));
+    ctx.filters
+        .register("linear-stretch", Box::new(make_linear_stretch));
+    ctx.filters
+        .register("color-matrix", Box::new(make_color_matrix));
+    ctx.filters.register("recolor", Box::new(make_color_matrix));
+    ctx.filters.register("function", Box::new(make_function));
+    ctx.filters.register("laplacian", Box::new(make_laplacian));
+    ctx.filters.register("canny", Box::new(make_canny));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -2236,6 +2252,230 @@ fn make_srt(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>
     )))
 }
 
+// --- r12 factories (clamp / auto-level / stretches / colour matrix /
+// function / laplacian / canny) ---
+
+fn make_clamp(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Clamp;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let low = get_u64("low").unwrap_or(0).min(255) as u8;
+    let high = get_u64("high").unwrap_or(255).min(255) as u8;
+    let f = Clamp::new(low, high);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_auto_level(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::AutoLevel;
+    let f = AutoLevel::new();
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_contrast_stretch(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::ContrastStretch;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let black = get_f64("black")
+        .or_else(|| get_f64("black_pct"))
+        .or_else(|| get_f64("low"))
+        .unwrap_or(0.02) as f32;
+    let white = get_f64("white")
+        .or_else(|| get_f64("white_pct"))
+        .or_else(|| get_f64("high"))
+        .unwrap_or(0.01) as f32;
+    let f = ContrastStretch::new(black, white);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_linear_stretch(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::LinearStretch;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let black = get_u64("black")
+        .or_else(|| get_u64("black_pixels"))
+        .or_else(|| get_u64("low"))
+        .unwrap_or(0) as u32;
+    let white = get_u64("white")
+        .or_else(|| get_u64("white_pixels"))
+        .or_else(|| get_u64("high"))
+        .unwrap_or(0) as u32;
+    let f = LinearStretch::new(black, white);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_color_matrix(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::ColorMatrix;
+    let p = params.as_object();
+    let arr = p
+        .and_then(|m| m.get("matrix"))
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            Error::invalid(
+                "job: filter 'color-matrix' needs `matrix`: a 9-element array (row-major 3x3)",
+            )
+        })?;
+    if arr.len() != 9 {
+        return Err(Error::invalid(format!(
+            "job: filter 'color-matrix': `matrix` must have exactly 9 numbers, got {}",
+            arr.len()
+        )));
+    }
+    let mut m = [0f32; 9];
+    for (i, v) in arr.iter().enumerate() {
+        m[i] = v.as_f64().ok_or_else(|| {
+            Error::invalid(format!(
+                "job: filter 'color-matrix': matrix[{i}] is not a number"
+            ))
+        })? as f32;
+    }
+    let mut f = ColorMatrix::new(m);
+    if let Some(off_arr) = p.and_then(|m| m.get("offset")).and_then(|v| v.as_array()) {
+        if off_arr.len() != 3 {
+            return Err(Error::invalid(format!(
+                "job: filter 'color-matrix': `offset` must have exactly 3 numbers, got {}",
+                off_arr.len()
+            )));
+        }
+        let mut o = [0f32; 3];
+        for (i, v) in off_arr.iter().enumerate() {
+            o[i] = v.as_f64().ok_or_else(|| {
+                Error::invalid(format!(
+                    "job: filter 'color-matrix': offset[{i}] is not a number"
+                ))
+            })? as f32;
+        }
+        f = f.with_offset(o);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_function(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Function, FunctionOp};
+    let p = params.as_object();
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    let op_name = get_str("op")
+        .or_else(|| get_str("kind"))
+        .or_else(|| get_str("function"))
+        .ok_or_else(|| {
+            Error::invalid(
+                "job: filter 'function' needs string `op` (polynomial / sinusoid / arcsin / arctan)",
+            )
+        })?;
+    let op = FunctionOp::from_name(op_name).ok_or_else(|| {
+        Error::invalid(format!(
+            "job: filter 'function': unknown op '{op_name}' \
+             (expected polynomial / sinusoid / arcsin / arctan)"
+        ))
+    })?;
+    let args = if let Some(arr) = p.and_then(|m| m.get("args")).and_then(|v| v.as_array()) {
+        let mut a = Vec::with_capacity(arr.len());
+        for (i, v) in arr.iter().enumerate() {
+            a.push(v.as_f64().ok_or_else(|| {
+                Error::invalid(format!("job: filter 'function': args[{i}] is not a number"))
+            })? as f32);
+        }
+        a
+    } else {
+        Vec::new()
+    };
+    let f = Function::new(op, args);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_laplacian(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Laplacian;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let radius = get_u64("radius").unwrap_or(1).max(1) as u32;
+    let f = Laplacian::new().with_radius(radius);
+    let in_port = video_in_port(inputs);
+    // Laplacian output is always Gray8.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_canny(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Canny;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let radius = get_u64("radius").unwrap_or(1) as u32;
+    let sigma = get_f64("sigma").unwrap_or(1.0) as f32;
+    let low = get_u64("low")
+        .or_else(|| get_u64("low_threshold"))
+        .unwrap_or(30)
+        .min(255) as u8;
+    let high = get_u64("high")
+        .or_else(|| get_u64("high_threshold"))
+        .unwrap_or(90)
+        .min(255) as u8;
+    let f = Canny::new(radius, sigma, low, high);
+    let in_port = video_in_port(inputs);
+    // Canny output is always Gray8 (binary).
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2329,6 +2569,17 @@ mod tests {
             "composite-darken",
             "composite-lighten",
             "composite-difference",
+            // r12 additions (clamp / stretches / colour matrix /
+            // function / laplacian / canny).
+            "clamp",
+            "auto-level",
+            "contrast-stretch",
+            "linear-stretch",
+            "color-matrix",
+            "recolor",
+            "function",
+            "laplacian",
+            "canny",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -4224,6 +4475,175 @@ mod tests {
                 stride: w as usize,
                 data,
             }],
+        }
+    }
+
+    // --- r12 factory smoke tests ---
+
+    #[test]
+    fn clamp_factory_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("clamp", &json!({"low": 50, "high": 200}), &inputs)
+            .expect("clamp factory");
+        let out = run_one(f, gray_4x4(|x, _| (x * 80) as u8));
+        for v in &out.planes[0].data {
+            assert!(*v >= 50 && *v <= 200, "out-of-range: {v}");
+        }
+    }
+
+    #[test]
+    fn auto_level_factory_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("auto-level", &json!({}), &inputs)
+            .expect("auto-level factory");
+        let out = run_one(f, gray_4x4(|x, _| 64 + (x * 20) as u8));
+        let min = *out.planes[0].data.iter().min().unwrap();
+        let max = *out.planes[0].data.iter().max().unwrap();
+        assert_eq!(min, 0);
+        assert_eq!(max, 255);
+    }
+
+    #[test]
+    fn contrast_stretch_factory_smoke() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "contrast-stretch",
+                &json!({"black": 0.0, "white": 0.0}),
+                &inputs,
+            )
+            .expect("contrast-stretch factory");
+        let _out = run_one(f, rgba_4x4(|x, _| [10 + x as u8 * 10, 50, 200, 80]));
+    }
+
+    #[test]
+    fn linear_stretch_factory_smoke() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("linear-stretch", &json!({"black": 0, "white": 0}), &inputs)
+            .expect("linear-stretch factory");
+        let _out = run_one(f, gray_4x4(|x, _| 64 + (x * 20) as u8));
+    }
+
+    #[test]
+    fn color_matrix_factory_swaps_channels() {
+        let c = ctx();
+        let inputs = [rgba_in_port(2, 2)];
+        // Map (R,G,B) → (B,G,R) — same swap as the unit test.
+        let f = c
+            .filters
+            .make(
+                "color-matrix",
+                &json!({"matrix": [
+                    0.0, 0.0, 1.0,
+                    0.0, 1.0, 0.0,
+                    1.0, 0.0, 0.0,
+                ]}),
+                &inputs,
+            )
+            .expect("color-matrix factory");
+        let out = run_one(f, rgba_4x4(|_, _| [10, 20, 30, 40]));
+        // First pixel: BGR.
+        let px = &out.planes[0].data[0..4];
+        assert_eq!(px, &[30, 20, 10, 40]);
+    }
+
+    #[test]
+    fn color_matrix_factory_rejects_wrong_length() {
+        let c = ctx();
+        let inputs = [rgba_in_port(2, 2)];
+        let r = c
+            .filters
+            .make("color-matrix", &json!({"matrix": [1.0, 0.0, 0.0]}), &inputs);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn recolor_alias_resolves() {
+        let c = ctx();
+        let inputs = [rgba_in_port(2, 2)];
+        c.filters
+            .make(
+                "recolor",
+                &json!({"matrix": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]}),
+                &inputs,
+            )
+            .expect("recolor alias");
+    }
+
+    #[test]
+    fn function_factory_polynomial_invert() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "function",
+                &json!({"op": "polynomial", "args": [-1.0, 1.0]}),
+                &inputs,
+            )
+            .expect("function factory");
+        let out = run_one(f, gray_4x4(|_, _| 0));
+        assert!(out.planes[0].data.iter().all(|&v| v == 255));
+    }
+
+    #[test]
+    fn function_factory_unknown_op_errors() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        assert!(c
+            .filters
+            .make("function", &json!({"op": "bogus"}), &inputs)
+            .is_err());
+    }
+
+    #[test]
+    fn laplacian_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("laplacian", &json!({}), &inputs)
+            .expect("laplacian factory");
+        // Output port should be Gray8.
+        let out_format = match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => *format,
+            _ => panic!("expected video port"),
+        };
+        assert_eq!(out_format, PixelFormat::Gray8);
+    }
+
+    #[test]
+    fn canny_factory_emits_gray8_binary() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        let f = c
+            .filters
+            .make(
+                "canny",
+                &json!({"radius": 0, "low": 30, "high": 90}),
+                &inputs,
+            )
+            .expect("canny factory");
+        let out_format = match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => *format,
+            _ => panic!("expected video port"),
+        };
+        assert_eq!(out_format, PixelFormat::Gray8);
+        let frame = gray_arbitrary(16, 16, |x, _| if x < 8 { 30 } else { 220 });
+        let out = run_one(f, frame);
+        for v in &out.planes[0].data {
+            assert!(*v == 0 || *v == 255, "non-binary: {v}");
         }
     }
 }

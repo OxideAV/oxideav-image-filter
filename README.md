@@ -125,6 +125,22 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Statistic`** + **`StatisticOp`** — rolling-window per-pixel
   `Median` / `Min` / `Max` / `Mean` over a `WxH` neighbourhood
   (border-clamped). 1×1 window is identity. IM: `-statistic <op> WxH`.
+- **`Clamp`** — clamp every tone sample into `[low, high]`. Alpha
+  preserved on RGBA; YUV touches only luma. IM: `-clamp` (extended
+  with explicit endpoints).
+- **`AutoLevel`** — per-channel auto-stretch: independently fill
+  `[0, 255]` for each of R / G / B (RGB / RGBA). IM: `-auto-level`.
+- **`ContrastStretch`** — burn the darkest `black%` and brightest
+  `white%` of pixels then linearly stretch the rest, **per channel**
+  for RGB. IM: `-contrast-stretch black%xwhite%`.
+- **`LinearStretch`** — like `ContrastStretch` but cut-offs are
+  absolute pixel counts, not fractions. IM:
+  `-linear-stretch black-pixels{xwhite-pixels}`.
+- **`Function`** + **`FunctionOp`** — per-pixel mathematical-function
+  map evaluated in normalised `[0, 1]` space. Operators:
+  `Polynomial` (Horner-rule on descending coefficients), `Sinusoid`
+  (`bias + amp · sin(2π · (freq · x + phase / 360))`), `ArcSin`,
+  `ArcTan`. IM: `-function <kind> args`.
 
 ### Colour
 
@@ -140,6 +156,10 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   bright pixels reach the target, dark pixels stay put. IM: `-tint N`.
 - **`Vignette`** — Gaussian radial darkening centred at `(x*w, y*h)`
   with `radius` + `sigma`. IM: `-vignette RxS{+x{+y}}`.
+- **`ColorMatrix`** — 3×3 colour matrix with optional 3-vector
+  offset; equivalent of an affine 3×4 matrix on R / G / B. RGB / RGBA
+  only (YUV → `Unsupported`). IM: `-color-matrix matrix`,
+  `-recolor matrix`.
 
 ### Sharpening + artistic
 
@@ -166,6 +186,13 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   fine texture before the edge pass. IM: `-charcoal R`.
 - **`Convolve`** — user-supplied square `N×N` kernel (odd `N`); optional
   bias / divisor; alpha pass-through on RGBA. IM: `-convolve "..."`.
+- **`Laplacian`** — 3×3 Laplacian (second-derivative) edge filter.
+  Output is `|response|` clamped to `[0, 255]` as a `Gray8` frame.
+  IM: `-laplacian`.
+- **`Canny`** — full Canny edge pipeline: Gaussian pre-blur →
+  Sobel gradient + direction → non-maximum suppression →
+  hysteresis thresholding. Output is binary `Gray8` (0 / 255).
+  IM: `-canny RxS+L%+H%`.
 - **`Polar`** / **`PolarDirection::DePolar`** — Cartesian ⇄ polar
   coordinate distortion (`-distort Polar` / `-distort DePolar`). Bends
   an image into a fan or unrolls a fan back to a rectangle. r7
