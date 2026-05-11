@@ -13,7 +13,9 @@ use oxideav_core::{
 use serde_json::Value;
 
 use crate::{
+    clut::Clut,
     composite::{Composite, CompositeOp},
+    hald_clut::HaldClut,
     ImageFilter, Planes, TwoInputImageFilter, VideoStreamParams,
 };
 
@@ -151,6 +153,17 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("function", Box::new(make_function));
     ctx.filters.register("laplacian", Box::new(make_laplacian));
     ctx.filters.register("canny", Box::new(make_canny));
+
+    // r13 factories: blue-shift / picture frame / shade relief / oil
+    // paint / palette quantizer + two-input CLUT family.
+    ctx.filters
+        .register("blue-shift", Box::new(make_blue_shift));
+    ctx.filters.register("frame", Box::new(make_frame));
+    ctx.filters.register("shade", Box::new(make_shade));
+    ctx.filters.register("paint", Box::new(make_paint));
+    ctx.filters.register("quantize", Box::new(make_quantize));
+    ctx.filters.register("clut", Box::new(make_clut));
+    ctx.filters.register("hald-clut", Box::new(make_hald_clut));
 
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
@@ -2476,6 +2489,236 @@ fn make_canny(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilte
     )))
 }
 
+// --- r13 factories ---
+
+fn make_blue_shift(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::BlueShift;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let factor = get_f64("factor")
+        .or_else(|| get_f64("amount"))
+        .unwrap_or(1.5) as f32;
+    let f = BlueShift::new(factor);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_frame(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Frame as FrameFilter;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    let bw = get_u64("width").unwrap_or(25) as u32;
+    let bh = get_u64("height").unwrap_or(bw as u64) as u32;
+    let inner = get_u64("inner_bevel")
+        .or_else(|| get_u64("inner"))
+        .unwrap_or(6) as u32;
+    let outer = get_u64("outer_bevel")
+        .or_else(|| get_u64("outer"))
+        .unwrap_or(6) as u32;
+    let mut f = FrameFilter::new(bw, bh, inner, outer);
+    if let Some(arr) = p.and_then(|m| m.get("matte")).and_then(|v| v.as_array()) {
+        if arr.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'frame': `matte` must be a 4-element [R,G,B,A] array, got {}",
+                arr.len()
+            )));
+        }
+        let mut m = [0u8; 4];
+        for (i, v) in arr.iter().enumerate() {
+            m[i] = v
+                .as_u64()
+                .ok_or_else(|| {
+                    Error::invalid(format!(
+                        "job: filter 'frame': matte[{i}] is not an unsigned int"
+                    ))
+                })?
+                .min(255) as u8;
+        }
+        f = f.with_matte(m);
+    }
+    let in_port = video_in_port(inputs);
+    // Frame grows the canvas to (w + 2*bw, h + 2*bh); rebuild the
+    // output port spec to match.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format,
+            width,
+            height,
+            time_base,
+        } => PortSpec::video(
+            "video",
+            *width + 2 * bw,
+            *height + 2 * bh,
+            *format,
+            *time_base,
+        ),
+        _ => PortSpec::video(
+            "video",
+            2 * bw,
+            2 * bh,
+            PixelFormat::Rgba,
+            TimeBase::new(1, 30),
+        ),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_shade(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Shade;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+
+    let az = get_f64("azimuth")
+        .or_else(|| get_f64("azimuth_degrees"))
+        .unwrap_or(30.0) as f32;
+    let el = get_f64("elevation")
+        .or_else(|| get_f64("elevation_degrees"))
+        .unwrap_or(30.0) as f32;
+    let color_pass_through = get_bool("color")
+        .or_else(|| get_bool("colour"))
+        .unwrap_or(false);
+    let f = Shade::new(az, el).with_color(color_pass_through);
+    let in_port = video_in_port(inputs);
+    // gray-only mode collapses to Gray8; colour mode preserves shape.
+    let out_port = if color_pass_through {
+        passthrough_out_port(&in_port)
+    } else {
+        match &in_port.params {
+            PortParams::Video {
+                width,
+                height,
+                time_base,
+                ..
+            } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+            _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+        }
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_paint(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Paint;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let radius = get_u64("radius").unwrap_or(2) as u32;
+    let mut f = Paint::new(radius);
+    if let Some(levels) = get_u64("levels") {
+        f = f.with_levels(levels.min(u32::MAX as u64) as u32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_quantize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Quantize;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let colors = get_u64("colors")
+        .or_else(|| get_u64("colours"))
+        .unwrap_or(64) as u32;
+    let f = Quantize::new(colors);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_clut(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    let (src_port, dst_port) = two_video_in_ports(inputs);
+    // Clut requires both ports to share the format and shape.
+    if let (
+        PortParams::Video {
+            format: sf,
+            width: sw,
+            height: sh,
+            ..
+        },
+        PortParams::Video {
+            format: df,
+            width: dw,
+            height: dh,
+            ..
+        },
+    ) = (&src_port.params, &dst_port.params)
+    {
+        if sf != df || sw != dw || sh != dh {
+            return Err(Error::invalid(format!(
+                "job: filter 'clut': src and dst ports must agree on \
+                 (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
+            )));
+        }
+    }
+    let out_port = PortSpec {
+        name: "video".to_string(),
+        ..src_port.clone()
+    };
+    Ok(Box::new(TwoInputImageFilterAdapter::new(
+        Box::new(Clut::new()),
+        src_port,
+        dst_port,
+        out_port,
+    )))
+}
+
+fn make_hald_clut(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    let (src_port, dst_port) = two_video_in_ports(inputs);
+    if let (
+        PortParams::Video {
+            format: sf,
+            width: sw,
+            height: sh,
+            ..
+        },
+        PortParams::Video {
+            format: df,
+            width: dw,
+            height: dh,
+            ..
+        },
+    ) = (&src_port.params, &dst_port.params)
+    {
+        if sf != df || sw != dw || sh != dh {
+            return Err(Error::invalid(format!(
+                "job: filter 'hald-clut': src and dst ports must agree on \
+                 (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
+            )));
+        }
+    }
+    let out_port = PortSpec {
+        name: "video".to_string(),
+        ..src_port.clone()
+    };
+    Ok(Box::new(TwoInputImageFilterAdapter::new(
+        Box::new(HaldClut::new()),
+        src_port,
+        dst_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2580,6 +2823,15 @@ mod tests {
             "function",
             "laplacian",
             "canny",
+            // r13 additions (blue-shift / frame / shade / paint /
+            // quantize / clut / hald-clut).
+            "blue-shift",
+            "frame",
+            "shade",
+            "paint",
+            "quantize",
+            "clut",
+            "hald-clut",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -4645,5 +4897,245 @@ mod tests {
         for v in &out.planes[0].data {
             assert!(*v == 0 || *v == 255, "non-binary: {v}");
         }
+    }
+
+    // --- r13 factory smoke tests ---
+
+    #[test]
+    fn blue_shift_factory_smoke() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("blue-shift", &json!({"factor": 1.0}), &inputs)
+            .expect("blue-shift factory");
+        // Each pixel (200, 100, 50) ⇒ (50, 50, 200).
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 12,
+                data: (0..16).flat_map(|_| [200u8, 100, 50]).collect(),
+            }],
+        };
+        let out = run_one(f, frame);
+        for chunk in out.planes[0].data.chunks(3) {
+            assert_eq!(chunk, &[50, 50, 200]);
+        }
+    }
+
+    #[test]
+    fn frame_factory_grows_canvas() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "frame",
+                &json!({"width": 3, "height": 2, "inner": 0, "outer": 0}),
+                &inputs,
+            )
+            .expect("frame factory");
+        match &f.output_ports()[0].params {
+            PortParams::Video { width, height, .. } => {
+                assert_eq!(*width, 4 + 2 * 3);
+                assert_eq!(*height, 4 + 2 * 2);
+            }
+            _ => panic!("frame output port not video"),
+        }
+        // Apply.
+        let frame = rgba_4x4(|_, _| [50, 100, 150, 255]);
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 10 * 8 * 4);
+    }
+
+    #[test]
+    fn frame_factory_rejects_bad_matte() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let bad = c
+            .filters
+            .make("frame", &json!({"matte": [1, 2, 3]}), &inputs);
+        assert!(bad.is_err(), "matte must be 4-element");
+    }
+
+    #[test]
+    fn shade_factory_default_emits_gray8() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "shade",
+                &json!({"azimuth": 30.0, "elevation": 60.0}),
+                &inputs,
+            )
+            .expect("shade factory");
+        match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => assert_eq!(*format, PixelFormat::Gray8),
+            _ => panic!("shade output port not video"),
+        }
+    }
+
+    #[test]
+    fn shade_factory_color_mode_preserves_format() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "shade",
+                &json!({"azimuth": 30.0, "elevation": 60.0, "color": true}),
+                &inputs,
+            )
+            .expect("shade factory");
+        match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => assert_eq!(*format, PixelFormat::Rgba),
+            _ => panic!("shade output port not video"),
+        }
+    }
+
+    #[test]
+    fn paint_factory_smoke() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("paint", &json!({"radius": 1}), &inputs)
+            .expect("paint factory");
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 12,
+                data: (0..16).flat_map(|_| [200u8, 100, 50]).collect(),
+            }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 16 * 3);
+    }
+
+    #[test]
+    fn quantize_factory_smoke() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("quantize", &json!({"colors": 8}), &inputs)
+            .expect("quantize factory");
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 12,
+                data: (0..16u32)
+                    .flat_map(|i| [(i * 16) as u8, (255 - i * 16) as u8, 128])
+                    .collect(),
+            }],
+        };
+        let out = run_one(f, frame);
+        // With 8 colours ⇒ k = 2 ⇒ output samples in {0, 255}.
+        for &v in &out.planes[0].data {
+            assert!(v == 0 || v == 255, "quantize{{8}} produced {v}");
+        }
+    }
+
+    #[test]
+    fn clut_factory_requires_matching_shape() {
+        let c = ctx();
+        let inputs = [
+            PortSpec::video("src", 4, 4, PixelFormat::Rgba, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 8, 8, PixelFormat::Rgba, TimeBase::new(1, 30)),
+        ];
+        let bad = c.filters.make("clut", &json!({}), &inputs);
+        assert!(bad.is_err(), "clut should reject mismatched src/dst");
+    }
+
+    #[test]
+    fn clut_factory_two_input_smoke() {
+        let c = ctx();
+        let inputs = [
+            PortSpec::video("src", 4, 4, PixelFormat::Rgba, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 4, 4, PixelFormat::Rgba, TimeBase::new(1, 30)),
+        ];
+        let f = c
+            .filters
+            .make("clut", &json!({}), &inputs)
+            .expect("clut factory");
+        let src = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 16,
+                data: (0..16u32)
+                    .flat_map(|i| [(i * 16) as u8, (i * 16) as u8, (i * 16) as u8, 200])
+                    .collect(),
+            }],
+        };
+        // 4×4 CLUT filled with a single colour ⇒ output should be that
+        // single colour (per channel), alpha preserved.
+        let clut = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 16,
+                data: (0..16).flat_map(|_| [77u8, 88, 99, 0]).collect(),
+            }],
+        };
+        let out = run_two(f, src, clut);
+        for i in 0..16 {
+            assert_eq!(out.planes[0].data[i * 4], 77);
+            assert_eq!(out.planes[0].data[i * 4 + 1], 88);
+            assert_eq!(out.planes[0].data[i * 4 + 2], 99);
+            assert_eq!(out.planes[0].data[i * 4 + 3], 200);
+        }
+    }
+
+    #[test]
+    fn hald_clut_factory_requires_matching_shape() {
+        let c = ctx();
+        let inputs = [
+            PortSpec::video("src", 8, 8, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 9, 9, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+        ];
+        let bad = c.filters.make("hald-clut", &json!({}), &inputs);
+        assert!(bad.is_err(), "hald-clut should reject mismatched shapes");
+    }
+
+    #[test]
+    fn hald_clut_factory_identity_smoke() {
+        let c = ctx();
+        // L = 4 ⇒ 16×16 image.
+        let (clut, side) = crate::hald_clut::build_identity_hald(4, false);
+        let inputs = [
+            PortSpec::video("src", side, side, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+            PortSpec::video("dst", side, side, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+        ];
+        let f = c
+            .filters
+            .make("hald-clut", &json!({}), &inputs)
+            .expect("hald-clut factory");
+        let mut data = Vec::new();
+        for y in 0..side {
+            for x in 0..side {
+                data.extend_from_slice(&[
+                    ((x * 255) / (side - 1)) as u8,
+                    ((y * 255) / (side - 1)) as u8,
+                    128,
+                ]);
+            }
+        }
+        let src = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: (side * 3) as usize,
+                data,
+            }],
+        };
+        let out = run_two(f, src.clone(), clut);
+        // Identity CLUT should reproduce the input within ±2.
+        let mut max_err = 0i32;
+        for (a, b) in src.planes[0].data.iter().zip(out.planes[0].data.iter()) {
+            let d = (*a as i32 - *b as i32).abs();
+            if d > max_err {
+                max_err = d;
+            }
+        }
+        assert!(max_err <= 2, "identity CLUT max err = {max_err}");
     }
 }

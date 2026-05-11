@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r13: land seven new ImageMagick-style filters: five single-input
+  effects + two two-input colour-grading CLUTs. New filters:
+  `BlueShift` (moonlight / scotopic-vision tint, per-pixel
+  `(min/factor, min/factor, max/factor)`, IM `+blue-shift factor`),
+  `Frame` (decorative bordered frame with a 3-D bevel — top / left
+  highlight, bottom / right shadow — RGB / RGBA only, IM
+  `-frame WxH+inner+outer-mat`), `Shade` (directional Lambertian
+  relief shading from an `(azimuth, elevation)` light vector;
+  optional colour pass-through `+shade` mode, IM `-shade az,el`),
+  `Paint` (oil-paint stylise: per-pixel modal-bucket vote in a
+  `(2*radius+1)²` window then mean-of-mode RGB, IM `-paint radius`),
+  `Quantize` (uniform-grid colour quantizer: round each channel to
+  one of `cbrt(N)` evenly-spaced palette entries, IM `-colors N`),
+  `Clut` (two-input 1-D Colour Look-Up Table — `src` is the image,
+  `dst` is the CLUT read row-major; per-channel index lookup; alpha
+  pass-through, IM `-clut`), and `HaldClut` (two-input Hald CLUT
+  image-as-LUT — `dst` is a `(L²)×(L²)` Hald cube; trilinear
+  sampling per pixel; RGB / RGBA only, IM `-hald-clut`). Seven new
+  factory names wired into `register()`: `blue-shift`, `frame`,
+  `shade`, `paint`, `quantize`, `clut`, `hald-clut`. Filter count:
+  57 → 64 named types; factory count: 69 → 76 names.
+
 - r12: land seven new ImageMagick-style filters covering tonal range
   control, colour matrices, parametric pixel-function maps, and
   spectral edge detectors. New filters: `Clamp` (clamp every tone

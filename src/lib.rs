@@ -14,6 +14,9 @@
 //!   matching ImageMagick's `-distort Affine` argument convention.
 //! - [`AutoGamma`](auto_gamma::AutoGamma) — auto-gamma: pick a per-channel
 //!   gamma so the geometric mean lands at 0.5.
+//! - [`BlueShift`](blue_shift::BlueShift) — night-vision / moonlight
+//!   tint: per-pixel `(min/factor, min/factor, max/factor)`. IM:
+//!   `+blue-shift factor`.
 //! - [`AutoLevel`](auto_level::AutoLevel) — per-channel auto-stretch:
 //!   independently fill `[0, 255]` for each of `R`/`G`/`B`. IM:
 //!   `-auto-level`.
@@ -22,6 +25,9 @@
 //!   IM: `-canny RxS+L%+H%`.
 //! - [`Clamp`](clamp::Clamp) — clamp every tone sample into
 //!   `[low, high]`. IM: `-clamp` (extended with explicit endpoints).
+//! - [`Clut`](clut::Clut) — 1-D Colour Look-Up Table (two-input).
+//!   `src` is the image; `dst` is the CLUT (read row-major). Per-channel
+//!   index lookup; alpha pass-through. IM: `-clut`.
 //! - [`ColorMatrix`](color_matrix::ColorMatrix) — 3×3 colour matrix
 //!   with optional offset. RGB / RGBA only. IM: `-color-matrix`,
 //!   `-recolor`.
@@ -77,10 +83,16 @@
 //!   evaluated in normalised `[0, 1]` space. IM: `-function`.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
 //! - [`Flop`](flop::Flop) — mirror horizontally (left col ↔ right col).
+//! - [`Frame`](frame::Frame) — decorative bordered frame with a 3-D
+//!   bevel (highlight on top / left, shadow on bottom / right). RGB /
+//!   RGBA only. IM: `-frame WxH+inner+outer-mat`.
 //! - [`Gamma`](gamma::Gamma) — power-law gamma curve applied per tone
 //!   channel (LUT-based; YUV only touches luma).
 //! - [`Grayscale`](grayscale::Grayscale) — desaturate RGB/RGBA with
 //!   Rec. 601 luma weights; optional Gray8 collapse.
+//! - [`HaldClut`](hald_clut::HaldClut) — Hald CLUT image-as-LUT
+//!   colour grading (two-input). `dst` is a `(L²)×(L²)` Hald cube;
+//!   trilinear sampling per pixel. RGB / RGBA only. IM: `-hald-clut`.
 //! - [`Implode`](implode::Implode) — radial pinch / explode (ImageMagick
 //!   `-implode N`); bilinear-resampled inverse mapping inside the
 //!   inscribed circle.
@@ -108,6 +120,9 @@
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Normalize`](normalize::Normalize) — auto-levels: stretch the
 //!   observed luma range to fill `[0, 255]` (ImageMagick `-normalize`).
+//! - [`Paint`](paint::Paint) — oil-paint stylise: per-pixel modal-bucket
+//!   vote in a `(2*radius+1)²` window then mean-of-mode RGB. IM:
+//!   `-paint radius`.
 //! - [`Perspective`](perspective::Perspective) — 4-corner perspective
 //!   warp (homography solved from src/dst quads, inverse-mapped with
 //!   bilinear sampling). IM: `-distort Perspective "..."`.
@@ -116,6 +131,9 @@
 //!   or unrolls a fan back into a rectangle; bilinear-sampled.
 //! - [`Posterize`](posterize::Posterize) — reduce each channel to `N`
 //!   intensity levels (ImageMagick `-posterize`).
+//! - [`Quantize`](quantize::Quantize) — uniform-grid colour quantizer:
+//!   round each channel to one of `cbrt(N)` evenly-spaced palette
+//!   entries. IM: `-colors N` (uniform-cube variant).
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
 //!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear.
 //! - [`Roll`](roll::Roll) — circular pixel shift `(dx, dy)`; rows /
@@ -125,6 +143,9 @@
 //!   background colour.
 //! - [`Sepia`](sepia::Sepia) — warm-brown colour remap (ImageMagick
 //!   `-sepia-tone`); threshold controls the mix with the original.
+//! - [`Shade`](shade::Shade) — directional Lambertian relief shading
+//!   from an `(azimuth, elevation)` light vector. Optional colour
+//!   pass-through mode (`+shade`). IM: `-shade az,el`.
 //! - [`Solarize`](solarize::Solarize) — invert samples above a
 //!   threshold (ImageMagick `-solarize N%`).
 //! - [`Spread`](spread::Spread) — random pixel-position perturbation
@@ -176,12 +197,14 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 pub mod affine;
 pub mod auto_gamma;
 pub mod auto_level;
+pub mod blue_shift;
 pub mod blur;
 pub mod brightness_contrast;
 pub mod canny;
 pub mod channel_extract;
 pub mod charcoal;
 pub mod clamp;
+pub mod clut;
 pub mod color_matrix;
 pub mod colorize;
 pub mod composite;
@@ -198,9 +221,11 @@ pub mod evaluate;
 pub mod extent;
 pub mod flip;
 pub mod flop;
+pub mod frame;
 pub mod function;
 pub mod gamma;
 pub mod grayscale;
+pub mod hald_clut;
 pub mod implode;
 pub mod laplacian;
 pub mod level;
@@ -210,14 +235,17 @@ pub mod morphology;
 pub mod motion_blur;
 pub mod negate;
 pub mod normalize;
+pub mod paint;
 pub mod perspective;
 pub mod polar;
 pub mod posterize;
+pub mod quantize;
 pub mod registry;
 pub mod resize;
 pub mod roll;
 pub mod rotate;
 pub mod sepia;
+pub mod shade;
 pub mod sharpen;
 pub mod shave;
 pub mod sigmoidal_contrast;
@@ -238,12 +266,14 @@ pub mod wave;
 pub use affine::Affine;
 pub use auto_gamma::AutoGamma;
 pub use auto_level::AutoLevel;
+pub use blue_shift::BlueShift;
 pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
 pub use canny::Canny;
 pub use channel_extract::{Channel, ChannelExtract};
 pub use charcoal::Charcoal;
 pub use clamp::Clamp;
+pub use clut::Clut;
 pub use color_matrix::ColorMatrix;
 pub use colorize::Colorize;
 pub use composite::{Composite, CompositeOp};
@@ -260,9 +290,11 @@ pub use evaluate::{Evaluate, EvaluateOp};
 pub use extent::Extent;
 pub use flip::Flip;
 pub use flop::Flop;
+pub use frame::Frame;
 pub use function::{Function, FunctionOp};
 pub use gamma::Gamma;
 pub use grayscale::Grayscale;
+pub use hald_clut::HaldClut;
 pub use implode::Implode;
 pub use laplacian::Laplacian;
 pub use level::Level;
@@ -274,14 +306,17 @@ pub use morphology::{
 pub use motion_blur::MotionBlur;
 pub use negate::Negate;
 pub use normalize::Normalize;
+pub use paint::Paint;
 pub use perspective::Perspective;
 pub use polar::{Polar, PolarDirection};
 pub use posterize::Posterize;
+pub use quantize::Quantize;
 pub use registry::{__oxideav_entry, register};
 pub use resize::{Interpolation, Resize};
 pub use roll::Roll;
 pub use rotate::Rotate;
 pub use sepia::Sepia;
+pub use shade::Shade;
 pub use sharpen::Sharpen;
 pub use shave::Shave;
 pub use sigmoidal_contrast::SigmoidalContrast;

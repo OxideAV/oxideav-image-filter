@@ -160,6 +160,14 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   offset; equivalent of an affine 3×4 matrix on R / G / B. RGB / RGBA
   only (YUV → `Unsupported`). IM: `-color-matrix matrix`,
   `-recolor matrix`.
+- **`BlueShift`** — moonlight / scotopic-vision tint: per-pixel
+  `(min/factor, min/factor, max/factor)`. IM: `+blue-shift factor`.
+- **`Quantize`** — uniform-grid colour quantizer: round each channel
+  to one of `cbrt(N)` evenly-spaced palette entries. IM: `-colors N`
+  (uniform-cube variant).
+- **`Frame`** — decorative bordered frame with a 3-D bevel
+  (highlight on top / left, shadow on bottom / right). RGB / RGBA
+  only. IM: `-frame WxH+inner+outer-mat`.
 
 ### Sharpening + artistic
 
@@ -184,6 +192,11 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   pre-blur (`radius`, default `0`) ⇒ Sobel-on-luma ⇒ invert ⇒ `Gray8`
   sketch. Larger pre-blur radii thicken the strokes by suppressing
   fine texture before the edge pass. IM: `-charcoal R`.
+- **`Paint`** — oil-paint stylise: per-pixel modal-bucket vote in a
+  `(2*radius+1)²` window then mean-of-mode RGB. IM: `-paint radius`.
+- **`Shade`** — directional Lambertian relief shading from an
+  `(azimuth, elevation)` light vector. Optional colour pass-through
+  mode (`+shade`). IM: `-shade az,el`.
 - **`Convolve`** — user-supplied square `N×N` kernel (odd `N`); optional
   bias / divisor; alpha pass-through on RGBA. IM: `-convolve "..."`.
 - **`Laplacian`** — 3×3 Laplacian (second-derivative) edge filter.
@@ -246,6 +259,12 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 
 ### Two-input compositing
 
+- **`Clut`** — 1-D Colour Look-Up Table. `src` is the image; `dst`
+  is the CLUT (read row-major). Per-channel index lookup; alpha
+  pass-through. IM: `-clut`.
+- **`HaldClut`** — Hald CLUT image-as-LUT colour grading. `dst` is a
+  `(L²)×(L²)` Hald cube; trilinear sampling per pixel. RGB / RGBA
+  only. IM: `-hald-clut`.
 - **`Composite`** + **`CompositeOp`** — Porter–Duff and arithmetic
   blends of a foreground (`src`) over a background (`dst`) frame.
   Sixteen operators registered as `composite-<op>` factories:
