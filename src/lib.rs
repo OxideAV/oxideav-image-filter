@@ -203,6 +203,25 @@
 //! - [`Stereo`](stereo::Stereo) — two-input red/cyan anaglyph stereo
 //!   composition. IM: `-stereo`.
 //!
+//! r15 additions:
+//!
+//! - [`AdaptiveThreshold`](adaptive_threshold::AdaptiveThreshold) —
+//!   local-mean-based threshold (window radius + offset); emits
+//!   `Gray8`. IM: `-threshold local`.
+//! - [`ChannelMixer`](channel_mixer::ChannelMixer) — 4×4 linear
+//!   combination of source channels into destination channels plus a
+//!   4-vector offset; super-set of `ColorMatrix`.
+//! - [`ChromaticAberration`](chromatic_aberration::ChromaticAberration)
+//!   — per-channel pixel offset on R and B (G untouched), simulating
+//!   lateral lens aberration.
+//! - [`HslRotate`](hsl_rotate::HslRotate) — rotate hue by N degrees in
+//!   HSL space (RGB ⇒ HSL ⇒ rotate ⇒ RGB round-trip).
+//! - [`Pixelate`](pixelate::Pixelate) — block-average mosaic; each
+//!   `N×N` tile collapses to its mean colour.
+//! - [`VignetteSoft`](vignette_soft::VignetteSoft) — raised-cosine
+//!   soft vignette with separate inner / outer normalised radii;
+//!   smoother seam than the existing Gaussian `Vignette`.
+//!
 //! # Pixel formats
 //!
 //! Filters operate natively on the 8-bit single-plane and planar YUV
@@ -211,6 +230,7 @@
 
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
+pub mod adaptive_threshold;
 pub mod affine;
 pub mod auto_gamma;
 pub mod auto_level;
@@ -220,7 +240,9 @@ pub mod blur;
 pub mod brightness_contrast;
 pub mod canny;
 pub mod channel_extract;
+pub mod channel_mixer;
 pub mod charcoal;
+pub mod chromatic_aberration;
 pub mod clamp;
 pub mod clut;
 pub mod color_matrix;
@@ -246,6 +268,7 @@ pub mod gamma;
 pub mod grayscale;
 pub mod hald_clut;
 pub mod hough_lines;
+pub mod hsl_rotate;
 pub mod implode;
 pub mod laplacian;
 pub mod level;
@@ -257,6 +280,7 @@ pub mod negate;
 pub mod normalize;
 pub mod paint;
 pub mod perspective;
+pub mod pixelate;
 pub mod polar;
 pub mod posterize;
 pub mod quantize;
@@ -284,8 +308,10 @@ pub(crate) mod tonal_lut;
 pub mod trim;
 pub mod unsharp;
 pub mod vignette;
+pub mod vignette_soft;
 pub mod wave;
 
+pub use adaptive_threshold::AdaptiveThreshold;
 pub use affine::Affine;
 pub use auto_gamma::AutoGamma;
 pub use auto_level::AutoLevel;
@@ -295,7 +321,9 @@ pub use blur::Blur;
 pub use brightness_contrast::BrightnessContrast;
 pub use canny::Canny;
 pub use channel_extract::{Channel, ChannelExtract};
+pub use channel_mixer::ChannelMixer;
 pub use charcoal::Charcoal;
+pub use chromatic_aberration::ChromaticAberration;
 pub use clamp::Clamp;
 pub use clut::Clut;
 pub use color_matrix::ColorMatrix;
@@ -321,6 +349,7 @@ pub use gamma::Gamma;
 pub use grayscale::Grayscale;
 pub use hald_clut::HaldClut;
 pub use hough_lines::HoughLines;
+pub use hsl_rotate::HslRotate;
 pub use implode::Implode;
 pub use laplacian::Laplacian;
 pub use level::Level;
@@ -334,6 +363,7 @@ pub use negate::Negate;
 pub use normalize::Normalize;
 pub use paint::Paint;
 pub use perspective::Perspective;
+pub use pixelate::Pixelate;
 pub use polar::{Polar, PolarDirection};
 pub use posterize::Posterize;
 pub use quantize::Quantize;
@@ -360,6 +390,7 @@ pub use tint::Tint;
 pub use trim::Trim;
 pub use unsharp::Unsharp;
 pub use vignette::Vignette;
+pub use vignette_soft::VignetteSoft;
 pub use wave::Wave;
 
 /// Stream-level video parameters threaded into [`ImageFilter::apply`].

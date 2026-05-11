@@ -176,6 +176,21 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("stegano", Box::new(make_stegano));
     ctx.filters.register("stereo", Box::new(make_stereo));
 
+    // r15 factories: HSL hue rotation / soft cosine vignette / chromatic
+    // aberration / pixelate mosaic / channel mixer / adaptive threshold.
+    ctx.filters
+        .register("hsl-rotate", Box::new(make_hsl_rotate));
+    ctx.filters
+        .register("vignette-soft", Box::new(make_vignette_soft));
+    ctx.filters
+        .register("chromatic-aberration", Box::new(make_chromatic_aberration));
+    ctx.filters.register("pixelate", Box::new(make_pixelate));
+    ctx.filters.register("mosaic", Box::new(make_pixelate));
+    ctx.filters
+        .register("channel-mixer", Box::new(make_channel_mixer));
+    ctx.filters
+        .register("adaptive-threshold", Box::new(make_adaptive_threshold));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -2974,6 +2989,234 @@ fn make_stereo(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
     )))
 }
 
+// --- r15 factories ---
+
+fn make_hsl_rotate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::HslRotate;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let degrees = get_f64("degrees")
+        .or_else(|| get_f64("angle"))
+        .or_else(|| get_f64("hue"))
+        .unwrap_or(0.0) as f32;
+    if !degrees.is_finite() {
+        return Err(Error::invalid(format!(
+            "job: filter 'hsl-rotate': degrees must be finite (got {degrees})"
+        )));
+    }
+    let f = HslRotate::new(degrees);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_vignette_soft(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::VignetteSoft;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let x = get_f64("x").unwrap_or(0.5) as f32;
+    let y = get_f64("y").unwrap_or(0.5) as f32;
+    let inner = get_f64("inner").unwrap_or(0.4) as f32;
+    let outer = get_f64("outer").unwrap_or(1.0) as f32;
+    if !x.is_finite() || !y.is_finite() || !inner.is_finite() || !outer.is_finite() {
+        return Err(Error::invalid(
+            "job: filter 'vignette-soft': x / y / inner / outer must be finite numbers",
+        ));
+    }
+    let f = VignetteSoft::new(x, y, inner, outer);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_chromatic_aberration(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::ChromaticAberration;
+    let p = params.as_object();
+    let get_i64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    // Two supported shapes:
+    //   1. mode + n  (mode = "horizontal" | "vertical")
+    //   2. explicit r_dx / r_dy / b_dx / b_dy
+    let f = if let Some(mode) = get_str("mode") {
+        let n = get_i64("n")
+            .or_else(|| get_i64("strength"))
+            .or_else(|| get_i64("offset"))
+            .unwrap_or(2) as i32;
+        match mode {
+            "horizontal" | "h" => ChromaticAberration::horizontal(n),
+            "vertical" | "v" => ChromaticAberration::vertical(n),
+            other => {
+                return Err(Error::invalid(format!(
+                    "job: filter 'chromatic-aberration': unknown mode '{other}' \
+                     (expected 'horizontal' or 'vertical')"
+                )));
+            }
+        }
+    } else {
+        let r_dx = get_i64("r_dx").unwrap_or(2) as i32;
+        let r_dy = get_i64("r_dy").unwrap_or(0) as i32;
+        let b_dx = get_i64("b_dx").unwrap_or(-2) as i32;
+        let b_dy = get_i64("b_dy").unwrap_or(0) as i32;
+        ChromaticAberration::new(r_dx, r_dy, b_dx, b_dy)
+    };
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_pixelate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Pixelate;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let block = get_u64("block")
+        .or_else(|| get_u64("size"))
+        .or_else(|| get_u64("tile"))
+        .unwrap_or(8)
+        .min(u32::MAX as u64) as u32;
+    let f = Pixelate::new(block);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_channel_mixer(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::ChannelMixer;
+    let p = params.as_object();
+    // Accept several shapes:
+    //   1. preset = "identity" | "sepia"
+    //   2. matrix = [[a,b,c,d], [e,f,g,h], [i,j,k,l], [m,n,o,p]]
+    //   3. matrix3 = [[a,b,c], [d,e,f], [g,h,i]]      (3×3 → 4×4 lift)
+    // Optional offset = [ox, oy, oz, ow].
+    let preset = p.and_then(|m| m.get("preset")).and_then(|v| v.as_str());
+    let mut f = if let Some(name) = preset {
+        match name {
+            "identity" => ChannelMixer::identity(),
+            "sepia" | "sepia_classic" => ChannelMixer::sepia_classic(),
+            other => {
+                return Err(Error::invalid(format!(
+                    "job: filter 'channel-mixer': unknown preset '{other}' (expected 'identity' or 'sepia')"
+                )));
+            }
+        }
+    } else if let Some(m4) = p.and_then(|m| m.get("matrix")).and_then(|v| v.as_array()) {
+        if m4.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'channel-mixer': matrix must be a 4-element array of 4-element arrays, got outer len {}",
+                m4.len()
+            )));
+        }
+        let mut matrix = [[0.0f32; 4]; 4];
+        for (i, row) in m4.iter().enumerate() {
+            let row = row.as_array().ok_or_else(|| {
+                Error::invalid("job: filter 'channel-mixer': matrix rows must be arrays")
+            })?;
+            if row.len() != 4 {
+                return Err(Error::invalid(format!(
+                    "job: filter 'channel-mixer': matrix row {i} must have 4 entries, got {}",
+                    row.len()
+                )));
+            }
+            for (j, v) in row.iter().enumerate() {
+                matrix[i][j] = v.as_f64().ok_or_else(|| {
+                    Error::invalid("job: filter 'channel-mixer': matrix entries must be numbers")
+                })? as f32;
+            }
+        }
+        ChannelMixer::new(matrix, [0.0; 4])
+    } else if let Some(m3) = p.and_then(|m| m.get("matrix3")).and_then(|v| v.as_array()) {
+        if m3.len() != 3 {
+            return Err(Error::invalid(format!(
+                "job: filter 'channel-mixer': matrix3 must be a 3-element array of 3-element arrays, got outer len {}",
+                m3.len()
+            )));
+        }
+        let mut m = [[0.0f32; 3]; 3];
+        for (i, row) in m3.iter().enumerate() {
+            let row = row.as_array().ok_or_else(|| {
+                Error::invalid("job: filter 'channel-mixer': matrix3 rows must be arrays")
+            })?;
+            if row.len() != 3 {
+                return Err(Error::invalid(format!(
+                    "job: filter 'channel-mixer': matrix3 row {i} must have 3 entries, got {}",
+                    row.len()
+                )));
+            }
+            for (j, v) in row.iter().enumerate() {
+                m[i][j] = v.as_f64().ok_or_else(|| {
+                    Error::invalid("job: filter 'channel-mixer': matrix3 entries must be numbers")
+                })? as f32;
+            }
+        }
+        ChannelMixer::from_color_matrix(m)
+    } else {
+        ChannelMixer::identity()
+    };
+    if let Some(arr) = p.and_then(|m| m.get("offset")).and_then(|v| v.as_array()) {
+        if arr.len() != 4 {
+            return Err(Error::invalid(format!(
+                "job: filter 'channel-mixer': offset must be a 4-element array, got {}",
+                arr.len()
+            )));
+        }
+        let mut o = [0.0f32; 4];
+        for (i, v) in arr.iter().enumerate() {
+            o[i] = v.as_f64().ok_or_else(|| {
+                Error::invalid("job: filter 'channel-mixer': offset entries must be numbers")
+            })? as f32;
+        }
+        f.offset = o;
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_adaptive_threshold(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::AdaptiveThreshold;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_i64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
+    let radius = get_u64("radius").unwrap_or(3).min(u32::MAX as u64) as u32;
+    let offset = get_i64("offset").unwrap_or(0) as i32;
+    let f = AdaptiveThreshold::new(radius, offset);
+    let in_port = video_in_port(inputs);
+    // Always emits Gray8 regardless of input.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3095,6 +3338,16 @@ mod tests {
             "barrel-inverse",
             "stegano",
             "stereo",
+            // r15 additions (hsl-rotate / vignette-soft /
+            // chromatic-aberration / pixelate / mosaic / channel-mixer
+            // / adaptive-threshold).
+            "hsl-rotate",
+            "vignette-soft",
+            "chromatic-aberration",
+            "pixelate",
+            "mosaic",
+            "channel-mixer",
+            "adaptive-threshold",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -5400,5 +5653,217 @@ mod tests {
             }
         }
         assert!(max_err <= 2, "identity CLUT max err = {max_err}");
+    }
+
+    // --- r15 smoke tests ---
+
+    #[test]
+    fn hsl_rotate_factory_zero_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("hsl-rotate", &json!({"degrees": 0.0}), &inputs)
+            .expect("hsl-rotate factory");
+        let input = rgba_4x4(|x, y| [(x * 30) as u8, (y * 30) as u8, 100, 255]);
+        let out = run_one(f, input.clone());
+        for (a, b) in out.planes[0].data.iter().zip(input.planes[0].data.iter()) {
+            assert!((*a as i16 - *b as i16).abs() <= 1);
+        }
+    }
+
+    #[test]
+    fn hsl_rotate_factory_defaults_build() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        c.filters
+            .make("hsl-rotate", &json!({}), &inputs)
+            .expect("hsl-rotate default builds");
+    }
+
+    #[test]
+    fn vignette_soft_factory_darkens_corners() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("vignette-soft", &json!({}), &inputs)
+            .expect("vignette-soft factory");
+        let mut data = Vec::with_capacity(8 * 8 * 3);
+        for _ in 0..(8 * 8) {
+            data.extend_from_slice(&[200u8, 200, 200]);
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 24, data }],
+        };
+        let out = run_one(f, frame);
+        let centre = out.planes[0].data[(4 * 8 + 4) * 3];
+        let corner = out.planes[0].data[0];
+        assert!(centre > corner);
+    }
+
+    #[test]
+    fn chromatic_aberration_factory_shifts_red_right() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(9, 1)];
+        let f = c
+            .filters
+            .make(
+                "chromatic-aberration",
+                &json!({"mode": "horizontal", "n": 2}),
+                &inputs,
+            )
+            .expect("chromatic-aberration factory");
+        let mut data = Vec::with_capacity(9 * 3);
+        for x in 0..9 {
+            if x == 4 {
+                data.extend_from_slice(&[255u8, 255, 255]);
+            } else {
+                data.extend_from_slice(&[0u8, 0, 0]);
+            }
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 27, data }],
+        };
+        let out = run_one(f, frame);
+        // R should appear at col 6, B at col 2.
+        assert_eq!(out.planes[0].data[6 * 3], 255);
+        assert_eq!(out.planes[0].data[2 * 3 + 2], 255);
+    }
+
+    #[test]
+    fn chromatic_aberration_factory_rejects_unknown_mode() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        let bad = c.filters.make(
+            "chromatic-aberration",
+            &json!({"mode": "diagonal", "n": 1}),
+            &inputs,
+        );
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn pixelate_factory_block_1_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("pixelate", &json!({"block": 1}), &inputs)
+            .expect("pixelate factory");
+        let mut data = Vec::with_capacity(4 * 4 * 3);
+        for y in 0..4 {
+            for x in 0..4 {
+                data.extend_from_slice(&[(x * 30) as u8, (y * 30) as u8, 100]);
+            }
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 12,
+                data: data.clone(),
+            }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data, data);
+    }
+
+    #[test]
+    fn mosaic_alias_resolves() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        c.filters
+            .make("mosaic", &json!({"block": 2}), &inputs)
+            .expect("mosaic alias should resolve");
+    }
+
+    #[test]
+    fn channel_mixer_factory_identity_preset() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("channel-mixer", &json!({"preset": "identity"}), &inputs)
+            .expect("channel-mixer factory");
+        let input = rgba_4x4(|x, y| [(x * 30) as u8, (y * 30) as u8, 100, 222]);
+        let out = run_one(f, input.clone());
+        assert_eq!(out.planes[0].data, input.planes[0].data);
+    }
+
+    #[test]
+    fn channel_mixer_factory_matrix3_lift() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(2, 2)];
+        let f = c
+            .filters
+            .make(
+                "channel-mixer",
+                &json!({"matrix3": [
+                    [0.0, 0.0, 1.0],
+                    [0.0, 1.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                ]}),
+                &inputs,
+            )
+            .expect("channel-mixer matrix3");
+        let mut data = Vec::with_capacity(2 * 2 * 3);
+        for _ in 0..4 {
+            data.extend_from_slice(&[200u8, 100, 50]);
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 6, data }],
+        };
+        let out = run_one(f, frame);
+        for chunk in out.planes[0].data.chunks(3) {
+            assert_eq!(chunk, &[50, 100, 200]);
+        }
+    }
+
+    #[test]
+    fn channel_mixer_factory_rejects_bad_matrix_arity() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        let bad = c.filters.make(
+            "channel-mixer",
+            &json!({"matrix": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}),
+            &inputs,
+        );
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn adaptive_threshold_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("adaptive-threshold", &json!({"radius": 1}), &inputs)
+            .expect("adaptive-threshold factory");
+        match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => assert_eq!(*format, PixelFormat::Gray8),
+            _ => panic!("adaptive-threshold output port is not video"),
+        }
+        let out = run_one(f, gray_4x4(|_, _| 128));
+        // Constant input + offset 0 ⇒ every sample >= mean ⇒ all 255.
+        assert!(out.planes[0].data.iter().all(|&v| v == 255));
+    }
+
+    #[test]
+    fn adaptive_threshold_factory_positive_offset_pushes_to_black() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "adaptive-threshold",
+                &json!({"radius": 1, "offset": 5}),
+                &inputs,
+            )
+            .expect("adaptive-threshold factory");
+        let out = run_one(f, gray_4x4(|_, _| 128));
+        assert!(out.planes[0].data.iter().all(|&v| v == 0));
     }
 }

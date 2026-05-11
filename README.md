@@ -107,6 +107,10 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Posterize`** — reduce each channel to `N` intensity levels. IM:
   `-posterize N`.
 - **`Solarize`** — invert pixels above a threshold. IM: `-solarize N%`.
+- **`AdaptiveThreshold`** — local-mean-based binarisation with a
+  configurable `(2*radius+1)²` window and signed offset; box-sum
+  implementation is `O(W*H)` regardless of radius. Always emits
+  `Gray8` (RGB collapsed via Rec. 601 luma). IM: `-threshold local`.
 - **`Equalize`** — per-channel histogram equalisation via CDF
   mapping. Luma-only on YUV. IM: `-equalize`.
 - **`AutoGamma`** — pick a per-channel gamma so the geometric mean
@@ -168,6 +172,22 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Frame`** — decorative bordered frame with a 3-D bevel
   (highlight on top / left, shadow on bottom / right). RGB / RGBA
   only. IM: `-frame WxH+inner+outer-mat`.
+- **`HslRotate`** — rotate the hue channel by N degrees in HSL space
+  (`RGB ⇒ HSL ⇒ rotate ⇒ RGB` round-trip). Achromatic greys
+  (R = G = B) are passed through unchanged. RGB / RGBA only.
+- **`ChannelMixer`** — 4×4 linear combination of source channels into
+  destination channels (plus a 4-vector offset). Super-set of
+  `ColorMatrix` because it also touches the alpha row. Convenience
+  constructors: `identity()`, `sepia_classic()`,
+  `from_color_matrix(m)`. RGB / RGBA only.
+- **`ChromaticAberration`** — per-channel pixel offset on R and B
+  with G undisturbed; simulates lateral lens chromatic aberration.
+  Convenience constructors `horizontal(n)` / `vertical(n)` plus
+  explicit `(r_dx, r_dy, b_dx, b_dy)` overrides. RGB / RGBA only.
+- **`VignetteSoft`** — raised-cosine soft vignette with separate
+  inner / outer normalised radii. Smoother seam than the Gaussian
+  [`Vignette`] because both endpoints have zero derivative. RGB /
+  RGBA only.
 
 ### Sharpening + artistic
 
@@ -194,6 +214,10 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   fine texture before the edge pass. IM: `-charcoal R`.
 - **`Paint`** — oil-paint stylise: per-pixel modal-bucket vote in a
   `(2*radius+1)²` window then mean-of-mode RGB. IM: `-paint radius`.
+- **`Pixelate`** — block-average spatial mosaic; each `N×N` tile
+  collapses to its mean colour. Distinct from `Quantize` which
+  coarsens the colour axis only. Gray8 / RGB / RGBA + planar YUV
+  (luma plane only). Factory aliases: `pixelate`, `mosaic`.
 - **`Shade`** — directional Lambertian relief shading from an
   `(azimuth, elevation)` light vector. Optional colour pass-through
   mode (`+shade`). IM: `-shade az,el`.

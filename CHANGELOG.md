@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r15: land six new ImageMagick-compatible filters covering colour
+  transforms, photographic stylise, and adaptive thresholding. New
+  filters: `HslRotate` (rotate the hue channel by N degrees via an
+  RGB ⇒ HSL ⇒ rotate ⇒ RGB round-trip; achromatic greys are passed
+  through; RGB / RGBA only — IM has no direct one-liner, this is a
+  textbook recipe), `VignetteSoft` (raised-cosine soft vignette with
+  separate inner / outer normalised radii — smoother seam than the
+  Gaussian `Vignette` because both endpoints have zero derivative;
+  RGB / RGBA only), `ChromaticAberration` (per-channel pixel offset
+  on R and B with G untouched; convenience constructors
+  `horizontal(n)` / `vertical(n)` plus explicit `(r_dx, r_dy, b_dx,
+  b_dy)` overrides; RGB / RGBA only), `Pixelate` (block-average
+  spatial mosaic; each `N×N` tile collapses to its mean colour;
+  Gray8 / RGB / RGBA + planar YUV with luma-only pixelation),
+  `ChannelMixer` (4×4 linear combination of source channels into
+  destination channels plus a 4-vector offset; super-set of
+  `ColorMatrix` because it also touches the alpha row; convenience
+  constructors `identity()` / `sepia_classic()` / `from_color_matrix(m)`;
+  RGB / RGBA only), and `AdaptiveThreshold` (local-mean-based
+  threshold with a configurable `(2*radius+1)²` window and signed
+  offset; separable box-sum implementation gives `O(W*H)` cost
+  regardless of radius; always emits Gray8 — IM `-threshold local`).
+  Seven new factory names wired into `register()`: `hsl-rotate`,
+  `vignette-soft`, `chromatic-aberration`, `pixelate`, `mosaic`
+  (alias for `pixelate`), `channel-mixer`, `adaptive-threshold`.
+  Filter count: 70 → 76 named types; factory count: 82 → 89 names.
+
 - r14: land six new ImageMagick-compatible filters covering edge-aware
   stylise, geometric correction, and stereo / steganography composition.
   New filters: `Sketch` (pencil-sketch stylise: directional motion blur
