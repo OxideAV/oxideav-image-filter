@@ -222,6 +222,25 @@
 //!   soft vignette with separate inner / outer normalised radii;
 //!   smoother seam than the existing Gaussian `Vignette`.
 //!
+//! r17 additions:
+//!
+//! - [`BorderedFrame`](bordered_frame::BorderedFrame) — flat solid-colour
+//!   border with independent per-side widths. Distinct from
+//!   [`Frame`](frame::Frame), which paints a 3-D bevel.
+//! - [`BwMix`](bw_mix::BwMix) — black-and-white conversion with
+//!   per-channel weights (red / green / blue filter presets); optional
+//!   `keep_format` to emit greyscale into the source's RGB / RGBA shape.
+//! - [`Clarity`](clarity::Clarity) — mid-frequency local-contrast boost
+//!   via a large-radius / moderate-amount unsharp mask.
+//! - [`Exposure`](exposure::Exposure) — EV-stop adjustment in
+//!   linear-light space (sRGB → linear → ×2^EV → sRGB).
+//! - [`ShadowHighlight`](shadow_highlight::ShadowHighlight) — independent
+//!   shadow lift + highlight recovery gated by a soft tonal mask.
+//! - [`Temperature`](temperature::Temperature) — warmth slider that
+//!   biases R / B channels (per-channel LUT, alpha pass-through).
+//! - [`Vibrance`](vibrance::Vibrance) — Lr-style saturation boost that
+//!   spares already-saturated pixels via `1 - s` weighting.
+//!
 //! r16 additions:
 //!
 //! - [`BilateralBlur`](bilateral_blur::BilateralBlur) — edge-preserving
@@ -256,7 +275,9 @@ pub mod barrel_inverse;
 pub mod bilateral_blur;
 pub mod blue_shift;
 pub mod blur;
+pub mod bordered_frame;
 pub mod brightness_contrast;
+pub mod bw_mix;
 pub mod canny;
 pub mod canvas;
 pub mod channel_extract;
@@ -264,6 +285,7 @@ pub mod channel_mixer;
 pub mod charcoal;
 pub mod chromatic_aberration;
 pub mod clamp;
+pub mod clarity;
 pub mod clut;
 pub mod color_balance;
 pub mod color_matrix;
@@ -280,6 +302,7 @@ pub mod edge;
 pub mod emboss;
 pub mod equalize;
 pub mod evaluate;
+pub mod exposure;
 pub mod extent;
 pub mod flip;
 pub mod flop;
@@ -315,6 +338,7 @@ pub mod roll;
 pub mod rotate;
 pub mod sepia;
 pub mod shade;
+pub mod shadow_highlight;
 pub mod sharpen;
 pub mod shave;
 pub mod sigmoidal_contrast;
@@ -326,12 +350,14 @@ pub mod statistic;
 pub mod stegano;
 pub mod stereo;
 pub mod swirl;
+pub mod temperature;
 pub mod threshold;
 pub mod tilt_shift;
 pub mod tint;
 pub(crate) mod tonal_lut;
 pub mod trim;
 pub mod unsharp;
+pub mod vibrance;
 pub mod vignette;
 pub mod vignette_soft;
 pub mod wave;
@@ -344,7 +370,9 @@ pub use barrel_inverse::BarrelInverse;
 pub use bilateral_blur::BilateralBlur;
 pub use blue_shift::BlueShift;
 pub use blur::Blur;
+pub use bordered_frame::BorderedFrame;
 pub use brightness_contrast::BrightnessContrast;
+pub use bw_mix::BwMix;
 pub use canny::Canny;
 pub use canvas::Canvas;
 pub use channel_extract::{Channel, ChannelExtract};
@@ -352,6 +380,7 @@ pub use channel_mixer::ChannelMixer;
 pub use charcoal::Charcoal;
 pub use chromatic_aberration::ChromaticAberration;
 pub use clamp::Clamp;
+pub use clarity::Clarity;
 pub use clut::Clut;
 pub use color_balance::ColorBalance;
 pub use color_matrix::ColorMatrix;
@@ -368,6 +397,7 @@ pub use edge::Edge;
 pub use emboss::Emboss;
 pub use equalize::Equalize;
 pub use evaluate::{Evaluate, EvaluateOp};
+pub use exposure::Exposure;
 pub use extent::Extent;
 pub use flip::Flip;
 pub use flop::Flop;
@@ -405,6 +435,7 @@ pub use roll::Roll;
 pub use rotate::Rotate;
 pub use sepia::Sepia;
 pub use shade::Shade;
+pub use shadow_highlight::ShadowHighlight;
 pub use sharpen::Sharpen;
 pub use shave::Shave;
 pub use sigmoidal_contrast::SigmoidalContrast;
@@ -416,11 +447,13 @@ pub use statistic::{Statistic, StatisticOp};
 pub use stegano::Stegano;
 pub use stereo::Stereo;
 pub use swirl::Swirl;
+pub use temperature::Temperature;
 pub use threshold::Threshold;
 pub use tilt_shift::TiltShift;
 pub use tint::Tint;
 pub use trim::Trim;
 pub use unsharp::Unsharp;
+pub use vibrance::Vibrance;
 pub use vignette::Vignette;
 pub use vignette_soft::VignetteSoft;
 pub use wave::Wave;

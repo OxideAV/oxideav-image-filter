@@ -124,6 +124,14 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `-auto-gamma`.
 - **`SigmoidalContrast`** — sigmoid-curve contrast around a midpoint.
   IM: `-sigmoidal-contrast CxM%`.
+- **`Exposure`** — EV-stop adjustment in linear-light space (sRGB →
+  linear → ×2^EV → sRGB). `+1.0` EV doubles the captured light,
+  `-1.0` EV halves it. RGB / RGBA / Gray8. IM analogue: `-colorspace
+  RGB -evaluate Multiply k -colorspace sRGB` folded into one LUT pass.
+- **`ShadowHighlight`** — independent shadow lift + highlight recovery
+  gated by a soft tonal mask (peaks at the extremes, zero at midtone).
+  Mid-grey passes through unchanged. RGB / RGBA / Gray8 / YUV (luma
+  only). Lr-style "Shadows" / "Highlights" sliders.
 - **`Evaluate`** + **`EvaluateOp`** — per-pixel arithmetic LUT with a
   single scalar operand. Operators: `Add`, `Subtract`, `Multiply`,
   `Divide`, `Pow`, `Max`, `Min`, `Set`, `And`, `Or`, `Xor`,
@@ -217,6 +225,20 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `(centre_x, centre_y)` + `start_angle` (degrees). `t = 0` lies
   along the angle ray and increases counter-clockwise round to 1.
   Gray8 / RGB / RGBA. Factory alias: `conic-gradient`.
+- **`Temperature`** — warmth slider in `[-1, 1]` biasing the R / B
+  channel multipliers (up to ±50 % at the extremes); G and alpha pass
+  through. Per-channel 256-entry LUT, `O(W·H)` regardless of `warmth`.
+  RGB / RGBA.
+- **`Vibrance`** — Lr-style saturation boost that spares already-
+  saturated pixels via `1 - s` per-pixel weighting (vs `Modulate`
+  which scales `S` uniformly). RGB / RGBA only.
+- **`BwMix`** — black-and-white conversion with per-channel weights.
+  Convenience constructors `red_filter()` / `green_filter()` /
+  `blue_filter()`. Output defaults to `Gray8`; opt into `keep_format`
+  to emit grey-equalled RGB / RGBA. RGB / RGBA only.
+- **`BorderedFrame`** — flat solid-coloured border with independent
+  per-side widths. Distinct from `Frame`, which paints a 3-D bevel.
+  Gray8 / RGB / RGBA. IM analogue: `-bordercolor C -border WxH`.
 
 ### Sharpening + artistic
 
@@ -231,6 +253,10 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   re-addition). IM: `-sharpen RxS`.
 - **`Unsharp`** — explicit unsharp-mask with `threshold` gate: only
   high-contrast regions are sharpened. IM: `-unsharp RxS+A+T`.
+- **`Clarity`** — large-radius unsharp-mask preset for mid-frequency
+  tonal pop ("Lightroom Clarity" slider). Defaults: `radius = 30`,
+  `sigma = 15.0`, `amount = 0.5`, `threshold = 10`. IM analogue:
+  `-unsharp 30x15+0.5+10`.
 - **`Emboss`** — 3×3 relief convolution with `+128` bias. IM: `-emboss R`.
 - **`MotionBlur`** — 1-D Gaussian blur along `angle_degrees`. IM:
   `-motion-blur RxS+A`.

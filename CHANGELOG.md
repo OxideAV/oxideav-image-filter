@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r17: land seven new filters covering linear-light exposure
+  control, colourist tonal sliders, B&W conversion presets, and a
+  flat solid-colour border. New filters: `Exposure` (EV-stop
+  adjustment in linear-light space — sRGB → linear → multiply by
+  `2^EV` → sRGB, folded into a single 256-entry LUT; `+1.0 EV`
+  doubles captured light, `-1.0 EV` halves it; RGB / RGBA / Gray8),
+  `Temperature` (warmth slider in `[-1, 1]` driving per-channel R / B
+  multipliers up to ±50 % — G and alpha pass through; per-channel
+  LUT so the cost is `O(W·H)` regardless of `warmth`; RGB / RGBA),
+  `Vibrance` (Lr-style saturation boost that spares already-saturated
+  pixels via `1 - s` per-pixel weighting — visually distinct from
+  `Modulate`'s flat S-multiplier; RGB / RGBA only), `BwMix`
+  (black-and-white conversion with per-channel weights; convenience
+  constructors `red_filter()` / `green_filter()` / `blue_filter()`
+  for the classic photo-filter recipes; default Rec. 601 matches
+  `Grayscale`; opt-in `keep_format` flag emits grey-equalled RGB /
+  RGBA instead of single-plane `Gray8`), `Clarity` (mid-frequency
+  local-contrast boost via large-radius / moderate-amount unsharp
+  mask — defaults `radius = 30`, `sigma = 15.0`, `amount = 0.5`,
+  `threshold = 10`; delegates to `Unsharp` so YUV-luma-only / RGB-
+  all-planes semantics match), `ShadowHighlight` (independent
+  shadow lift + highlight recovery gated by a soft tonal mask that
+  peaks at the extremes and is zero at midtone — midgrey passes
+  through unchanged; RGB / RGBA / Gray8 / YUV-luma-only), and
+  `BorderedFrame` (flat solid-coloured border with independent
+  per-side widths; distinct from `Frame`'s 3-D bevel; Gray8 / RGB /
+  RGBA — IM analogue `-bordercolor C -border WxH`). Nine new factory
+  names wired into `register()`: `exposure`, `temperature`,
+  `vibrance`, `bw-mix`, `black-and-white` (alias for `bw-mix`),
+  `clarity`, `shadow-highlight`, `bordered-frame`, `border` (alias).
+  Filter count: 83 → 90 named types; factory count: 99 → 108 names.
+
 - r16: land seven new filters expanding generators, edge-preserving
   smoothing, and colourist tonal control. New filters: `BilateralBlur`
   (joint spatial + range Gaussian — edges are weighted by both pixel

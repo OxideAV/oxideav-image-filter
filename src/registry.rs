@@ -212,6 +212,23 @@ pub fn register(ctx: &mut RuntimeContext) {
         .register("color-balance", Box::new(make_color_balance));
     ctx.filters.register("hsl-shift", Box::new(make_hsl_shift));
 
+    // r17 factories: exposure / temperature / vibrance / bw-mix /
+    // clarity / shadow-highlight / bordered-frame.
+    ctx.filters.register("exposure", Box::new(make_exposure));
+    ctx.filters
+        .register("temperature", Box::new(make_temperature));
+    ctx.filters.register("vibrance", Box::new(make_vibrance));
+    ctx.filters.register("bw-mix", Box::new(make_bw_mix));
+    ctx.filters
+        .register("black-and-white", Box::new(make_bw_mix));
+    ctx.filters.register("clarity", Box::new(make_clarity));
+    ctx.filters
+        .register("shadow-highlight", Box::new(make_shadow_highlight));
+    ctx.filters
+        .register("bordered-frame", Box::new(make_bordered_frame));
+    ctx.filters
+        .register("border", Box::new(make_bordered_frame));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -3538,6 +3555,213 @@ fn make_hsl_shift(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamF
     )))
 }
 
+fn make_exposure(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Exposure;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let ev = get_f64("ev")
+        .or_else(|| get_f64("stops"))
+        .or_else(|| get_f64("value"))
+        .unwrap_or(0.0) as f32;
+    let f = Exposure::new(ev);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_temperature(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Temperature;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let warmth = get_f64("warmth")
+        .or_else(|| get_f64("temperature"))
+        .or_else(|| get_f64("value"))
+        .unwrap_or(0.0) as f32;
+    let f = Temperature::new(warmth);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_vibrance(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Vibrance;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let amount = get_f64("amount")
+        .or_else(|| get_f64("value"))
+        .unwrap_or(0.0) as f32;
+    let f = Vibrance::new(amount);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_bw_mix(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::BwMix;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+
+    let mut f = if let Some(preset) = get_str("preset") {
+        match preset.to_ascii_lowercase().as_str() {
+            "red" => BwMix::red_filter(),
+            "green" => BwMix::green_filter(),
+            "blue" => BwMix::blue_filter(),
+            "rec601" | "default" => BwMix::default(),
+            other => {
+                return Err(Error::invalid(format!(
+                    "job: filter 'bw-mix': unknown preset '{other}' \
+                     (expected red / green / blue / rec601)"
+                )));
+            }
+        }
+    } else if let Some(weights) = p.and_then(|m| m.get("weights")) {
+        let w = parse_f3(weights, "bw-mix", "weights")?;
+        BwMix::new(w[0], w[1], w[2])
+    } else {
+        let r = get_f64("r").unwrap_or(0.299) as f32;
+        let g = get_f64("g").unwrap_or(0.587) as f32;
+        let b = get_f64("b").unwrap_or(0.114) as f32;
+        BwMix::new(r, g, b)
+    };
+    if let Some(k) = get_bool("keep_format") {
+        f = f.with_keep_format(k);
+    }
+    let in_port = video_in_port(inputs);
+    // BwMix without keep_format collapses to Gray8.
+    let out_port = if f.keep_format {
+        passthrough_out_port(&in_port)
+    } else {
+        match &in_port.params {
+            PortParams::Video {
+                width,
+                height,
+                time_base,
+                ..
+            } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+            _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+        }
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_clarity(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Clarity;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let amount = get_f64("amount")
+        .or_else(|| get_f64("value"))
+        .unwrap_or(0.5) as f32;
+    let mut f = Clarity::new(amount);
+    if let Some(r) = get_u64("radius") {
+        f = f.with_radius(r as u32);
+    }
+    if let Some(s) = get_f64("sigma") {
+        f = f.with_sigma(s as f32);
+    }
+    if let Some(t) = get_u64("threshold") {
+        f = f.with_threshold(t.min(255) as u8);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_shadow_highlight(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::ShadowHighlight;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let shadow = get_f64("shadow")
+        .or_else(|| get_f64("shadows"))
+        .or_else(|| get_f64("shadow_amount"))
+        .unwrap_or(0.0) as f32;
+    let highlight = get_f64("highlight")
+        .or_else(|| get_f64("highlights"))
+        .or_else(|| get_f64("highlight_amount"))
+        .unwrap_or(0.0) as f32;
+    let f = ShadowHighlight::new(shadow, highlight);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_bordered_frame(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::BorderedFrame;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+
+    // Default: uniform 4px black border.
+    let uniform = get_u64("width").map(|v| v.min(u32::MAX as u64) as u32);
+    let left = get_u64("left").map(|v| v.min(u32::MAX as u64) as u32);
+    let top = get_u64("top").map(|v| v.min(u32::MAX as u64) as u32);
+    let right = get_u64("right").map(|v| v.min(u32::MAX as u64) as u32);
+    let bottom = get_u64("bottom").map(|v| v.min(u32::MAX as u64) as u32);
+
+    let colour = if let Some(v) = p.and_then(|m| m.get("color").or_else(|| m.get("colour"))) {
+        parse_color4(v, "bordered-frame")?
+    } else {
+        [0, 0, 0, 255]
+    };
+
+    let f = if let Some(w) = uniform {
+        BorderedFrame::uniform(w, colour)
+    } else {
+        BorderedFrame::sides(
+            left.unwrap_or(0),
+            top.unwrap_or(0),
+            right.unwrap_or(0),
+            bottom.unwrap_or(0),
+            colour,
+        )
+    };
+
+    let in_port = video_in_port(inputs);
+    let (in_w, in_h, fmt, tb) = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            format,
+            time_base,
+            ..
+        } => (*width, *height, *format, *time_base),
+        _ => (0, 0, PixelFormat::Rgba, TimeBase::new(1, 30)),
+    };
+    let out_w = in_w + f.left + f.right;
+    let out_h = in_h + f.top + f.bottom;
+    let out_port = PortSpec::video("video", out_w, out_h, fmt, tb);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3682,6 +3906,18 @@ mod tests {
             "gravity",
             "color-balance",
             "hsl-shift",
+            // r17 additions (exposure / temperature / vibrance /
+            // bw-mix + alias / clarity / shadow-highlight /
+            // bordered-frame + alias).
+            "exposure",
+            "temperature",
+            "vibrance",
+            "bw-mix",
+            "black-and-white",
+            "clarity",
+            "shadow-highlight",
+            "bordered-frame",
+            "border",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
