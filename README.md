@@ -90,6 +90,10 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   from a reference background colour by more than `fuzz` per channel
   (Chebyshev / L-infinity tolerance). Background defaults to the
   source's `(0, 0)` pixel. IM: `-fuzz N% -trim`.
+- **`AutoTrim`** — like `Trim`, but picks the dominant background
+  colour via a 4-bit-per-channel histogram vote across the whole
+  frame instead of trusting the `(0, 0)` corner sample. Noisy
+  corners no longer poison the inferred background.
 - **`GravityTranslate`** + **`Gravity`** — 9-point compass anchor
   placement on a fixed `(width, height)` canvas (`NorthWest` /
   `North` / `NorthEast` / `West` / `Centre` / `East` / `SouthWest` /
@@ -239,6 +243,18 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`BorderedFrame`** — flat solid-coloured border with independent
   per-side widths. Distinct from `Frame`, which paints a 3-D bevel.
   Gray8 / RGB / RGBA. IM analogue: `-bordercolor C -border WxH`.
+- **`DropShadow`** — soft offset shadow composited *behind* opaque
+  RGBA subject pixels. Configurable `(offset_x, offset_y)`, blur
+  `radius`, `opacity`, and `colour`. Box-blur approximates Gaussian
+  for cheap soft halos. RGBA only.
+- **`InnerShadow`** — soft offset shadow rendered *inside* the subject
+  coverage instead of behind it. Builds the shadow mask from the
+  inverted alpha channel + offset + box-blur, then darkens interior
+  pixels toward `colour` weighted by `opacity`. RGBA only.
+- **`Bloom`** — Gaussian-blurred highlights additively composited on
+  top of the source for an emissive / HDR-look glow. Configurable
+  `threshold` (luma cut-off) + `radius` + `intensity`. Gray8 / RGB /
+  RGBA. Factory alias: `glow`.
 
 ### Sharpening + artistic
 
@@ -292,6 +308,15 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   Sobel gradient + direction → non-maximum suppression →
   hysteresis thresholding. Output is binary `Gray8` (0 / 255).
   IM: `-canny RxS+L%+H%`.
+- **`EdgeDetect`** + **`EdgeKernel`** — runtime-selectable gradient
+  kernel (`Sobel` / `Prewitt` / `Scharr` / `Roberts`). Complements
+  the fixed-Sobel `Edge`; same `Gray8` output shape and pixel-format
+  coverage. Factory aliases: `edge-detect`, `edge-multi`.
+- **`HoughCircles`** — circle detection via a 3-D Hough accumulator
+  indexed by `(radius, cx, cy)`. Sobel-magnitude voters cast votes
+  along Bresenham circles of each candidate radius into the
+  accumulator; top-K peaks above `vote_threshold` are rendered onto
+  a `Gray8` canvas. Complement (radius axis) to `HoughLines`.
 - **`Polar`** / **`PolarDirection::DePolar`** — Cartesian ⇄ polar
   coordinate distortion (`-distort Polar` / `-distort DePolar`). Bends
   an image into a fan or unrolls a fan back to a rectangle. r7
@@ -351,6 +376,9 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`HaldClut`** — Hald CLUT image-as-LUT colour grading. `dst` is a
   `(L²)×(L²)` Hald cube; trilinear sampling per pixel. RGB / RGBA
   only. IM: `-hald-clut`.
+- **`Difference`** — two-input pixel-wise absolute difference
+  (`out = |src - dst|`). Cheap change-detection / motion mask, no
+  Porter–Duff coverage algebra. Gray8 / RGB / RGBA / planar YUV.
 - **`Composite`** + **`CompositeOp`** — Porter–Duff and arithmetic
   blends of a foreground (`src`) over a background (`dst`) frame.
   Sixteen operators registered as `composite-<op>` factories:

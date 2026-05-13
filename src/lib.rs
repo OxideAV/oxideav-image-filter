@@ -222,6 +222,27 @@
 //!   soft vignette with separate inner / outer normalised radii;
 //!   smoother seam than the existing Gaussian `Vignette`.
 //!
+//! r18 additions:
+//!
+//! - [`AutoTrim`](auto_trim::AutoTrim) — like [`Trim`] but picks the
+//!   dominant colour via a 4-bit-per-channel histogram vote first, so
+//!   noisy corners no longer poison the inferred background.
+//! - [`Bloom`](bloom::Bloom) — Gaussian (box-approx) blur of bright
+//!   regions, additively composited onto the source for a soft glow.
+//!   Gray8 / RGB / RGBA.
+//! - [`Difference`](difference::Difference) — two-input pixel-wise
+//!   `|src - dst|`. Useful for change-detection / motion masks.
+//! - [`DropShadow`](drop_shadow::DropShadow) — soft offset shadow
+//!   composited *behind* opaque RGBA subject pixels.
+//! - [`EdgeDetect`](edge_multi::EdgeDetect) +
+//!   [`EdgeKernel`](edge_multi::EdgeKernel) — runtime-selectable
+//!   gradient kernel (`Sobel` / `Prewitt` / `Scharr` / `Roberts`).
+//! - [`HoughCircles`](hough_circles::HoughCircles) — circle detection
+//!   via a `(r, cx, cy)` Hough accumulator; outputs the rendered
+//!   circle trace on `Gray8`. Complement to existing [`HoughLines`].
+//! - [`InnerShadow`](inner_shadow::InnerShadow) — soft offset shadow
+//!   rendered *inside* the subject coverage instead of behind it.
+//!
 //! r17 additions:
 //!
 //! - [`BorderedFrame`](bordered_frame::BorderedFrame) — flat solid-colour
@@ -271,8 +292,10 @@ pub mod adaptive_threshold;
 pub mod affine;
 pub mod auto_gamma;
 pub mod auto_level;
+pub mod auto_trim;
 pub mod barrel_inverse;
 pub mod bilateral_blur;
+pub mod bloom;
 pub mod blue_shift;
 pub mod blur;
 pub mod bordered_frame;
@@ -297,8 +320,11 @@ pub mod crop;
 pub mod cycle;
 pub mod deskew;
 pub mod despeckle;
+pub mod difference;
 pub mod distort;
+pub mod drop_shadow;
 pub mod edge;
+pub mod edge_multi;
 pub mod emboss;
 pub mod equalize;
 pub mod evaluate;
@@ -314,10 +340,12 @@ pub mod gradient_radial;
 pub mod gravity_translate;
 pub mod grayscale;
 pub mod hald_clut;
+pub mod hough_circles;
 pub mod hough_lines;
 pub mod hsl_rotate;
 pub mod hsl_shift;
 pub mod implode;
+pub mod inner_shadow;
 pub mod laplacian;
 pub mod level;
 pub mod linear_stretch;
@@ -366,8 +394,10 @@ pub use adaptive_threshold::AdaptiveThreshold;
 pub use affine::Affine;
 pub use auto_gamma::AutoGamma;
 pub use auto_level::AutoLevel;
+pub use auto_trim::AutoTrim;
 pub use barrel_inverse::BarrelInverse;
 pub use bilateral_blur::BilateralBlur;
+pub use bloom::Bloom;
 pub use blue_shift::BlueShift;
 pub use blur::Blur;
 pub use bordered_frame::BorderedFrame;
@@ -392,8 +422,11 @@ pub use crop::Crop;
 pub use cycle::Cycle;
 pub use deskew::Deskew;
 pub use despeckle::Despeckle;
+pub use difference::Difference;
 pub use distort::Distort;
+pub use drop_shadow::DropShadow;
 pub use edge::Edge;
+pub use edge_multi::{EdgeDetect, EdgeKernel};
 pub use emboss::Emboss;
 pub use equalize::Equalize;
 pub use evaluate::{Evaluate, EvaluateOp};
@@ -409,10 +442,12 @@ pub use gradient_radial::GradientRadial;
 pub use gravity_translate::{Gravity, GravityTranslate};
 pub use grayscale::Grayscale;
 pub use hald_clut::HaldClut;
+pub use hough_circles::HoughCircles;
 pub use hough_lines::HoughLines;
 pub use hsl_rotate::HslRotate;
 pub use hsl_shift::HslShift;
 pub use implode::Implode;
+pub use inner_shadow::InnerShadow;
 pub use laplacian::Laplacian;
 pub use level::Level;
 pub use linear_stretch::LinearStretch;

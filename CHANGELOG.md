@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r18: land seven new filters covering Hough-space circle detection,
+  arithmetic differencing, content-aware cropping, layered shadow
+  effects, additive glow, and runtime-selectable edge kernels. New
+  filters: `HoughCircles` (3-D Hough accumulator indexed by
+  `(radius, cx, cy)` over Sobel-magnitude voters; emits the rendered
+  circle trace on `Gray8`; the radius-axis complement to the existing
+  `HoughLines`), `Difference` (two-input pixel-wise `|src - dst|` —
+  cheap change-detection / motion mask, no Porter–Duff coverage
+  algebra; Gray8 / RGB / RGBA / planar YUV), `AutoTrim` (like `Trim`
+  but picks the dominant colour via a 4-bit-per-channel histogram
+  vote first, so a noisy `(0, 0)` corner sample no longer poisons the
+  inferred background), `DropShadow` (soft offset shadow underlay
+  composited *behind* opaque RGBA subject pixels — straight-alpha
+  `over`; box-blur approximates Gaussian for cheap halos), `InnerShadow`
+  (soft offset shadow rendered *inside* the subject coverage via an
+  inverted-alpha mask + offset + blur), `Bloom` (Gaussian-blurred
+  highlights additively composited on top of the source — emissive /
+  HDR-look glow; Gray8 / RGB / RGBA), and `EdgeDetect` + `EdgeKernel`
+  (runtime-selectable gradient kernel — `Sobel` / `Prewitt` / `Scharr`
+  / `Roberts`; complements the fixed-Sobel `Edge`). Nine new factory
+  names wired into `register()`: `hough-circles`, `auto-trim`,
+  `drop-shadow`, `inner-shadow`, `bloom`, `glow` (alias), `edge-detect`,
+  `edge-multi` (alias), `difference`. Filter count: 90 → 97 named
+  types; factory count: 108 → 117 names.
+
 - r17: land seven new filters covering linear-light exposure
   control, colourist tonal sliders, B&W conversion presets, and a
   flat solid-colour border. New filters: `Exposure` (EV-stop

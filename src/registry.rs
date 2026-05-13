@@ -229,6 +229,24 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("border", Box::new(make_bordered_frame));
 
+    // r18 factories: HoughCircles / AutoTrim / DropShadow / InnerShadow
+    // / Bloom / EdgeDetect (multi-kernel) + two-input Difference.
+    ctx.filters
+        .register("hough-circles", Box::new(make_hough_circles));
+    ctx.filters.register("auto-trim", Box::new(make_auto_trim));
+    ctx.filters
+        .register("drop-shadow", Box::new(make_drop_shadow));
+    ctx.filters
+        .register("inner-shadow", Box::new(make_inner_shadow));
+    ctx.filters.register("bloom", Box::new(make_bloom));
+    ctx.filters.register("glow", Box::new(make_bloom));
+    ctx.filters
+        .register("edge-detect", Box::new(make_edge_detect));
+    ctx.filters
+        .register("edge-multi", Box::new(make_edge_detect));
+    ctx.filters
+        .register("difference", Box::new(make_difference));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -3762,6 +3780,219 @@ fn make_bordered_frame(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn St
     )))
 }
 
+fn make_hough_circles(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::HoughCircles;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let edge_threshold = get_u64("edge_threshold")
+        .or_else(|| get_u64("edge"))
+        .unwrap_or(64) as u32;
+    let min_radius = get_u64("min_radius")
+        .or_else(|| get_u64("min"))
+        .unwrap_or(4) as u32;
+    let max_radius = get_u64("max_radius")
+        .or_else(|| get_u64("max"))
+        .unwrap_or(32) as u32;
+    let vote_threshold = get_u64("vote_threshold")
+        .or_else(|| get_u64("votes"))
+        .unwrap_or(16) as u32;
+    let top_k = get_u64("top_k").or_else(|| get_u64("k")).unwrap_or(8) as u32;
+    let f = HoughCircles::new(min_radius, max_radius, vote_threshold)
+        .with_edge_threshold(edge_threshold)
+        .with_top_k(top_k);
+    let in_port = video_in_port(inputs);
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_auto_trim(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::AutoTrim;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let fuzz = get_u64("fuzz").unwrap_or(0).min(255) as u8;
+    let f = AutoTrim::new().with_fuzz(fuzz);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn parse_rgb3(v: &Value, name: &str) -> Result<[u8; 3]> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| Error::invalid(format!("job: filter '{name}': colour must be an array")))?;
+    if arr.len() != 3 && arr.len() != 4 {
+        return Err(Error::invalid(format!(
+            "job: filter '{name}': colour must have 3 or 4 entries, got {}",
+            arr.len()
+        )));
+    }
+    let mut out = [0u8; 3];
+    for (i, e) in arr.iter().take(3).enumerate() {
+        let n = e.as_u64().ok_or_else(|| {
+            Error::invalid(format!(
+                "job: filter '{name}': colour entries must be 0..=255"
+            ))
+        })?;
+        if n > 255 {
+            return Err(Error::invalid(format!(
+                "job: filter '{name}': colour entry {i} = {n} out of 0..=255"
+            )));
+        }
+        out[i] = n as u8;
+    }
+    Ok(out)
+}
+
+fn make_drop_shadow(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DropShadow;
+    let p = params.as_object();
+    let get_i64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let offset_x = get_i64("offset_x").or_else(|| get_i64("dx")).unwrap_or(4) as i32;
+    let offset_y = get_i64("offset_y").or_else(|| get_i64("dy")).unwrap_or(4) as i32;
+    let radius = get_u64("radius").unwrap_or(6) as u32;
+    let opacity = get_f64("opacity").unwrap_or(0.5) as f32;
+    let mut f = DropShadow::new(offset_x, offset_y, radius).with_opacity(opacity);
+    if let Some(v) = p.and_then(|m| m.get("color").or_else(|| m.get("colour"))) {
+        f = f.with_colour(parse_rgb3(v, "drop-shadow")?);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_inner_shadow(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::InnerShadow;
+    let p = params.as_object();
+    let get_i64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let offset_x = get_i64("offset_x").or_else(|| get_i64("dx")).unwrap_or(2) as i32;
+    let offset_y = get_i64("offset_y").or_else(|| get_i64("dy")).unwrap_or(2) as i32;
+    let radius = get_u64("radius").unwrap_or(3) as u32;
+    let opacity = get_f64("opacity").unwrap_or(0.6) as f32;
+    let mut f = InnerShadow::new(offset_x, offset_y, radius).with_opacity(opacity);
+    if let Some(v) = p.and_then(|m| m.get("color").or_else(|| m.get("colour"))) {
+        f = f.with_colour(parse_rgb3(v, "inner-shadow")?);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_bloom(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Bloom;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let threshold = get_u64("threshold").unwrap_or(200).min(255) as u8;
+    let radius = get_u64("radius").unwrap_or(6) as u32;
+    let intensity = get_f64("intensity")
+        .or_else(|| get_f64("amount"))
+        .unwrap_or(0.6) as f32;
+    let f = Bloom::new(threshold, radius, intensity);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_edge_detect(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{EdgeDetect, EdgeKernel};
+    let p = params.as_object();
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    let kernel = match get_str("kernel").or_else(|| get_str("kind")) {
+        Some(name) => EdgeKernel::from_name(name).ok_or_else(|| {
+            Error::invalid(format!(
+                "job: filter 'edge-detect': unknown kernel '{name}' \
+                 (expected sobel / prewitt / scharr / roberts)"
+            ))
+        })?,
+        None => EdgeKernel::Sobel,
+    };
+    let f = EdgeDetect::new(kernel);
+    let in_port = video_in_port(inputs);
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_difference(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Difference;
+    let (src_port, dst_port) = two_video_in_ports(inputs);
+    if let (
+        PortParams::Video {
+            format: sf,
+            width: sw,
+            height: sh,
+            ..
+        },
+        PortParams::Video {
+            format: df,
+            width: dw,
+            height: dh,
+            ..
+        },
+    ) = (&src_port.params, &dst_port.params)
+    {
+        if sf != df || sw != dw || sh != dh {
+            return Err(Error::invalid(format!(
+                "job: filter 'difference': src and dst ports must agree on \
+                 (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
+            )));
+        }
+    }
+    let out_port = PortSpec {
+        name: "video".to_string(),
+        ..src_port.clone()
+    };
+    Ok(Box::new(TwoInputImageFilterAdapter::new(
+        Box::new(Difference::new()),
+        src_port,
+        dst_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3918,6 +4149,18 @@ mod tests {
             "shadow-highlight",
             "bordered-frame",
             "border",
+            // r18 additions (hough-circles / auto-trim / drop-shadow /
+            // inner-shadow / bloom + alias / edge-detect + alias /
+            // difference).
+            "hough-circles",
+            "auto-trim",
+            "drop-shadow",
+            "inner-shadow",
+            "bloom",
+            "glow",
+            "edge-detect",
+            "edge-multi",
+            "difference",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
