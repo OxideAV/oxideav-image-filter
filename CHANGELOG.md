@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r19: land six new filters covering false-colour visualisation,
+  shadow / highlight tint, per-channel posterise, cel-shading, seeded
+  region fill, and two-input watermark overlay. New filters:
+  `Heatmap` + `HeatmapRamp` (apply a built-in colour ramp — `Jet` /
+  `Viridis` / `Plasma` / `Hot` / `Cool` / `Grayscale` — to a
+  luminance-reduced source; input may be Gray8 / RGB / RGBA / planar
+  YUV; output is always RGB24 or RGBA when the source was RGBA, with
+  alpha preserved), `SplitTone` (independent shadow + highlight tints
+  via a triangular tonal mask `w(v) = (1 - 2|v - 0.5|).max(0)` peaking
+  at the extremes; `balance` biases shadow vs highlight; RGB / RGBA),
+  `FloodFill` (seeded scanline flood-fill with per-channel Chebyshev
+  tolerance — matching ImageMagick's `-fuzz`; iterative span-fill keeps
+  the work `O(W·H)` and rejects out-of-bounds seeds; Gray8 / RGB /
+  RGBA), `PosterizeChannels` (per-channel posterise with independent
+  `r_levels` / `g_levels` / `b_levels` and optional `alpha_levels`;
+  distinct from the existing `Posterize` which collapses every channel
+  to the same level count; Gray8 / RGB / RGBA), `Toon` (cel-shaded
+  "cartoon" look — per-channel posterise + Sobel edge overlay with
+  configurable ink colour; RGB / RGBA), and `Watermark` (two-input
+  over-place of a secondary image onto the source at
+  `(offset_x, offset_y)` with a `[0, 1]` `opacity` multiplier — the
+  overlay shape is independent of the source and clipped on negative
+  or oversize placements; straight-alpha on RGBA; the two ports must
+  share `PixelFormat`). Eight new factory names wired into
+  `register()`: `heatmap`, `false-color` (alias), `split-tone`,
+  `flood-fill`, `posterize-channels`, `toon`, `cartoon` (alias),
+  `watermark`. Filter count: 97 → 103 named types; factory count:
+  117 → 125 names.
+
 - r18: land seven new filters covering Hough-space circle detection,
   arithmetic differencing, content-aware cropping, layered shadow
   effects, additive glow, and runtime-selectable edge kernels. New

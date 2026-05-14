@@ -255,6 +255,27 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   top of the source for an emissive / HDR-look glow. Configurable
   `threshold` (luma cut-off) + `radius` + `intensity`. Gray8 / RGB /
   RGBA. Factory alias: `glow`.
+- **`Heatmap`** + **`HeatmapRamp`** — false-colour ramp applied to a
+  luminance-reduced source. Built-in ramps `Jet` / `Viridis` /
+  `Plasma` / `Hot` / `Cool` / `Grayscale`. Input may be Gray8 / RGB /
+  RGBA / planar YUV; output is RGB24 (or RGBA when input was RGBA,
+  with alpha preserved). Factory alias: `false-color`.
+- **`SplitTone`** — independent shadow + highlight tints driven by a
+  triangular tonal mask `w(v) = (1 - 2|v - 0.5|).max(0)`. `balance`
+  in `[-1, 1]` biases shadow vs highlight emphasis; `amount` is the
+  global strength. RGB / RGBA only.
+- **`PosterizeChannels`** — per-channel posterise with independent
+  `r_levels` / `g_levels` / `b_levels` (and optional `alpha_levels`).
+  Distinct from the existing `Posterize` which collapses every
+  channel to the same level count. Gray8 / RGB / RGBA.
+- **`Toon`** — cel-shaded cartoon look: per-channel posterise + Sobel
+  edge overlay with configurable ink colour. Configurable `levels` /
+  `edge_threshold` / `edge_color`. RGB / RGBA only. Factory alias:
+  `cartoon`.
+- **`FloodFill`** — seeded scanline flood-fill with per-channel
+  Chebyshev tolerance (matching ImageMagick's `-fuzz`). Iterative
+  span-fill keeps the work `O(W·H)`; out-of-bounds seeds error.
+  Gray8 / RGB / RGBA.
 
 ### Sharpening + artistic
 
@@ -379,6 +400,12 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Difference`** — two-input pixel-wise absolute difference
   (`out = |src - dst|`). Cheap change-detection / motion mask, no
   Porter–Duff coverage algebra. Gray8 / RGB / RGBA / planar YUV.
+- **`Watermark`** — two-input over-place of a secondary image
+  (`dst`) onto the source (`src`) at `(offset_x, offset_y)` with a
+  `[0, 1]` `opacity` multiplier. The overlay shape is independent of
+  the source — clipped on negative or oversize placements. Straight-
+  alpha on RGBA; opacity scales the per-pixel alpha. Gray8 / RGB /
+  RGBA (the two ports must share `PixelFormat`).
 - **`Composite`** + **`CompositeOp`** — Porter–Duff and arithmetic
   blends of a foreground (`src`) over a background (`dst`) frame.
   Sixteen operators registered as `composite-<op>` factories:

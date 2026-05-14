@@ -262,6 +262,24 @@
 //! - [`Vibrance`](vibrance::Vibrance) — Lr-style saturation boost that
 //!   spares already-saturated pixels via `1 - s` weighting.
 //!
+//! r19 additions:
+//!
+//! - [`Heatmap`](heatmap::Heatmap) + [`HeatmapRamp`](heatmap::HeatmapRamp) —
+//!   false-colour ramp applied to a luminance-reduced source. Built-in
+//!   ramps: `Jet`, `Viridis`, `Plasma`, `Hot`, `Cool`, `Grayscale`.
+//! - [`SplitTone`](split_tone::SplitTone) — independent shadow + highlight
+//!   tints driven by a triangular tonal mask peaking at the extremes.
+//! - [`FloodFill`](flood_fill::FloodFill) — seeded scanline flood-fill
+//!   with per-channel Chebyshev tolerance; `Gray8` / `Rgb24` / `Rgba`.
+//! - [`Watermark`](watermark::Watermark) — two-input over-place of a
+//!   secondary image onto the source at `(offset_x, offset_y)` with a
+//!   `opacity` multiplier; clips on negative or oversize overlays.
+//! - [`PosterizeChannels`](posterize_channels::PosterizeChannels) —
+//!   per-channel posterise (`r_levels`, `g_levels`, `b_levels`, optional
+//!   `alpha_levels`).
+//! - [`Toon`](toon::Toon) — cel-shaded cartoon look: per-channel
+//!   posterise + Sobel edge overlay with configurable ink colour.
+//!
 //! r16 additions:
 //!
 //! - [`BilateralBlur`](bilateral_blur::BilateralBlur) — edge-preserving
@@ -331,6 +349,7 @@ pub mod evaluate;
 pub mod exposure;
 pub mod extent;
 pub mod flip;
+pub mod flood_fill;
 pub mod flop;
 pub mod frame;
 pub mod function;
@@ -340,6 +359,7 @@ pub mod gradient_radial;
 pub mod gravity_translate;
 pub mod grayscale;
 pub mod hald_clut;
+pub mod heatmap;
 pub mod hough_circles;
 pub mod hough_lines;
 pub mod hsl_rotate;
@@ -359,6 +379,7 @@ pub mod perspective;
 pub mod pixelate;
 pub mod polar;
 pub mod posterize;
+pub mod posterize_channels;
 pub mod quantize;
 pub mod registry;
 pub mod resize;
@@ -372,6 +393,7 @@ pub mod shave;
 pub mod sigmoidal_contrast;
 pub mod sketch;
 pub mod solarize;
+pub mod split_tone;
 pub mod spread;
 pub mod srt;
 pub mod statistic;
@@ -383,11 +405,13 @@ pub mod threshold;
 pub mod tilt_shift;
 pub mod tint;
 pub(crate) mod tonal_lut;
+pub mod toon;
 pub mod trim;
 pub mod unsharp;
 pub mod vibrance;
 pub mod vignette;
 pub mod vignette_soft;
+pub mod watermark;
 pub mod wave;
 
 pub use adaptive_threshold::AdaptiveThreshold;
@@ -433,6 +457,7 @@ pub use evaluate::{Evaluate, EvaluateOp};
 pub use exposure::Exposure;
 pub use extent::Extent;
 pub use flip::Flip;
+pub use flood_fill::FloodFill;
 pub use flop::Flop;
 pub use frame::Frame;
 pub use function::{Function, FunctionOp};
@@ -442,6 +467,7 @@ pub use gradient_radial::GradientRadial;
 pub use gravity_translate::{Gravity, GravityTranslate};
 pub use grayscale::Grayscale;
 pub use hald_clut::HaldClut;
+pub use heatmap::{Heatmap, HeatmapRamp};
 pub use hough_circles::HoughCircles;
 pub use hough_lines::HoughLines;
 pub use hsl_rotate::HslRotate;
@@ -463,6 +489,7 @@ pub use perspective::Perspective;
 pub use pixelate::Pixelate;
 pub use polar::{Polar, PolarDirection};
 pub use posterize::Posterize;
+pub use posterize_channels::PosterizeChannels;
 pub use quantize::Quantize;
 pub use registry::{__oxideav_entry, register};
 pub use resize::{Interpolation, Resize};
@@ -476,6 +503,7 @@ pub use shave::Shave;
 pub use sigmoidal_contrast::SigmoidalContrast;
 pub use sketch::Sketch;
 pub use solarize::Solarize;
+pub use split_tone::SplitTone;
 pub use spread::Spread;
 pub use srt::Srt;
 pub use statistic::{Statistic, StatisticOp};
@@ -486,11 +514,13 @@ pub use temperature::Temperature;
 pub use threshold::Threshold;
 pub use tilt_shift::TiltShift;
 pub use tint::Tint;
+pub use toon::Toon;
 pub use trim::Trim;
 pub use unsharp::Unsharp;
 pub use vibrance::Vibrance;
 pub use vignette::Vignette;
 pub use vignette_soft::VignetteSoft;
+pub use watermark::Watermark;
 pub use wave::Wave;
 
 /// Stream-level video parameters threaded into [`ImageFilter::apply`].

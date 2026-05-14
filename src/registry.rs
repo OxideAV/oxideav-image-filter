@@ -247,6 +247,21 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("difference", Box::new(make_difference));
 
+    // r19 factories: Heatmap (false-colour) / SplitTone / FloodFill /
+    // PosterizeChannels (per-channel) / Toon (cel-shading) + two-input
+    // Watermark.
+    ctx.filters.register("heatmap", Box::new(make_heatmap));
+    ctx.filters.register("false-color", Box::new(make_heatmap));
+    ctx.filters
+        .register("split-tone", Box::new(make_split_tone));
+    ctx.filters
+        .register("flood-fill", Box::new(make_flood_fill));
+    ctx.filters
+        .register("posterize-channels", Box::new(make_posterize_channels));
+    ctx.filters.register("toon", Box::new(make_toon));
+    ctx.filters.register("cartoon", Box::new(make_toon));
+    ctx.filters.register("watermark", Box::new(make_watermark));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -3993,6 +4008,192 @@ fn make_difference(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Strea
     )))
 }
 
+// --- r19 factories ---
+
+fn make_heatmap(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Heatmap, HeatmapRamp};
+    let p = params.as_object();
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    let ramp = match get_str("ramp").or_else(|| get_str("palette")) {
+        Some(name) => HeatmapRamp::from_name(name).ok_or_else(|| {
+            Error::invalid(format!(
+                "job: filter 'heatmap': unknown ramp '{name}' \
+                 (expected jet / viridis / plasma / hot / cool / grayscale)"
+            ))
+        })?,
+        None => HeatmapRamp::default(),
+    };
+    let f = Heatmap::new(ramp);
+    let in_port = video_in_port(inputs);
+    // Output is always Rgb24 / Rgba; rebuild the output port to reflect.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format,
+            width,
+            height,
+            time_base,
+            ..
+        } => {
+            let out_fmt = if *format == PixelFormat::Rgba {
+                PixelFormat::Rgba
+            } else {
+                PixelFormat::Rgb24
+            };
+            PortSpec::video("video", *width, *height, out_fmt, *time_base)
+        }
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_split_tone(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::SplitTone;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let shadow = match p.and_then(|m| m.get("shadow").or_else(|| m.get("shadow_color"))) {
+        Some(v) => parse_rgb3(v, "split-tone")?,
+        None => [0, 30, 70],
+    };
+    let highlight = match p.and_then(|m| m.get("highlight").or_else(|| m.get("highlight_color"))) {
+        Some(v) => parse_rgb3(v, "split-tone")?,
+        None => [255, 220, 80],
+    };
+    let balance = get_f64("balance").unwrap_or(0.0) as f32;
+    let amount = get_f64("amount").unwrap_or(0.5) as f32;
+    let f = SplitTone::new(shadow, highlight, balance, amount);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_flood_fill(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::FloodFill;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let seed_x = get_u64("seed_x").or_else(|| get_u64("x")).unwrap_or(0) as u32;
+    let seed_y = get_u64("seed_y").or_else(|| get_u64("y")).unwrap_or(0) as u32;
+    let tolerance = get_u64("tolerance")
+        .or_else(|| get_u64("fuzz"))
+        .unwrap_or(0)
+        .min(255) as u8;
+    let mut color = [255u8, 0, 0, 255];
+    if let Some(v) = p.and_then(|m| m.get("color").or_else(|| m.get("colour"))) {
+        let c3 = parse_rgb3(v, "flood-fill")?;
+        color = [c3[0], c3[1], c3[2], 255];
+        // If the array had a 4th entry, capture it.
+        if let Some(arr) = v.as_array() {
+            if arr.len() >= 4 {
+                if let Some(a) = arr[3].as_u64() {
+                    color[3] = a.min(255) as u8;
+                }
+            }
+        }
+    }
+    let f = FloodFill::new(seed_x, seed_y, color, tolerance);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_posterize_channels(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::PosterizeChannels;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let r = get_u64("r_levels").or_else(|| get_u64("r")).unwrap_or(4) as u32;
+    let g = get_u64("g_levels").or_else(|| get_u64("g")).unwrap_or(4) as u32;
+    let b = get_u64("b_levels").or_else(|| get_u64("b")).unwrap_or(4) as u32;
+    let mut f = PosterizeChannels::new(r, g, b);
+    if let Some(a) = get_u64("alpha_levels").or_else(|| get_u64("a")) {
+        f = f.with_alpha_levels(a as u32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_toon(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Toon;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let levels = get_u64("levels").unwrap_or(4) as u32;
+    let edge_threshold = get_u64("edge_threshold")
+        .or_else(|| get_u64("threshold"))
+        .unwrap_or(60)
+        .min(255) as u8;
+    let edge_color = match p.and_then(|m| m.get("edge_color").or_else(|| m.get("edge_colour"))) {
+        Some(v) => parse_rgb3(v, "toon")?,
+        None => [0, 0, 0],
+    };
+    let f = Toon::new(levels, edge_threshold, edge_color);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_watermark(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Watermark;
+    let p = params.as_object();
+    let get_i64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_i64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let offset_x = get_i64("offset_x").or_else(|| get_i64("x")).unwrap_or(0) as i32;
+    let offset_y = get_i64("offset_y").or_else(|| get_i64("y")).unwrap_or(0) as i32;
+    let opacity = get_f64("opacity").unwrap_or(1.0) as f32;
+
+    let (src_port, dst_port) = two_video_in_ports(inputs);
+    // src_port carries the *base* image; the overlay (dst_port) supplies
+    // its own intrinsic width/height.
+    let (overlay_w, overlay_h) = match &dst_port.params {
+        PortParams::Video { width, height, .. } => (*width, *height),
+        _ => (0, 0),
+    };
+    if let (PortParams::Video { format: sf, .. }, PortParams::Video { format: df, .. }) =
+        (&src_port.params, &dst_port.params)
+    {
+        if sf != df {
+            return Err(Error::invalid(format!(
+                "job: filter 'watermark': src and dst pixel formats must match; \
+                 got src={sf:?} dst={df:?}"
+            )));
+        }
+    }
+    if overlay_w == 0 || overlay_h == 0 {
+        return Err(Error::invalid(
+            "job: filter 'watermark': overlay port must have non-zero width/height",
+        ));
+    }
+    let f = Watermark::new(offset_x, offset_y, overlay_w, overlay_h).with_opacity(opacity);
+    let out_port = PortSpec {
+        name: "video".to_string(),
+        ..src_port.clone()
+    };
+    Ok(Box::new(TwoInputImageFilterAdapter::new(
+        Box::new(f),
+        src_port,
+        dst_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4161,6 +4362,16 @@ mod tests {
             "edge-detect",
             "edge-multi",
             "difference",
+            // r19 additions (heatmap + alias / split-tone / flood-fill /
+            // posterize-channels / toon + alias / watermark).
+            "heatmap",
+            "false-color",
+            "split-tone",
+            "flood-fill",
+            "posterize-channels",
+            "toon",
+            "cartoon",
+            "watermark",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -6873,5 +7084,174 @@ mod tests {
         for (a, b) in out.planes[0].data.iter().zip(frame.planes[0].data.iter()) {
             assert!((*a as i16 - *b as i16).abs() <= 1);
         }
+    }
+
+    // --- r19 smoke tests ---
+
+    #[test]
+    fn heatmap_factory_swaps_gray_for_rgb() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("heatmap", &json!({"ramp": "jet"}), &inputs)
+            .expect("heatmap factory");
+        match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => {
+                assert_eq!(*format, PixelFormat::Rgb24);
+            }
+            _ => panic!("heatmap output must be video"),
+        }
+        let frame = gray_4x4(|x, _| (x * 60) as u8);
+        let out = run_one(f, frame);
+        // Output buffer is 3× the input size.
+        assert_eq!(out.planes[0].data.len(), 4 * 4 * 3);
+    }
+
+    #[test]
+    fn heatmap_factory_rejects_unknown_ramp() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let bad = c
+            .filters
+            .make("heatmap", &json!({"ramp": "rainbow-of-doom"}), &inputs);
+        assert!(bad.is_err(), "unknown ramp must fail");
+    }
+
+    #[test]
+    fn heatmap_false_color_alias_resolves() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        c.filters
+            .make("false-color", &json!({}), &inputs)
+            .expect("false-color alias");
+    }
+
+    #[test]
+    fn split_tone_factory_zero_amount_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "split-tone",
+                &json!({
+                    "shadow": [0, 0, 255],
+                    "highlight": [255, 255, 0],
+                    "amount": 0.0,
+                }),
+                &inputs,
+            )
+            .expect("split-tone factory");
+        let frame = rgba_4x4(|x, y| [(x * 30) as u8, (y * 30) as u8, 100, 222]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn flood_fill_factory_paints_seed_region() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "flood-fill",
+                &json!({"seed_x": 0, "seed_y": 0, "color": [199, 0, 0], "tolerance": 0}),
+                &inputs,
+            )
+            .expect("flood-fill factory");
+        let frame = gray_4x4(|_, _| 0);
+        let out = run_one(f, frame);
+        for &v in &out.planes[0].data {
+            assert_eq!(v, 199);
+        }
+    }
+
+    #[test]
+    fn posterize_channels_factory_builds() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "posterize-channels",
+                &json!({"r_levels": 4, "g_levels": 4, "b_levels": 2}),
+                &inputs,
+            )
+            .expect("posterize-channels factory");
+        let frame = rgba_4x4(|x, _| [(x * 60) as u8, (x * 60) as u8, (x * 60) as u8, 200]);
+        let out = run_one(f, frame);
+        // B channel collapsed to 2 levels ⇒ every B byte must be 0 or 255.
+        for chunk in out.planes[0].data.chunks(4) {
+            assert!(
+                chunk[2] == 0 || chunk[2] == 255,
+                "B channel = {} not in {{0, 255}}",
+                chunk[2]
+            );
+        }
+    }
+
+    #[test]
+    fn toon_factory_emits_same_shape() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(8, 8)];
+        let f = c
+            .filters
+            .make(
+                "toon",
+                &json!({"levels": 4, "edge_threshold": 60, "edge_color": [0, 0, 0]}),
+                &inputs,
+            )
+            .expect("toon factory");
+        // 8x8 RGB constant.
+        let mut data = Vec::with_capacity(8 * 8 * 3);
+        for _ in 0..64 {
+            data.extend_from_slice(&[200u8, 100, 50]);
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 24, data }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 8 * 8 * 3);
+    }
+
+    #[test]
+    fn toon_cartoon_alias_resolves() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(8, 8)];
+        c.filters
+            .make("cartoon", &json!({}), &inputs)
+            .expect("cartoon alias");
+    }
+
+    #[test]
+    fn watermark_factory_rejects_format_mismatch() {
+        let c = ctx();
+        let inputs = [
+            PortSpec::video("src", 4, 4, PixelFormat::Rgba, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 2, 2, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+        ];
+        let bad = c.filters.make("watermark", &json!({}), &inputs);
+        assert!(bad.is_err(), "format mismatch must fail");
+    }
+
+    #[test]
+    fn watermark_factory_builds() {
+        let c = ctx();
+        let inputs = [
+            PortSpec::video("src", 4, 4, PixelFormat::Rgba, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 2, 2, PixelFormat::Rgba, TimeBase::new(1, 30)),
+        ];
+        let f = c
+            .filters
+            .make(
+                "watermark",
+                &json!({"offset_x": 1, "offset_y": 1, "opacity": 0.5}),
+                &inputs,
+            )
+            .expect("watermark factory");
+        assert_eq!(f.input_ports().len(), 2);
+        assert_eq!(f.output_ports().len(), 1);
     }
 }
