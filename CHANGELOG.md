@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.1...v0.1.2) - 2026-05-14
+
+### Other
+
+- r19 — Heatmap / SplitTone / FloodFill / PosterizeChannels / Toon + Watermark (two-input)
+- r18 — HoughCircles / AutoTrim / DropShadow / InnerShadow / Bloom / EdgeDetect (multi) + Difference (two-input)
+- r17 — Exposure / Temperature / Vibrance / BwMix / Clarity / ShadowHighlight / BorderedFrame
+- r16 — BilateralBlur / Canvas / ColorBalance / GradientRadial / GradientConic / GravityTranslate / HslShift
+- r15 — HslRotate / VignetteSoft / ChromaticAberration / Pixelate / ChannelMixer / AdaptiveThreshold
+- r14 — Sketch / Deskew / HoughLines / BarrelInverse + Stegano / Stereo (two-input)
+- r13 — BlueShift / Frame / Shade / Paint / Quantize + Clut / HaldClut (two-input)
+- r12 — Clamp / AutoLevel / Contrast/LinearStretch / ColorMatrix / Function / Laplacian / Canny
+- r11 — Evaluate / Cycle / Statistic / Affine / Srt + 4 composite ops
+- r10 — Roll / Shave / Extent / Trim / ChannelExtract / MorphologyEdge
+- r9 — TiltShift rotated focus band (angle_degrees)
+- r9 — Distort tangential coefficients (Brown-Conrady p1, p2)
+- r9 — Perspective output_size canvas resize
+- r9 — Charcoal Gaussian pre-blur (radius)
+- add Composite (Porter–Duff + arithmetic) two-input family
+- add TiltShift + surface Polar cx / cy / max_radius keys
+- add Distort radial barrel / pincushion lens warp
+- add Perspective 4-corner homography warp
+- add Morphology dilate / erode / open / close
+- add Wave / Spread / Charcoal / Convolve / Polar + factories
+- list Tint / SigmoidalContrast / Implode / Swirl / Despeckle
+- add Tint / SigmoidalContrast / Implode / Swirl / Despeckle + factories
+- list Vignette / Colorize / Equalize / AutoGamma
+- add Vignette / Colorize / Equalize / AutoGamma + factories
+- wire 16 more filter factories into register()
+- wire sharpen / gamma / brightness-contrast factories
+
 ### Added
 
 - r19: land six new filters covering false-colour visualisation,
