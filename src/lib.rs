@@ -301,6 +301,26 @@
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
 //!
+//! r21 additions:
+//!
+//! - [`Kuwahara`](kuwahara::Kuwahara) — quadrant-variance edge-preserving
+//!   smoothing (1976 Kuwahara paper). Picks the lowest-variance quadrant
+//!   of the `(2*radius+1)²` window and writes its mean colour, so flat
+//!   regions blur cleanly while step edges survive.
+//! - [`AnisotropicBlur`](anisotropic::AnisotropicBlur) — Perona-Malik
+//!   1990 anisotropic diffusion (Lorentzian edge-stopping). Iterative
+//!   four-neighbour explicit Euler; smooth areas diffuse, edges freeze.
+//! - [`ZoomBlur`](zoom_blur::ZoomBlur) — radial outward "warp drive"
+//!   blur from a configurable centre; bilinear sampling.
+//! - [`RadialBlur`](radial_blur::RadialBlur) — rotational ("spin")
+//!   blur around a configurable centre; bilinear arc sampling.
+//! - [`EmbossDirectional`](emboss_directional::EmbossDirectional) — 3×3
+//!   relief with a configurable light azimuth (vs the fixed-kernel
+//!   [`Emboss`]); RGB / RGBA / Gray8 + YUV (luma only).
+//! - [`DisplacementMap`](displacement_map::DisplacementMap) — two-input
+//!   warp; `dst` image's R/G channels carry per-pixel `(dx, dy)`
+//!   vectors that bilinear-resample `src`.
+//!
 //! r16 additions:
 //!
 //! - [`BilateralBlur`](bilateral_blur::BilateralBlur) — edge-preserving
@@ -329,6 +349,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 pub mod adaptive_threshold;
 pub mod affine;
+pub mod anisotropic;
 pub mod auto_gamma;
 pub mod auto_level;
 pub mod auto_trim;
@@ -363,11 +384,13 @@ pub mod cycle;
 pub mod deskew;
 pub mod despeckle;
 pub mod difference;
+pub mod displacement_map;
 pub mod distort;
 pub mod drop_shadow;
 pub mod edge;
 pub mod edge_multi;
 pub mod emboss;
+pub mod emboss_directional;
 pub mod equalize;
 pub mod evaluate;
 pub mod exposure;
@@ -392,6 +415,7 @@ pub mod hsl_rotate;
 pub mod hsl_shift;
 pub mod implode;
 pub mod inner_shadow;
+pub mod kuwahara;
 pub mod laplacian;
 pub mod level;
 pub mod linear_stretch;
@@ -408,6 +432,7 @@ pub mod polar;
 pub mod posterize;
 pub mod posterize_channels;
 pub mod quantize;
+pub mod radial_blur;
 pub mod registry;
 pub mod resize;
 pub mod roll;
@@ -441,9 +466,11 @@ pub mod vignette;
 pub mod vignette_soft;
 pub mod watermark;
 pub mod wave;
+pub mod zoom_blur;
 
 pub use adaptive_threshold::AdaptiveThreshold;
 pub use affine::Affine;
+pub use anisotropic::AnisotropicBlur;
 pub use auto_gamma::AutoGamma;
 pub use auto_level::AutoLevel;
 pub use auto_trim::AutoTrim;
@@ -478,11 +505,13 @@ pub use cycle::Cycle;
 pub use deskew::Deskew;
 pub use despeckle::Despeckle;
 pub use difference::Difference;
+pub use displacement_map::DisplacementMap;
 pub use distort::Distort;
 pub use drop_shadow::DropShadow;
 pub use edge::Edge;
 pub use edge_multi::{EdgeDetect, EdgeKernel};
 pub use emboss::Emboss;
+pub use emboss_directional::EmbossDirectional;
 pub use equalize::Equalize;
 pub use evaluate::{Evaluate, EvaluateOp};
 pub use exposure::Exposure;
@@ -507,6 +536,7 @@ pub use hsl_rotate::HslRotate;
 pub use hsl_shift::HslShift;
 pub use implode::Implode;
 pub use inner_shadow::InnerShadow;
+pub use kuwahara::Kuwahara;
 pub use laplacian::Laplacian;
 pub use level::Level;
 pub use linear_stretch::LinearStretch;
@@ -525,6 +555,7 @@ pub use polar::{Polar, PolarDirection};
 pub use posterize::Posterize;
 pub use posterize_channels::PosterizeChannels;
 pub use quantize::Quantize;
+pub use radial_blur::RadialBlur;
 pub use registry::{__oxideav_entry, register};
 pub use resize::{Interpolation, Resize};
 pub use roll::Roll;
@@ -557,6 +588,7 @@ pub use vignette::Vignette;
 pub use vignette_soft::VignetteSoft;
 pub use watermark::Watermark;
 pub use wave::Wave;
+pub use zoom_blur::ZoomBlur;
 
 /// Stream-level video parameters threaded into [`ImageFilter::apply`].
 ///

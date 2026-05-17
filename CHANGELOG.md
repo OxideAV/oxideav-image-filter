@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r21: land six new filters covering quadrant-variance edge-preserving
+  smoothing, iterative anisotropic diffusion, two flavours of motion
+  blur (radial-outward and rotational-around-centre), a configurable-
+  azimuth relief operator, and a two-input warp driven by a colour-
+  encoded vector field. New filters: `Kuwahara` (1976 quadrant-variance
+  edge-preserving smoothing — splits each `(2*radius+1)²` window into
+  four overlapping quadrants and writes the mean of the lowest-luma-
+  variance quadrant, so flat regions still blur cleanly while step edges
+  survive; Gray8 / RGB / RGBA, alpha pass-through), `AnisotropicBlur`
+  (Perona-Malik 1990 anisotropic diffusion with the Lorentzian edge-
+  stopping function `g(s) = 1 / (1 + (s/κ)²)`; iterative four-neighbour
+  explicit-Euler — smooth areas diffuse, edges freeze; `iterations` /
+  `kappa` / `lambda` knobs with `λ ≤ 0.25` enforced for stability;
+  Gray8 / RGB / RGBA, alpha pass-through), `ZoomBlur` (radial outward
+  "warp drive" blur sampling along the line from each pixel to a
+  configurable centre with geometric step `1 - t · strength`; bilinear
+  sampling, edge-clamped; Gray8 / RGB / RGBA), `RadialBlur` (rotational
+  / "spin" blur around a configurable centre — samples are bilinearly
+  fetched along the arc swept by ±`angle/2` around each pixel's base
+  polar angle; complement to `ZoomBlur`; Gray8 / RGB / RGBA),
+  `EmbossDirectional` (3×3 relief with a configurable light azimuth
+  in degrees CCW from East and a `depth` multiplier; kernel weights are
+  `(dx, -dy) · (cos a, sin a)`, so a 180° azimuth flip inverts the
+  embossed polarity; distinct from the existing fixed-kernel `Emboss`;
+  Gray8 / RGB / RGBA, alpha pass-through, + planar YUV on the luma
+  plane only), and `DisplacementMap` (two-input warp — the `dst` map's
+  R / G channels carry per-pixel `(dx, dy)` vectors re-centred to
+  `[-0.5, 0.5]` and scaled by `scale_x` / `scale_y`; the source is
+  bilinear-sampled at the perturbed coordinate; classic water-ripple /
+  heat-haze / frosted-glass primitive; both inputs must share
+  `(width, height, format)`; Gray8 / RGB / RGBA). Eight new factory
+  names wired into `register()`: `kuwahara`, `anisotropic-blur`,
+  `anisotropic` (alias), `zoom-blur`, `radial-blur`, `spin-blur`
+  (alias), `emboss-directional`, `displacement-map`. Filter count:
+  110 → 116 named types; factory count: 137 → 145 names.
+
 - r20: land six new filters covering Voronoi-cell averaging, AM-screen
   halftone, arbitrary gradient remap, per-hue-band HSL adjustment,
   film cross-processing emulation, automatic global threshold, plus a

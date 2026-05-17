@@ -285,6 +285,23 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("comic", Box::new(make_comic));
     ctx.filters.register("manga", Box::new(make_comic));
 
+    // r21 factories: Kuwahara / AnisotropicBlur / ZoomBlur / RadialBlur /
+    // EmbossDirectional + two-input DisplacementMap.
+    ctx.filters.register("kuwahara", Box::new(make_kuwahara));
+    ctx.filters
+        .register("anisotropic-blur", Box::new(make_anisotropic_blur));
+    ctx.filters
+        .register("anisotropic", Box::new(make_anisotropic_blur));
+    ctx.filters.register("zoom-blur", Box::new(make_zoom_blur));
+    ctx.filters
+        .register("radial-blur", Box::new(make_radial_blur));
+    ctx.filters
+        .register("spin-blur", Box::new(make_radial_blur));
+    ctx.filters
+        .register("emboss-directional", Box::new(make_emboss_directional));
+    ctx.filters
+        .register("displacement-map", Box::new(make_displacement_map));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -4464,6 +4481,173 @@ fn make_comic(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilte
     )))
 }
 
+// --- r21 factories ---
+
+fn make_kuwahara(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Kuwahara;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let radius = get_u64("radius").unwrap_or(3) as u32;
+    let f = Kuwahara::new(radius);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_anisotropic_blur(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::AnisotropicBlur;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let iterations = get_u64("iterations").unwrap_or(5) as u32;
+    let mut f = AnisotropicBlur::new(iterations);
+    if let Some(k) = get_f64("kappa").or_else(|| get_f64("k")) {
+        f = f.with_kappa(k as f32);
+    }
+    if let Some(l) = get_f64("lambda") {
+        f = f.with_lambda(l as f32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_zoom_blur(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::ZoomBlur;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let strength = get_f64("strength").unwrap_or(0.2) as f32;
+    let mut f = ZoomBlur::new(strength);
+    let cx = get_f64("centre_x")
+        .or_else(|| get_f64("center_x"))
+        .or_else(|| get_f64("cx"));
+    let cy = get_f64("centre_y")
+        .or_else(|| get_f64("center_y"))
+        .or_else(|| get_f64("cy"));
+    if cx.is_some() || cy.is_some() {
+        f = f.with_centre(cx.unwrap_or(0.5) as f32, cy.unwrap_or(0.5) as f32);
+    }
+    if let Some(s) = get_u64("samples") {
+        f = f.with_samples(s as u32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_radial_blur(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::RadialBlur;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let angle = get_f64("angle_degrees")
+        .or_else(|| get_f64("angle"))
+        .unwrap_or(10.0) as f32;
+    let mut f = RadialBlur::new(angle);
+    let cx = get_f64("centre_x")
+        .or_else(|| get_f64("center_x"))
+        .or_else(|| get_f64("cx"));
+    let cy = get_f64("centre_y")
+        .or_else(|| get_f64("center_y"))
+        .or_else(|| get_f64("cy"));
+    if cx.is_some() || cy.is_some() {
+        f = f.with_centre(cx.unwrap_or(0.5) as f32, cy.unwrap_or(0.5) as f32);
+    }
+    if let Some(s) = get_u64("samples") {
+        f = f.with_samples(s as u32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_emboss_directional(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::EmbossDirectional;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let az = get_f64("azimuth_degrees")
+        .or_else(|| get_f64("azimuth"))
+        .or_else(|| get_f64("angle"))
+        .unwrap_or(315.0) as f32;
+    let mut f = EmbossDirectional::new(az);
+    if let Some(d) = get_f64("depth") {
+        f = f.with_depth(d as f32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_displacement_map(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DisplacementMap;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let scale = get_f64("scale").unwrap_or(10.0) as f32;
+    let mut f = DisplacementMap::new(scale);
+    let sx = get_f64("scale_x");
+    let sy = get_f64("scale_y");
+    if sx.is_some() || sy.is_some() {
+        f = f.with_scales(
+            sx.unwrap_or(scale as f64) as f32,
+            sy.unwrap_or(scale as f64) as f32,
+        );
+    }
+    let (src_port, dst_port) = two_video_in_ports(inputs);
+    if let (
+        PortParams::Video {
+            format: sf,
+            width: sw,
+            height: sh,
+            ..
+        },
+        PortParams::Video {
+            format: df,
+            width: dw,
+            height: dh,
+            ..
+        },
+    ) = (&src_port.params, &dst_port.params)
+    {
+        if sf != df || sw != dw || sh != dh {
+            return Err(Error::invalid(format!(
+                "job: filter 'displacement-map': src and dst ports must agree on \
+                 (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
+            )));
+        }
+    }
+    let out_port = PortSpec {
+        name: "video".to_string(),
+        ..src_port.clone()
+    };
+    Ok(Box::new(TwoInputImageFilterAdapter::new(
+        Box::new(f),
+        src_port,
+        dst_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4657,6 +4841,17 @@ mod tests {
             "otsu",
             "comic",
             "manga",
+            // r21 additions (kuwahara / anisotropic-blur + alias / zoom-blur
+            // / radial-blur + alias / emboss-directional + two-input
+            // displacement-map).
+            "kuwahara",
+            "anisotropic-blur",
+            "anisotropic",
+            "zoom-blur",
+            "radial-blur",
+            "spin-blur",
+            "emboss-directional",
+            "displacement-map",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -7807,5 +8002,172 @@ mod tests {
         c.filters
             .make("manga", &json!({}), &inputs)
             .expect("manga alias");
+    }
+
+    // --- r21 smoke tests ---
+
+    #[test]
+    fn kuwahara_factory_builds_and_runs() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("kuwahara", &json!({"radius": 2}), &inputs)
+            .expect("kuwahara factory");
+        let mut data = Vec::with_capacity(8 * 8 * 3);
+        for _ in 0..64 {
+            data.extend_from_slice(&[100u8, 150, 200]);
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 24, data }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 8 * 8 * 3);
+    }
+
+    #[test]
+    fn anisotropic_blur_factory_builds_and_runs() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        let f = c
+            .filters
+            .make(
+                "anisotropic-blur",
+                &json!({"iterations": 3, "kappa": 20.0, "lambda": 0.2}),
+                &inputs,
+            )
+            .expect("anisotropic-blur factory");
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 8,
+                data: vec![128u8; 64],
+            }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 64);
+    }
+
+    #[test]
+    fn anisotropic_alias_resolves() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        c.filters
+            .make("anisotropic", &json!({}), &inputs)
+            .expect("anisotropic alias");
+    }
+
+    #[test]
+    fn zoom_blur_factory_builds_and_runs() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(8, 8)];
+        let f = c
+            .filters
+            .make(
+                "zoom-blur",
+                &json!({"strength": 0.3, "samples": 6, "centre_x": 0.5, "centre_y": 0.5}),
+                &inputs,
+            )
+            .expect("zoom-blur factory");
+        let mut data = Vec::with_capacity(8 * 8 * 3);
+        for _ in 0..64 {
+            data.extend_from_slice(&[100u8, 100, 100]);
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 24, data }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 8 * 8 * 3);
+    }
+
+    #[test]
+    fn radial_blur_factory_builds_and_runs() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(8, 8)];
+        let f = c
+            .filters
+            .make(
+                "radial-blur",
+                &json!({"angle_degrees": 15.0, "samples": 6}),
+                &inputs,
+            )
+            .expect("radial-blur factory");
+        let mut data = Vec::with_capacity(8 * 8 * 3);
+        for _ in 0..64 {
+            data.extend_from_slice(&[120u8, 80, 40]);
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 24, data }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 8 * 8 * 3);
+    }
+
+    #[test]
+    fn spin_blur_alias_resolves() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        c.filters
+            .make("spin-blur", &json!({"angle": 5.0}), &inputs)
+            .expect("spin-blur alias");
+    }
+
+    #[test]
+    fn emboss_directional_factory_builds_and_runs() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        let f = c
+            .filters
+            .make(
+                "emboss-directional",
+                &json!({"azimuth_degrees": 45.0, "depth": 1.5}),
+                &inputs,
+            )
+            .expect("emboss-directional factory");
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 8,
+                data: vec![100u8; 64],
+            }],
+        };
+        let out = run_one(f, frame);
+        // Flat input ⇒ uniformly 128 (bias).
+        for &v in &out.planes[0].data {
+            assert_eq!(v, 128);
+        }
+    }
+
+    #[test]
+    fn displacement_map_factory_rejects_format_mismatch() {
+        let c = ctx();
+        let inputs = [
+            PortSpec::video("src", 4, 4, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 4, 4, PixelFormat::Gray8, TimeBase::new(1, 30)),
+        ];
+        let bad = c.filters.make("displacement-map", &json!({}), &inputs);
+        assert!(bad.is_err(), "format mismatch must fail");
+    }
+
+    #[test]
+    fn displacement_map_factory_builds() {
+        let c = ctx();
+        let inputs = [
+            PortSpec::video("src", 4, 4, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+            PortSpec::video("dst", 4, 4, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+        ];
+        let f = c
+            .filters
+            .make(
+                "displacement-map",
+                &json!({"scale_x": 4.0, "scale_y": 4.0}),
+                &inputs,
+            )
+            .expect("displacement-map factory");
+        assert_eq!(f.input_ports().len(), 2);
+        assert_eq!(f.output_ports().len(), 1);
     }
 }

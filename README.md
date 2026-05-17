@@ -309,6 +309,32 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   in-bounds coordinate; alpha pass-through on RGBA. Gray8 / RGB /
   RGBA. IM analogue: `-define blur:bilateral=1` on the Gaussian
   blur path.
+- **`Kuwahara`** — quadrant-variance edge-preserving smoothing
+  (1976 Kuwahara/Hachimura paper). For each pixel splits the
+  `(2*radius+1)²` window into four overlapping quadrants; the
+  lowest-luminance-variance quadrant's mean colour wins. Flat
+  regions blur cleanly while step edges survive because the
+  homogeneous side always wins the variance race. Gray8 / RGB /
+  RGBA; alpha pass-through.
+- **`AnisotropicBlur`** — Perona-Malik 1990 anisotropic diffusion
+  with the Lorentzian edge-stopping function
+  `g(s) = 1 / (1 + (s/κ)²)`. Iterative four-neighbour explicit-Euler
+  update; smooth areas diffuse freely, edges freeze. `iterations`
+  / `kappa` / `lambda` (`λ ≤ 0.25` for stability). Gray8 / RGB /
+  RGBA; alpha pass-through. Factory aliases: `anisotropic-blur`,
+  `anisotropic`.
+- **`ZoomBlur`** — radial outward "warp drive" blur. Samples along
+  the line from each pixel toward the configurable centre (sample
+  positions geometrically shrink toward the centre as
+  `1 - t · strength`); averaging the sampled colours produces the
+  classic motion-streak look. Bilinear sampling, edge-clamped.
+  Gray8 / RGB / RGBA. Factory: `zoom-blur`.
+- **`RadialBlur`** — rotational ("spin") blur around a configurable
+  centre. For each pixel sweeps the sample arc by ±`angle/2`
+  around the pixel's base angle and averages the bilinear samples.
+  Distinct from `ZoomBlur` (which moves samples radially toward
+  the centre instead of around it). Gray8 / RGB / RGBA. Factory
+  aliases: `radial-blur`, `spin-blur`.
 - **`Sharpen`** — unsharp-mask (Gaussian-blurred subtract +
   re-addition). IM: `-sharpen RxS`.
 - **`Unsharp`** — explicit unsharp-mask with `threshold` gate: only
@@ -318,6 +344,12 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `sigma = 15.0`, `amount = 0.5`, `threshold = 10`. IM analogue:
   `-unsharp 30x15+0.5+10`.
 - **`Emboss`** — 3×3 relief convolution with `+128` bias. IM: `-emboss R`.
+- **`EmbossDirectional`** — 3×3 relief with a configurable light
+  azimuth (degrees CCW from East) and `depth` multiplier. Kernel
+  weights track `(dx, -dy) · (cos a, sin a)`, so flipping the
+  azimuth by 180° inverts polarity. Gray8 / RGB / RGBA (alpha
+  pass-through) + planar YUV (luma plane only, chroma untouched).
+  Factory: `emboss-directional`.
 - **`MotionBlur`** — 1-D Gaussian blur along `angle_degrees`. IM:
   `-motion-blur RxS+A`.
 - **`Implode`** — radial pinch / explode with bilinear resampling.
@@ -441,6 +473,13 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Difference`** — two-input pixel-wise absolute difference
   (`out = |src - dst|`). Cheap change-detection / motion mask, no
   Porter–Duff coverage algebra. Gray8 / RGB / RGBA / planar YUV.
+- **`DisplacementMap`** — two-input warp: the `dst` (map) image's
+  R / G channels (or the single channel on `Gray8`) carry per-pixel
+  `(dx, dy)` vectors re-centred to `[-0.5, 0.5]` and scaled by
+  `scale_x` / `scale_y`; the source is then bilinear-sampled at the
+  perturbed coordinate. Classic compositing primitive for water
+  ripple, heat haze, frosted-glass distortion. Both inputs must
+  share `(width, height, format)`. Gray8 / RGB / RGBA.
 - **`Watermark`** — two-input over-place of a secondary image
   (`dst`) onto the source (`src`) at `(offset_x, offset_y)` with a
   `[0, 1]` `opacity` multiplier. The overlay shape is independent of
