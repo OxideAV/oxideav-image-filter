@@ -280,6 +280,27 @@
 //! - [`Toon`](toon::Toon) — cel-shaded cartoon look: per-channel
 //!   posterise + Sobel edge overlay with configurable ink colour.
 //!
+//! r20 additions:
+//!
+//! - [`Crystallize`](crystallize::Crystallize) — Voronoi-cell averaging
+//!   on a jittered grid; `cell_size` / `jitter` / deterministic `seed`.
+//! - [`Halftone`](halftone::Halftone) — variable-size dot screening
+//!   simulating offset-print AM screens; ink + paper colour configurable.
+//! - [`GradientMap`](gradient_map::GradientMap) +
+//!   [`GradientStop`](gradient_map::GradientStop) — recolour by per-pixel
+//!   luminance ⇒ position in an arbitrary `(position, RGB)` gradient.
+//!   Convenience constructors `duotone(...)` / `tritone(...)`.
+//! - [`SelectiveColor`](selective_color::SelectiveColor) +
+//!   [`HueBand`](selective_color::HueBand) +
+//!   [`BandAdjust`](selective_color::BandAdjust) — per-hue-band HSL
+//!   shifts (Reds / Yellows / Greens / Cyans / Blues / Magentas).
+//! - [`CrossProcess`](cross_process::CrossProcess) — analogue film
+//!   cross-processing emulation via three per-channel sigmoid S-curves.
+//! - [`OtsuThreshold`](otsu_threshold::OtsuThreshold) — global
+//!   automatic threshold maximising inter-class variance; emits binary
+//!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
+//!   `Threshold` (manual cut).
+//!
 //! r16 additions:
 //!
 //! - [`BilateralBlur`](bilateral_blur::BilateralBlur) — edge-preserving
@@ -331,10 +352,13 @@ pub mod clut;
 pub mod color_balance;
 pub mod color_matrix;
 pub mod colorize;
+pub mod comic;
 pub mod composite;
 pub mod contrast_stretch;
 pub mod convolve;
 pub mod crop;
+pub mod cross_process;
+pub mod crystallize;
 pub mod cycle;
 pub mod deskew;
 pub mod despeckle;
@@ -355,10 +379,12 @@ pub mod frame;
 pub mod function;
 pub mod gamma;
 pub mod gradient_conic;
+pub mod gradient_map;
 pub mod gradient_radial;
 pub mod gravity_translate;
 pub mod grayscale;
 pub mod hald_clut;
+pub mod halftone;
 pub mod heatmap;
 pub mod hough_circles;
 pub mod hough_lines;
@@ -374,6 +400,7 @@ pub mod morphology;
 pub mod motion_blur;
 pub mod negate;
 pub mod normalize;
+pub mod otsu_threshold;
 pub mod paint;
 pub mod perspective;
 pub mod pixelate;
@@ -385,6 +412,7 @@ pub mod registry;
 pub mod resize;
 pub mod roll;
 pub mod rotate;
+pub mod selective_color;
 pub mod sepia;
 pub mod shade;
 pub mod shadow_highlight;
@@ -439,10 +467,13 @@ pub use clut::Clut;
 pub use color_balance::ColorBalance;
 pub use color_matrix::ColorMatrix;
 pub use colorize::Colorize;
+pub use comic::Comic;
 pub use composite::{Composite, CompositeOp};
 pub use contrast_stretch::ContrastStretch;
 pub use convolve::Convolve;
 pub use crop::Crop;
+pub use cross_process::CrossProcess;
+pub use crystallize::Crystallize;
 pub use cycle::Cycle;
 pub use deskew::Deskew;
 pub use despeckle::Despeckle;
@@ -463,10 +494,12 @@ pub use frame::Frame;
 pub use function::{Function, FunctionOp};
 pub use gamma::Gamma;
 pub use gradient_conic::GradientConic;
+pub use gradient_map::{GradientMap, GradientStop};
 pub use gradient_radial::GradientRadial;
 pub use gravity_translate::{Gravity, GravityTranslate};
 pub use grayscale::Grayscale;
 pub use hald_clut::HaldClut;
+pub use halftone::Halftone;
 pub use heatmap::{Heatmap, HeatmapRamp};
 pub use hough_circles::HoughCircles;
 pub use hough_lines::HoughLines;
@@ -484,6 +517,7 @@ pub use morphology::{
 pub use motion_blur::MotionBlur;
 pub use negate::Negate;
 pub use normalize::Normalize;
+pub use otsu_threshold::OtsuThreshold;
 pub use paint::Paint;
 pub use perspective::Perspective;
 pub use pixelate::Pixelate;
@@ -495,6 +529,7 @@ pub use registry::{__oxideav_entry, register};
 pub use resize::{Interpolation, Resize};
 pub use roll::Roll;
 pub use rotate::Rotate;
+pub use selective_color::{BandAdjust, HueBand, SelectiveColor};
 pub use sepia::Sepia;
 pub use shade::Shade;
 pub use shadow_highlight::ShadowHighlight;

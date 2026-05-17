@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r20: land six new filters covering Voronoi-cell averaging, AM-screen
+  halftone, arbitrary gradient remap, per-hue-band HSL adjustment,
+  film cross-processing emulation, automatic global threshold, plus a
+  comic-book stylise pipeline. New filters: `Crystallize`
+  (Voronoi-cell averaging on a jittered point lattice — `cell_size` /
+  `jitter` / deterministic `seed`; 3×3 cell-neighbourhood scan keeps
+  the work `O(W·H)`; Gray8 / RGB / RGBA), `Halftone` (amplitude-
+  modulated dot screening — each cell's luma drives a centred-dot
+  radius `(cell/2) · sqrt(coverage)` so ink area tracks coverage;
+  `ink_color` / `paper_color` configurable; Gray8 / RGB / RGBA),
+  `GradientMap` + `GradientStop` (recolour by per-pixel luminance ⇒
+  arbitrary `(position, RGB)` gradient sample; convenience
+  constructors `duotone(...)` and `tritone(...)`; Gray8 input is
+  upgraded to RGB on output; RGBA alpha preserved; distinct from
+  `Heatmap` which only ships fixed built-in ramps), `SelectiveColor`
+  + `HueBand` + `BandAdjust` (per-hue-band HSL shifts for Reds /
+  Yellows / Greens / Cyans / Blues / Magentas at 60° spacing;
+  triangular weighting across band boundaries; achromatic pixels
+  pass through; RGB / RGBA only), `CrossProcess` (analogue film
+  cross-processing emulation via three independent per-channel
+  sigmoid S-curves — warm-biased R, neutral G, cool-biased B; folded
+  into per-channel LUTs so cost is `O(W·H)`; `amount` / `warmth` /
+  `contrast` knobs; Gray8 / RGB / RGBA / YUV-luma), `OtsuThreshold`
+  (1979 Otsu global automatic threshold maximising inter-class
+  variance; tie-breaks plateaus at their midpoint so bimodal cuts
+  land between the modes; optional `invert`; emits binary `Gray8`;
+  Gray8 / RGB / RGBA / planar YUV input), and `Comic` (manga /
+  comic-book stylise: edge-preserving bilateral-style smooth +
+  per-channel quantise for the flat fill, Sobel-on-luma + threshold
+  for the ink overlay; distinct from `Toon` which skips the
+  pre-smooth; `smooth_radius` / `colour_sigma` / `levels` /
+  `edge_threshold` / `ink_color`; RGB / RGBA only). Twelve new
+  factory names wired into `register()`: `crystallize`, `halftone`,
+  `gradient-map`, `duotone` (alias), `selective-color`,
+  `selective-colour` (alias), `cross-process`, `crossprocess`
+  (alias), `otsu-threshold`, `otsu` (alias), `comic`, `manga`
+  (alias). Filter count: 103 → 110 named types (seven new filter
+  structs: `Crystallize`, `Halftone`, `GradientMap`, `SelectiveColor`,
+  `CrossProcess`, `OtsuThreshold`, `Comic`; plus public companion
+  types `GradientStop`, `HueBand`, `BandAdjust`); factory count:
+  125 → 137 names.
+
 - r19: land six new filters covering false-colour visualisation,
   shadow / highlight tint, per-channel posterise, cel-shading, seeded
   region fill, and two-input watermark overlay. New filters:

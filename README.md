@@ -121,6 +121,12 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   configurable `(2*radius+1)²` window and signed offset; box-sum
   implementation is `O(W*H)` regardless of radius. Always emits
   `Gray8` (RGB collapsed via Rec. 601 luma). IM: `-threshold local`.
+- **`OtsuThreshold`** — global automatic threshold maximising
+  inter-class variance (1979 Otsu paper). Optional `invert` flag.
+  Emits binary `Gray8` (RGB / RGBA collapsed via Rec. 601 luma; YUV
+  reads the Y plane). Complement to `AdaptiveThreshold` (local window)
+  and `Threshold` (manual cut). Factory aliases: `otsu-threshold`,
+  `otsu`.
 - **`Equalize`** — per-channel histogram equalisation via CDF
   mapping. Luma-only on YUV. IM: `-equalize`.
 - **`AutoGamma`** — pick a per-channel gamma so the geometric mean
@@ -272,6 +278,23 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   edge overlay with configurable ink colour. Configurable `levels` /
   `edge_threshold` / `edge_color`. RGB / RGBA only. Factory alias:
   `cartoon`.
+- **`CrossProcess`** — analogue film cross-processing emulation via
+  three independent per-channel sigmoid S-curves (warm-biased R,
+  neutral G, cool-biased B). `amount` / `warmth` / `contrast` knobs.
+  Gray8 / RGB / RGBA / YUV-luma. Factory aliases: `cross-process`,
+  `crossprocess`.
+- **`GradientMap`** + **`GradientStop`** — recolour by per-pixel
+  luminance mapped to a position in an arbitrary `(position, RGB)`
+  gradient. Convenience constructors `duotone(shadow, highlight)`
+  and `tritone(shadow, midtone, highlight)`. Gray8 input is upgraded
+  to RGB; RGBA alpha is preserved. Distinct from `Heatmap` (fixed
+  built-in ramps only). Factory aliases: `gradient-map`, `duotone`.
+- **`SelectiveColor`** + **`HueBand`** + **`BandAdjust`** — per-hue-
+  band HSL shifts (`Reds` / `Yellows` / `Greens` / `Cyans` / `Blues`
+  / `Magentas` at 0°/60°/120°/180°/240°/300°). Each band contributes
+  triangular-weighted H / S / L deltas. Achromatic pixels pass
+  through. RGB / RGBA only. Factory aliases: `selective-color`,
+  `selective-colour`.
 - **`FloodFill`** — seeded scanline flood-fill with per-channel
   Chebyshev tolerance (matching ImageMagick's `-fuzz`). Iterative
   span-fill keeps the work `O(W·H)`; out-of-bounds seeds error.
@@ -317,6 +340,24 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   collapses to its mean colour. Distinct from `Quantize` which
   coarsens the colour axis only. Gray8 / RGB / RGBA + planar YUV
   (luma plane only). Factory aliases: `pixelate`, `mosaic`.
+- **`Crystallize`** — Voronoi-cell averaging on a jittered grid.
+  Builds `cell_size`-spaced seed sites, jitters them by ±`jitter ·
+  cell/2` with a deterministic PRNG (`seed`), assigns every pixel to
+  the nearest seed in the 3×3 cell neighbourhood, and paints the
+  cell's mean colour. Stained-glass / crystal-shard appearance.
+  Gray8 / RGB / RGBA. Factory: `crystallize`.
+- **`Halftone`** — variable-size dot screening simulating offset-print
+  amplitude-modulated screens. Each `cell_size` cell's mean luma drives
+  the radius of a centred dot painted in `ink_color` over a
+  `paper_color` background; `radius = (cell/2) · sqrt(coverage)` keeps
+  ink area proportional to coverage. Gray8 / RGB / RGBA. Factory:
+  `halftone`.
+- **`Comic`** — manga / comic-book stylise. Two stages: edge-preserving
+  bilateral-style smooth + per-channel quantisation for flat fills,
+  then Sobel-on-luma + threshold for the ink overlay. Distinct from
+  `Toon` (no pre-smooth; thinner outline). Configurable
+  `smooth_radius` / `colour_sigma` / `levels` / `edge_threshold` /
+  `ink_color`. RGB / RGBA only. Factory aliases: `comic`, `manga`.
 - **`Shade`** — directional Lambertian relief shading from an
   `(azimuth, elevation)` light vector. Optional colour pass-through
   mode (`+shade`). IM: `-shade az,el`.

@@ -262,6 +262,29 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("cartoon", Box::new(make_toon));
     ctx.filters.register("watermark", Box::new(make_watermark));
 
+    // r20 factories: Crystallize / Halftone / GradientMap (+ alias) /
+    // SelectiveColor (+ alias) / CrossProcess (+ alias) / OtsuThreshold
+    // (+ alias).
+    ctx.filters
+        .register("crystallize", Box::new(make_crystallize));
+    ctx.filters.register("halftone", Box::new(make_halftone));
+    ctx.filters
+        .register("gradient-map", Box::new(make_gradient_map));
+    ctx.filters.register("duotone", Box::new(make_gradient_map));
+    ctx.filters
+        .register("selective-color", Box::new(make_selective_color));
+    ctx.filters
+        .register("selective-colour", Box::new(make_selective_color));
+    ctx.filters
+        .register("cross-process", Box::new(make_cross_process));
+    ctx.filters
+        .register("crossprocess", Box::new(make_cross_process));
+    ctx.filters
+        .register("otsu-threshold", Box::new(make_otsu_threshold));
+    ctx.filters.register("otsu", Box::new(make_otsu_threshold));
+    ctx.filters.register("comic", Box::new(make_comic));
+    ctx.filters.register("manga", Box::new(make_comic));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -4194,6 +4217,253 @@ fn make_watermark(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamF
     )))
 }
 
+// --- r20 factories ---
+
+fn make_crystallize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Crystallize;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let cell_size = get_u64("cell_size")
+        .or_else(|| get_u64("cell"))
+        .or_else(|| get_u64("size"))
+        .unwrap_or(8) as u32;
+    let mut f = Crystallize::new(cell_size);
+    if let Some(j) = get_f64("jitter") {
+        f = f.with_jitter(j as f32);
+    }
+    if let Some(s) = get_u64("seed") {
+        f = f.with_seed(s);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_halftone(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Halftone;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let cell_size = get_u64("cell_size")
+        .or_else(|| get_u64("cell"))
+        .or_else(|| get_u64("size"))
+        .unwrap_or(8) as u32;
+    let mut f = Halftone::new(cell_size);
+    if let Some(v) = p.and_then(|m| m.get("ink").or_else(|| m.get("ink_color"))) {
+        f = f.with_ink(parse_rgb3(v, "halftone")?);
+    }
+    if let Some(v) = p.and_then(|m| m.get("paper").or_else(|| m.get("paper_color"))) {
+        f = f.with_paper(parse_rgb3(v, "halftone")?);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_gradient_map(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{GradientMap, GradientStop};
+    let p = params.as_object();
+    // Either: { "stops": [ { "position": 0.0, "color": [R,G,B] }, ... ] }
+    // Or:     { "shadow": [...], "highlight": [...] } (duotone sugar)
+    // Or:     { "shadow": [...], "midtone": [...], "highlight": [...] } (tritone)
+    let f = if let Some(stops_v) = p.and_then(|m| m.get("stops")) {
+        let arr = stops_v.as_array().ok_or_else(|| {
+            Error::invalid("job: filter 'gradient-map': 'stops' must be an array")
+        })?;
+        let mut stops: Vec<GradientStop> = Vec::with_capacity(arr.len());
+        for (idx, s) in arr.iter().enumerate() {
+            let obj = s.as_object().ok_or_else(|| {
+                Error::invalid(format!(
+                    "job: filter 'gradient-map': stop {idx} must be an object"
+                ))
+            })?;
+            let position = obj
+                .get("position")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| {
+                    Error::invalid(format!(
+                        "job: filter 'gradient-map': stop {idx} missing 'position'"
+                    ))
+                })? as f32;
+            let cv = obj
+                .get("color")
+                .or_else(|| obj.get("colour"))
+                .ok_or_else(|| {
+                    Error::invalid(format!(
+                        "job: filter 'gradient-map': stop {idx} missing 'color'"
+                    ))
+                })?;
+            let color = parse_rgb3(cv, "gradient-map")?;
+            stops.push(GradientStop { position, color });
+        }
+        GradientMap::new(stops)?
+    } else {
+        let shadow = match p.and_then(|m| m.get("shadow")) {
+            Some(v) => parse_rgb3(v, "gradient-map")?,
+            None => [0, 0, 0],
+        };
+        let highlight = match p.and_then(|m| m.get("highlight")) {
+            Some(v) => parse_rgb3(v, "gradient-map")?,
+            None => [255, 255, 255],
+        };
+        if let Some(mid_v) = p.and_then(|m| m.get("midtone").or_else(|| m.get("middle"))) {
+            let midtone = parse_rgb3(mid_v, "gradient-map")?;
+            GradientMap::tritone(shadow, midtone, highlight)
+        } else {
+            GradientMap::duotone(shadow, highlight)
+        }
+    };
+    let in_port = video_in_port(inputs);
+    // Output is always RGB or RGBA; Gray8 input upgrades to Rgb24.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format,
+            width,
+            height,
+            time_base,
+            ..
+        } => {
+            let out_fmt = match format {
+                PixelFormat::Rgba => PixelFormat::Rgba,
+                PixelFormat::Gray8 => PixelFormat::Rgb24,
+                _ => PixelFormat::Rgb24,
+            };
+            PortSpec::video("video", *width, *height, out_fmt, *time_base)
+        }
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Rgb24, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_selective_color(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{BandAdjust, HueBand, SelectiveColor};
+    let p = params.as_object();
+    let mut f = SelectiveColor::new();
+    let bands = [
+        HueBand::Reds,
+        HueBand::Yellows,
+        HueBand::Greens,
+        HueBand::Cyans,
+        HueBand::Blues,
+        HueBand::Magentas,
+    ];
+    let names = ["reds", "yellows", "greens", "cyans", "blues", "magentas"];
+    for (b, n) in bands.iter().zip(names.iter()) {
+        if let Some(obj) = p.and_then(|m| m.get(*n)).and_then(|v| v.as_object()) {
+            let adj = BandAdjust {
+                hue_shift_degrees: obj.get("hue").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                saturation_shift: obj
+                    .get("saturation")
+                    .or_else(|| obj.get("sat"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0) as f32,
+                lightness_shift: obj
+                    .get("lightness")
+                    .or_else(|| obj.get("light"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0) as f32,
+            };
+            f = f.with_band(*b, adj);
+        }
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_cross_process(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::CrossProcess;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let amount = get_f64("amount").unwrap_or(1.0) as f32;
+    let mut f = CrossProcess::new(amount);
+    if let Some(w) = get_f64("warmth") {
+        f = f.with_warmth(w as f32);
+    }
+    if let Some(c) = get_f64("contrast") {
+        f = f.with_contrast(c as f32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_otsu_threshold(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::OtsuThreshold;
+    let p = params.as_object();
+    let invert = p
+        .and_then(|m| m.get("invert"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let f = OtsuThreshold::new().with_invert(invert);
+    let in_port = video_in_port(inputs);
+    // Output is always Gray8.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_comic(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Comic;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let mut f = Comic::new();
+    if let Some(r) = get_u64("smooth_radius").or_else(|| get_u64("radius")) {
+        f = f.with_smooth_radius(r as u32);
+    }
+    if let Some(s) = get_f64("colour_sigma").or_else(|| get_f64("color_sigma")) {
+        f = f.with_colour_sigma(s as f32);
+    }
+    if let Some(n) = get_u64("levels") {
+        f = f.with_levels(n as u32);
+    }
+    if let Some(t) = get_u64("edge_threshold").or_else(|| get_u64("threshold")) {
+        f = f.with_edge_threshold(t.min(255) as u8);
+    }
+    if let Some(v) = p.and_then(|m| m.get("ink_color").or_else(|| m.get("ink_colour"))) {
+        f = f.with_ink_color(parse_rgb3(v, "comic")?);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4372,6 +4642,21 @@ mod tests {
             "toon",
             "cartoon",
             "watermark",
+            // r20 additions (crystallize / halftone / gradient-map +
+            // alias / selective-color + alias / cross-process + alias /
+            // otsu-threshold + alias / comic + alias).
+            "crystallize",
+            "halftone",
+            "gradient-map",
+            "duotone",
+            "selective-color",
+            "selective-colour",
+            "cross-process",
+            "crossprocess",
+            "otsu-threshold",
+            "otsu",
+            "comic",
+            "manga",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -7253,5 +7538,274 @@ mod tests {
             .expect("watermark factory");
         assert_eq!(f.input_ports().len(), 2);
         assert_eq!(f.output_ports().len(), 1);
+    }
+
+    // --- r20 smoke tests ---
+
+    #[test]
+    fn crystallize_factory_builds_and_runs() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(16, 16)];
+        let f = c
+            .filters
+            .make(
+                "crystallize",
+                &json!({"cell_size": 4, "jitter": 0.5, "seed": 7}),
+                &inputs,
+            )
+            .expect("crystallize factory");
+        let mut data = Vec::with_capacity(16 * 16 * 3);
+        for _ in 0..(16 * 16) {
+            data.extend_from_slice(&[100u8, 150, 200]);
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 48, data }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 16 * 16 * 3);
+    }
+
+    #[test]
+    fn halftone_factory_builds_and_runs() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("halftone", &json!({"cell_size": 4}), &inputs)
+            .expect("halftone factory");
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 8,
+                data: vec![128u8; 64],
+            }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 64);
+    }
+
+    #[test]
+    fn halftone_with_custom_colours_factory() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(8, 8)];
+        c.filters
+            .make(
+                "halftone",
+                &json!({"cell_size": 4, "ink": [100, 0, 0], "paper": [240, 240, 240]}),
+                &inputs,
+            )
+            .expect("halftone factory");
+    }
+
+    #[test]
+    fn gradient_map_duotone_factory_upgrades_gray_to_rgb() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make(
+                "gradient-map",
+                &json!({"shadow": [0, 0, 0], "highlight": [255, 0, 0]}),
+                &inputs,
+            )
+            .expect("gradient-map factory");
+        match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => {
+                assert_eq!(*format, PixelFormat::Rgb24);
+            }
+            _ => panic!("gradient-map output must be video"),
+        }
+        let out = run_one(f, gray_4x4(|_, _| 255));
+        // 4×4 RGB = 48 bytes.
+        assert_eq!(out.planes[0].data.len(), 48);
+        // White input ⇒ highlight colour [255, 0, 0].
+        for chunk in out.planes[0].data.chunks(3) {
+            assert_eq!(chunk, [255u8, 0, 0]);
+        }
+    }
+
+    #[test]
+    fn gradient_map_explicit_stops_factory() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        c.filters
+            .make(
+                "gradient-map",
+                &json!({
+                    "stops": [
+                        {"position": 0.0, "color": [0, 0, 0]},
+                        {"position": 0.5, "color": [255, 0, 0]},
+                        {"position": 1.0, "color": [255, 255, 0]},
+                    ]
+                }),
+                &inputs,
+            )
+            .expect("gradient-map stops factory");
+    }
+
+    #[test]
+    fn gradient_map_rejects_single_stop() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let bad = c.filters.make(
+            "gradient-map",
+            &json!({"stops": [{"position": 0.0, "color": [0, 0, 0]}]}),
+            &inputs,
+        );
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn gradient_map_duotone_alias_resolves() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        c.filters
+            .make("duotone", &json!({}), &inputs)
+            .expect("duotone alias");
+    }
+
+    #[test]
+    fn selective_color_identity_passes_through() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("selective-color", &json!({}), &inputs)
+            .expect("selective-color factory");
+        let frame = rgba_4x4(|x, y| [(x * 30) as u8, (y * 30) as u8, 80, 222]);
+        let out = run_one(f, frame.clone());
+        for (a, b) in out.planes[0].data.iter().zip(frame.planes[0].data.iter()) {
+            assert!((*a as i16 - *b as i16).abs() <= 1);
+        }
+    }
+
+    #[test]
+    fn selective_colour_alias_resolves() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        c.filters
+            .make("selective-colour", &json!({}), &inputs)
+            .expect("selective-colour alias");
+    }
+
+    #[test]
+    fn selective_color_reds_band_factory() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        c.filters
+            .make(
+                "selective-color",
+                &json!({
+                    "reds": {"hue": 30.0, "saturation": -0.5, "lightness": 0.1}
+                }),
+                &inputs,
+            )
+            .expect("selective-color reds factory");
+    }
+
+    #[test]
+    fn cross_process_factory_amount_zero_is_passthrough() {
+        let c = ctx();
+        let inputs = [rgba_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("cross-process", &json!({"amount": 0.0}), &inputs)
+            .expect("cross-process factory");
+        let frame = rgba_4x4(|x, y| [(x * 30) as u8, (y * 30) as u8, 80, 222]);
+        let out = run_one(f, frame.clone());
+        assert_eq!(out.planes[0].data, frame.planes[0].data);
+    }
+
+    #[test]
+    fn cross_process_alias_resolves() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        c.filters
+            .make("crossprocess", &json!({}), &inputs)
+            .expect("crossprocess alias");
+    }
+
+    #[test]
+    fn otsu_threshold_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("otsu-threshold", &json!({}), &inputs)
+            .expect("otsu-threshold factory");
+        match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => {
+                assert_eq!(*format, PixelFormat::Gray8);
+            }
+            _ => panic!("otsu output must be video"),
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 8,
+                data: (0..64u8)
+                    .map(|i| if i % 8 < 4 { 40 } else { 210 })
+                    .collect(),
+            }],
+        };
+        let out = run_one(f, frame);
+        assert!(out.planes[0].data.iter().all(|&v| v == 0 || v == 255));
+    }
+
+    #[test]
+    fn otsu_alias_resolves() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        c.filters
+            .make("otsu", &json!({}), &inputs)
+            .expect("otsu alias");
+    }
+
+    #[test]
+    fn otsu_threshold_invert_factory() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        c.filters
+            .make("otsu-threshold", &json!({"invert": true}), &inputs)
+            .expect("otsu-threshold invert factory");
+    }
+
+    #[test]
+    fn comic_factory_builds_and_runs() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(8, 8)];
+        let f = c
+            .filters
+            .make(
+                "comic",
+                &json!({
+                    "smooth_radius": 1,
+                    "levels": 3,
+                    "edge_threshold": 30,
+                    "ink_color": [10, 10, 10],
+                }),
+                &inputs,
+            )
+            .expect("comic factory");
+        let mut data = Vec::with_capacity(8 * 8 * 3);
+        for _ in 0..64 {
+            data.extend_from_slice(&[120u8, 80, 200]);
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 24, data }],
+        };
+        let out = run_one(f, frame);
+        assert_eq!(out.planes[0].data.len(), 8 * 8 * 3);
+    }
+
+    #[test]
+    fn comic_manga_alias_resolves() {
+        let c = ctx();
+        let inputs = [rgb24_in_port(8, 8)];
+        c.filters
+            .make("manga", &json!({}), &inputs)
+            .expect("manga alias");
     }
 }
