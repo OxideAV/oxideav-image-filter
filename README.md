@@ -169,6 +169,54 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `Polynomial` (Horner-rule on descending coefficients), `Sinusoid`
   (`bias + amp · sin(2π · (freq · x + phase / 360))`), `ArcSin`,
   `ArcTan`. IM: `-function <kind> args`.
+- **`Curves`** + **`Curve`** + **`CurveInterpolation`** — per-channel
+  tonal curves through user-supplied `(x, y)` control points.
+  Three interpolants: `Linear` (segment-wise), `CatmullRom` (1974
+  Catmull-Rom cubic), and `MonotoneCubic` (1980 Fritsch-Carlson
+  monotonicity-preserving Hermite — default; never overshoots).
+  Master curve runs on every tone channel; optional `red` / `green`
+  / `blue` overrides on RGB / RGBA. Gray8 / RGB / RGBA + planar YUV
+  (master curve on luma only). Cost is `O(W·H)` (per-channel 256-LUT).
+
+### Tone mapping (HDR-style)
+
+Global tone-mapping operators for high-contrast scenes; all do the
+sRGB ↔ linear-light round-trip internally so the curve runs on
+physically-meaningful luminance.
+
+- **`Reinhard`** — Reinhard, Stark, Shirley, Ferwerda 2002 SIGGRAPH
+  paper "Photographic Tone Reproduction for Digital Images". Log-
+  average luminance scaling (`key` / "a" parameter, default `0.18`
+  middle-grey) + extended `L · (1 + L/white²) / (1 + L)` compression
+  curve. Chroma is preserved by re-modulating linear RGB through
+  `L_d / L_w`. Gray8 / RGB / RGBA. Factory aliases: `reinhard`,
+  `tonemap-reinhard`.
+- **`Hable`** — Uncharted-2 / John Hable filmic operator from the
+  2010 GDC slides. Rational-function curve
+  `((x(Ax+CB)+DE) / (x(Ax+B)+DF)) - E/F` with the classic constants
+  `A=0.15, B=0.50, C=0.10, D=0.20, E=0.02, F=0.30`; output normalised
+  so a configurable linear-white point lands exactly at `1.0`.
+  Per-channel LUT (cost `O(W·H)`). Gray8 / RGB / RGBA. Factory
+  aliases: `hable`, `tonemap-hable`, `uncharted2`.
+- **`Drago`** — Drago, Myszkowski, Annen, Chiba 2003 Eurographics
+  paper "Adaptive Logarithmic Mapping For Displaying High Contrast
+  Scenes". Per-pixel logarithmic compression
+  `log(Lw+1) / log(2 + 8·(Lw/Lwmax)^(log(bias)/log(0.5)))` with bias
+  parameter `b ∈ [0.5, 1.0]` (default `0.85`); maps the scene
+  maximum to the display maximum, adapting per frame. Chroma-
+  preserving sRGB round-trip. Gray8 / RGB / RGBA. Factory aliases:
+  `drago`, `tonemap-drago`.
+
+### Distance / signed-distance
+
+- **`DistanceTransform`** — Borgefors 1986 3-4 chamfer distance
+  transform. Two sequential passes (forward top-left → bottom-right,
+  backward bottom-right → top-left) compute the chamfer-3-4 metric
+  on a binary mask thresholded from the input intensity. Output is
+  `Gray8` whose value is the (scaled, clamped) distance from each
+  pixel to the nearest foreground pixel; useful for stroke
+  thickening, signed-distance fields, contour render. Gray8 input
+  only. Factory aliases: `distance-transform`, `distance`.
 
 ### Colour
 
@@ -176,6 +224,14 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   RGB / RGBA only (YUV returns `Unsupported`). IM: `-modulate B,S,H`.
 - **`Sepia`** — sepia-tone matrix with optional `threshold` mix back
   to grayscale. IM: `-sepia-tone N%`.
+- **`Cyanotype`** — vintage blueprint colour remap. Reduces input
+  to Rec.709 luminance and interpolates between a configurable
+  shadow ("Prussian blue" `(15, 42, 111)`) and highlight (paper
+  white `(217, 235, 248)`) endpoint. `strength` dials the blend
+  with the original RGB; custom endpoints support cousin processes
+  (sepia is similar but ships separately). Gray8 input upgrades to
+  RGB; RGBA alpha pass-through. Factory aliases: `cyanotype`,
+  `blueprint`.
 - **`Grayscale`** — Rec. 601 desaturate; optional `Gray8` collapse.
   IM: `-colorspace Gray`.
 - **`Colorize`** — linear blend toward a target `[R, G, B, A]` colour

@@ -302,6 +302,24 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("displacement-map", Box::new(make_displacement_map));
 
+    // r22 factories: tone-mapping (Reinhard / Hable / Drago) + Curves +
+    // DistanceTransform + Cyanotype vintage emulation.
+    ctx.filters.register("reinhard", Box::new(make_reinhard));
+    ctx.filters
+        .register("tonemap-reinhard", Box::new(make_reinhard));
+    ctx.filters.register("hable", Box::new(make_hable));
+    ctx.filters.register("tonemap-hable", Box::new(make_hable));
+    ctx.filters.register("uncharted2", Box::new(make_hable));
+    ctx.filters.register("drago", Box::new(make_drago));
+    ctx.filters.register("tonemap-drago", Box::new(make_drago));
+    ctx.filters.register("curves", Box::new(make_curves));
+    ctx.filters
+        .register("distance-transform", Box::new(make_distance_transform));
+    ctx.filters
+        .register("distance", Box::new(make_distance_transform));
+    ctx.filters.register("cyanotype", Box::new(make_cyanotype));
+    ctx.filters.register("blueprint", Box::new(make_cyanotype));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -4648,6 +4666,212 @@ fn make_displacement_map(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn 
     )))
 }
 
+fn make_reinhard(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Reinhard;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let key = get_f64("key").or_else(|| get_f64("a")).unwrap_or(0.18) as f32;
+    let mut f = Reinhard::new(key);
+    if let Some(w) = get_f64("white").or_else(|| get_f64("white_point")) {
+        f = f.with_white(w as f32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_hable(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Hable;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let bias = get_f64("exposure_bias")
+        .or_else(|| get_f64("exposure"))
+        .or_else(|| get_f64("bias"))
+        .unwrap_or(2.0) as f32;
+    let mut f = Hable::new(bias);
+    if let Some(w) = get_f64("white").or_else(|| get_f64("white_point")) {
+        f = f.with_white(w as f32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_drago(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Drago;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let bias = get_f64("bias").unwrap_or(0.85) as f32;
+    let mut f = Drago::new(bias);
+    if let Some(s) = get_f64("display_scale").or_else(|| get_f64("scale")) {
+        f = f.with_display_scale(s as f32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_curves(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Curve, CurveInterpolation, Curves};
+
+    fn parse_curve(v: &Value) -> Option<Curve> {
+        let arr = v.as_array()?;
+        let mut pts = Vec::with_capacity(arr.len());
+        for entry in arr {
+            let pair = entry.as_array()?;
+            if pair.len() != 2 {
+                return None;
+            }
+            let x = pair[0].as_i64()?.clamp(0, 255) as u8;
+            let y = pair[1].as_i64()?.clamp(0, 255) as u8;
+            pts.push((x, y));
+        }
+        Some(Curve::new(pts))
+    }
+
+    let p = params.as_object();
+    let master = p
+        .and_then(|m| m.get("master").or_else(|| m.get("curve")))
+        .and_then(parse_curve)
+        .unwrap_or_else(Curve::identity);
+    let mut f = Curves::new(master);
+    if let Some(c) = p.and_then(|m| m.get("red")).and_then(parse_curve) {
+        f = f.with_red(c);
+    }
+    if let Some(c) = p.and_then(|m| m.get("green")).and_then(parse_curve) {
+        f = f.with_green(c);
+    }
+    if let Some(c) = p.and_then(|m| m.get("blue")).and_then(parse_curve) {
+        f = f.with_blue(c);
+    }
+    let mode = p
+        .and_then(|m| m.get("interpolation").or_else(|| m.get("mode")))
+        .and_then(|v| v.as_str())
+        .map(|s| match s {
+            "linear" => CurveInterpolation::Linear,
+            "catmull-rom" | "catmull_rom" | "catmullrom" => CurveInterpolation::CatmullRom,
+            _ => CurveInterpolation::MonotoneCubic,
+        })
+        .unwrap_or(CurveInterpolation::MonotoneCubic);
+    f = f.with_interpolation(mode);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_distance_transform(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DistanceTransform;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+    let threshold = get_u64("threshold").unwrap_or(128).min(255) as u8;
+    let mut f = DistanceTransform::new(threshold);
+    if let Some(inv) = get_bool("invert") {
+        f = f.with_invert(inv);
+    }
+    if let Some(s) = get_f64("scale") {
+        f = f.with_scale(s as f32);
+    }
+    let in_port = video_in_port(inputs);
+    // Force the output port to Gray8 — DistanceTransform always emits
+    // a single-plane intensity image regardless of input flavour, and
+    // the input is Gray8-only anyway (the apply() call rejects others).
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec {
+            name: "video".to_string(),
+            params: PortParams::Video {
+                format: PixelFormat::Gray8,
+                width: *width,
+                height: *height,
+                time_base: *time_base,
+            },
+            ..in_port.clone()
+        },
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_cyanotype(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Cyanotype;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let strength = get_f64("strength").unwrap_or(1.0) as f32;
+    let mut f = Cyanotype::new(strength);
+
+    fn parse_rgb(v: &Value) -> Option<[u8; 3]> {
+        let arr = v.as_array()?;
+        if arr.len() != 3 {
+            return None;
+        }
+        let r = arr[0].as_i64()?.clamp(0, 255) as u8;
+        let g = arr[1].as_i64()?.clamp(0, 255) as u8;
+        let b = arr[2].as_i64()?.clamp(0, 255) as u8;
+        Some([r, g, b])
+    }
+
+    let shadow = p.and_then(|m| m.get("shadow")).and_then(parse_rgb);
+    let highlight = p.and_then(|m| m.get("highlight")).and_then(parse_rgb);
+    if shadow.is_some() || highlight.is_some() {
+        f = f.with_endpoints(
+            shadow.unwrap_or([15, 42, 111]),
+            highlight.unwrap_or([217, 235, 248]),
+        );
+    }
+
+    let in_port = video_in_port(inputs);
+    // Cyanotype upgrades Gray8 → Rgb24; otherwise pass through.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format: PixelFormat::Gray8,
+            width,
+            height,
+            time_base,
+        } => PortSpec {
+            name: "video".to_string(),
+            params: PortParams::Video {
+                format: PixelFormat::Rgb24,
+                width: *width,
+                height: *height,
+                time_base: *time_base,
+            },
+            ..in_port.clone()
+        },
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4852,6 +5076,21 @@ mod tests {
             "spin-blur",
             "emboss-directional",
             "displacement-map",
+            // r22 additions (tone-mapping: reinhard / hable + alias /
+            // drago + alias / curves / distance-transform + alias /
+            // cyanotype + alias).
+            "reinhard",
+            "tonemap-reinhard",
+            "hable",
+            "tonemap-hable",
+            "uncharted2",
+            "drago",
+            "tonemap-drago",
+            "curves",
+            "distance-transform",
+            "distance",
+            "cyanotype",
+            "blueprint",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }

@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r22: land six new filters covering three classic global HDR tone-
+  mapping operators (Reinhard 2002, Hable Uncharted-2 GDC 2010, Drago
+  Eurographics 2003), a per-channel `Curves` adjustment primitive with
+  three interpolation modes (Linear / Catmull-Rom 1974 / Fritsch-Carlson
+  1980 monotone-cubic), a binary-mask `DistanceTransform` (Borgefors
+  1986 3-4 chamfer), and `Cyanotype` (vintage blueprint colour remap).
+  New filters: `Reinhard` (chroma-preserving log-average luminance
+  scaling with the extended `L · (1 + L/white²) / (1 + L)` curve;
+  Gray8 / RGB / RGBA), `Hable` (Uncharted-2 filmic rational-function
+  curve `((x(Ax+CB)+DE) / (x(Ax+B)+DF)) - E/F` normalised so a
+  configurable linear-white point lands at `1.0`; per-channel LUT;
+  Gray8 / RGB / RGBA), `Drago` (adaptive logarithmic compression
+  `log(Lw+1) / log(2 + 8·(Lw/Lwmax)^(log(bias)/log(0.5)))` with
+  per-frame Lwmax adaptation; chroma-preserving; Gray8 / RGB / RGBA),
+  `Curves` + `Curve` + `CurveInterpolation` (per-channel tonal curves
+  with master + optional R / G / B overrides; Linear / CatmullRom /
+  MonotoneCubic interpolants; cost `O(W·H)` via 256-LUT; Gray8 / RGB /
+  RGBA + planar YUV with master curve on luma only),
+  `DistanceTransform` (3-4 chamfer two-pass distance from binary mask
+  with configurable `threshold` / `invert` / `scale`; emits `Gray8`;
+  Gray8 input only), and `Cyanotype` (luminance-driven blend between
+  shadow + highlight endpoints, defaults to Prussian blue → paper
+  white; configurable endpoints, `strength`, alpha pass-through;
+  Gray8 input upgraded to RGB; YUV `Unsupported`). Twelve new factory
+  names wired into `register()`: `reinhard`, `tonemap-reinhard`
+  (alias), `hable`, `tonemap-hable`, `uncharted2` (aliases), `drago`,
+  `tonemap-drago` (alias), `curves`, `distance-transform`, `distance`
+  (alias), `cyanotype`, `blueprint` (alias). Filter count: 116 → 122
+  named types; factory count: 145 → 157 names.
+
 - r21: land six new filters covering quadrant-variance edge-preserving
   smoothing, iterative anisotropic diffusion, two flavours of motion
   blur (radial-outward and rotational-around-centre), a configurable-

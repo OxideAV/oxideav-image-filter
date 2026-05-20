@@ -301,6 +301,28 @@
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
 //!
+//! r22 additions:
+//!
+//! - [`Reinhard`](reinhard::Reinhard) — 2002 Reinhard et al. global
+//!   tone-mapping operator. Log-average luminance scaling + extended
+//!   `L · (1 + L/white²) / (1 + L)` curve; chroma-preserving sRGB
+//!   round-trip. Gray8 / RGB / RGBA.
+//! - [`Hable`](hable::Hable) — Uncharted-2 "filmic" rational-function
+//!   tone mapper (Hable, GDC 2010). Per-channel LUT; `exposure_bias`
+//!   and `white` knobs.
+//! - [`Drago`](drago::Drago) — 2003 Drago et al. adaptive logarithmic
+//!   compression with `bias` parameter; chroma-preserving.
+//! - [`Curves`](curves::Curves) + [`Curve`](curves::Curve) +
+//!   [`CurveInterpolation`](curves::CurveInterpolation) — per-channel
+//!   tonal curves with Linear / Catmull-Rom / Fritsch-Carlson
+//!   monotone-cubic interpolation through user control points.
+//! - [`DistanceTransform`](distance_transform::DistanceTransform) —
+//!   3-4 chamfer (Borgefors 1986) two-pass binary-mask distance
+//!   transform; emits `Gray8`.
+//! - [`Cyanotype`](cyanotype::Cyanotype) — vintage blueprint colour
+//!   remap between configurable shadow / highlight endpoints
+//!   (defaults to Prussian blue → paper white).
+//!
 //! r21 additions:
 //!
 //! - [`Kuwahara`](kuwahara::Kuwahara) — quadrant-variance edge-preserving
@@ -380,12 +402,16 @@ pub mod convolve;
 pub mod crop;
 pub mod cross_process;
 pub mod crystallize;
+pub mod curves;
+pub mod cyanotype;
 pub mod cycle;
 pub mod deskew;
 pub mod despeckle;
 pub mod difference;
 pub mod displacement_map;
+pub mod distance_transform;
 pub mod distort;
+pub mod drago;
 pub mod drop_shadow;
 pub mod edge;
 pub mod edge_multi;
@@ -406,6 +432,7 @@ pub mod gradient_map;
 pub mod gradient_radial;
 pub mod gravity_translate;
 pub mod grayscale;
+pub mod hable;
 pub mod hald_clut;
 pub mod halftone;
 pub mod heatmap;
@@ -434,6 +461,7 @@ pub mod posterize_channels;
 pub mod quantize;
 pub mod radial_blur;
 pub mod registry;
+pub mod reinhard;
 pub mod resize;
 pub mod roll;
 pub mod rotate;
@@ -501,12 +529,16 @@ pub use convolve::Convolve;
 pub use crop::Crop;
 pub use cross_process::CrossProcess;
 pub use crystallize::Crystallize;
+pub use curves::{Curve, CurveInterpolation, Curves};
+pub use cyanotype::Cyanotype;
 pub use cycle::Cycle;
 pub use deskew::Deskew;
 pub use despeckle::Despeckle;
 pub use difference::Difference;
 pub use displacement_map::DisplacementMap;
+pub use distance_transform::DistanceTransform;
 pub use distort::Distort;
+pub use drago::Drago;
 pub use drop_shadow::DropShadow;
 pub use edge::Edge;
 pub use edge_multi::{EdgeDetect, EdgeKernel};
@@ -527,6 +559,7 @@ pub use gradient_map::{GradientMap, GradientStop};
 pub use gradient_radial::GradientRadial;
 pub use gravity_translate::{Gravity, GravityTranslate};
 pub use grayscale::Grayscale;
+pub use hable::Hable;
 pub use hald_clut::HaldClut;
 pub use halftone::Halftone;
 pub use heatmap::{Heatmap, HeatmapRamp};
@@ -557,6 +590,7 @@ pub use posterize_channels::PosterizeChannels;
 pub use quantize::Quantize;
 pub use radial_blur::RadialBlur;
 pub use registry::{__oxideav_entry, register};
+pub use reinhard::Reinhard;
 pub use resize::{Interpolation, Resize};
 pub use roll::Roll;
 pub use rotate::Rotate;
