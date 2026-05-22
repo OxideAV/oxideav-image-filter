@@ -301,6 +301,16 @@
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
 //!
+//! r24 additions:
+//!
+//! - [`Roberts`](roberts::Roberts) + [`RobertsMagnitude`](roberts::RobertsMagnitude)
+//!   — Roberts cross 2×2 diagonal-difference edge operator (Roberts
+//!   1963). `Gx = a − d`, `Gy = b − c` over the 2×2 window; magnitude
+//!   is `sqrt(Gx²+Gy²)` (L2, default) or `|Gx|+|Gy|` (L1), clamped to
+//!   `[0,255]`. Luma-collapses any supported input; output `Gray8`.
+//!   The tiniest first-derivative detector — complement to
+//!   [`Edge`] (Sobel) and [`Laplacian`](laplacian::Laplacian).
+//!
 //! r23 additions:
 //!
 //! - [`MaxRgb`](max_rgb::MaxRgb) + [`MaxRgbMode`](max_rgb::MaxRgbMode) —
@@ -473,6 +483,7 @@ pub mod radial_blur;
 pub mod registry;
 pub mod reinhard;
 pub mod resize;
+pub mod roberts;
 pub mod roll;
 pub mod rotate;
 pub mod selective_color;
@@ -603,6 +614,7 @@ pub use radial_blur::RadialBlur;
 pub use registry::{__oxideav_entry, register};
 pub use reinhard::Reinhard;
 pub use resize::{Interpolation, Resize};
+pub use roberts::{Roberts, RobertsMagnitude};
 pub use roll::Roll;
 pub use rotate::Rotate;
 pub use selective_color::{BandAdjust, HueBand, SelectiveColor};

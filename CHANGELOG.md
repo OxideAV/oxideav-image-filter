@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r24: land `Roberts` + `RobertsMagnitude` — the Roberts cross 2×2
+  diagonal-difference edge operator (Lawrence Roberts, MIT PhD thesis,
+  1963). The two responses are `Gx = a − d` and `Gy = b − c` over the
+  2×2 window anchored at `(x, y)`; the edge magnitude is the Euclidean
+  `sqrt(Gx²+Gy²)` (`RobertsMagnitude::L2`, default) or the Manhattan
+  `|Gx|+|Gy|` (`L1`), clamped to `[0, 255]`. Any supported input is
+  luma-collapsed first; the output is always `Gray8`. The smallest
+  classic first-derivative detector — a sibling of `Edge` (Sobel) and
+  `Laplacian` (second-derivative). Unlike `EdgeDetect`'s `L1`-only
+  Roberts kernel, this dedicated filter defaults to the true Euclidean
+  magnitude. Two factory names wired into `register()`: `roberts`,
+  `roberts-cross`; the factory accepts `magnitude: "l1"|"l2"` (or the
+  `l1: true` boolean shorthand). Stateless, single-frame, `O(W·H)`.
+
 - r23: land `MaxRgb` + `MaxRgbMode` — per-pixel `max(R, G, B)` (HSV-V)
   or `min(R, G, B)` channel-collapse to greyscale. Stateless,
   branch-free, `O(W·H)`. Default output is single-plane `Gray8`; the

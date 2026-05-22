@@ -324,6 +324,9 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("max-rgb", Box::new(make_max_rgb));
     ctx.filters.register("hsv-value", Box::new(make_max_rgb));
     ctx.filters.register("min-rgb", Box::new(make_min_rgb));
+    ctx.filters.register("roberts", Box::new(make_roberts));
+    ctx.filters
+        .register("roberts-cross", Box::new(make_roberts));
 
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
@@ -4934,6 +4937,52 @@ fn make_min_rgb(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
     make_max_rgb_inner(crate::MaxRgbMode::Min, params, inputs)
 }
 
+fn make_roberts(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Roberts, RobertsMagnitude};
+    let p = params.as_object();
+    // Accept `magnitude: "l1" | "l2"` (default l2). The `l1` boolean
+    // shorthand is also honoured.
+    let mag = p
+        .and_then(|m| m.get("magnitude"))
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            if s.eq_ignore_ascii_case("l1") {
+                RobertsMagnitude::L1
+            } else {
+                RobertsMagnitude::L2
+            }
+        })
+        .or_else(|| {
+            p.and_then(|m| m.get("l1"))
+                .and_then(|v| v.as_bool())
+                .map(|b| {
+                    if b {
+                        RobertsMagnitude::L1
+                    } else {
+                        RobertsMagnitude::L2
+                    }
+                })
+        })
+        .unwrap_or(RobertsMagnitude::L2);
+    let f = Roberts::new().with_magnitude(mag);
+    let in_port = video_in_port(inputs);
+    // Roberts output is always Gray8.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5157,6 +5206,9 @@ mod tests {
             "max-rgb",
             "hsv-value",
             "min-rgb",
+            // r24 additions (roberts cross + alias).
+            "roberts",
+            "roberts-cross",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -7198,6 +7250,36 @@ mod tests {
             _ => panic!("expected video port"),
         };
         assert_eq!(out_format, PixelFormat::Gray8);
+    }
+
+    #[test]
+    fn roberts_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("roberts", &json!({}), &inputs)
+            .expect("roberts factory");
+        let out_format = match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => *format,
+            _ => panic!("expected video port"),
+        };
+        assert_eq!(out_format, PixelFormat::Gray8);
+    }
+
+    #[test]
+    fn roberts_factory_accepts_l1_magnitude() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        // Both the string form and the alias should construct fine.
+        assert!(c
+            .filters
+            .make("roberts", &json!({"magnitude": "l1"}), &inputs)
+            .is_ok());
+        assert!(c
+            .filters
+            .make("roberts-cross", &json!({"l1": true}), &inputs)
+            .is_ok());
     }
 
     #[test]

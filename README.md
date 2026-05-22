@@ -470,6 +470,13 @@ physically-meaningful luminance.
   kernel (`Sobel` / `Prewitt` / `Scharr` / `Roberts`). Complements
   the fixed-Sobel `Edge`; same `Gray8` output shape and pixel-format
   coverage. Factory aliases: `edge-detect`, `edge-multi`.
+- **`Roberts`** + **`RobertsMagnitude`** — Roberts cross 2×2
+  diagonal-difference edge operator (Roberts 1963): `Gx = a − d`,
+  `Gy = b − c`, magnitude `sqrt(Gx²+Gy²)` (`L2`, default) or
+  `|Gx|+|Gy|` (`L1`), clamped to `[0, 255]`. The smallest first-
+  derivative detector; output `Gray8`. Unlike `EdgeDetect`'s
+  `L1`-only Roberts kernel, the default here is the true Euclidean
+  magnitude. Factory aliases: `roberts`, `roberts-cross`.
 - **`HoughCircles`** — circle detection via a 3-D Hough accumulator
   indexed by `(radius, cx, cy)`. Sobel-magnitude voters cast votes
   along Bresenham circles of each candidate radius into the
