@@ -320,6 +320,11 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("cyanotype", Box::new(make_cyanotype));
     ctx.filters.register("blueprint", Box::new(make_cyanotype));
 
+    // r23 factories: MaxRGB / MinRGB channel-collapse (HSV-V).
+    ctx.filters.register("max-rgb", Box::new(make_max_rgb));
+    ctx.filters.register("hsv-value", Box::new(make_max_rgb));
+    ctx.filters.register("min-rgb", Box::new(make_min_rgb));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -4872,6 +4877,63 @@ fn make_cyanotype(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamF
     )))
 }
 
+/// Build a MaxRGB or MinRGB collapse based on `mode`.
+///
+/// Accepts `keep_format` (bool, default `false`) on the params map.
+/// With `keep_format = false` the output port advertises `Gray8`;
+/// with `keep_format = true` it passes through the input RGB / RGBA
+/// shape.
+fn make_max_rgb_inner(
+    mode: crate::MaxRgbMode,
+    params: &Value,
+    inputs: &[PortSpec],
+) -> Result<Box<dyn StreamFilter>> {
+    use crate::MaxRgb;
+    let p = params.as_object();
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+
+    let mut f = MaxRgb {
+        mode,
+        keep_format: false,
+    };
+    if let Some(k) = get_bool("keep_format") {
+        f = f.with_keep_format(k);
+    }
+    let in_port = video_in_port(inputs);
+    // Gray8 input stays Gray8 (identity); RGB / RGBA defaults to Gray8
+    // unless keep_format opts back into the source format.
+    let out_port = if f.keep_format {
+        passthrough_out_port(&in_port)
+    } else {
+        match &in_port.params {
+            PortParams::Video {
+                format: PixelFormat::Gray8,
+                ..
+            } => passthrough_out_port(&in_port),
+            PortParams::Video {
+                width,
+                height,
+                time_base,
+                ..
+            } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+            _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+        }
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_max_rgb(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    make_max_rgb_inner(crate::MaxRgbMode::Max, params, inputs)
+}
+
+fn make_min_rgb(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    make_max_rgb_inner(crate::MaxRgbMode::Min, params, inputs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5091,6 +5153,10 @@ mod tests {
             "distance",
             "cyanotype",
             "blueprint",
+            // r23 additions (max-rgb / hsv-value alias / min-rgb).
+            "max-rgb",
+            "hsv-value",
+            "min-rgb",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }

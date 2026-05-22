@@ -301,6 +301,15 @@
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
 //!
+//! r23 additions:
+//!
+//! - [`MaxRgb`](max_rgb::MaxRgb) + [`MaxRgbMode`](max_rgb::MaxRgbMode) —
+//!   per-pixel `max(R, G, B)` or `min(R, G, B)` collapse to greyscale
+//!   (HSV-V extractor / chroma proxy). Stateless branch-free `O(W·H)`.
+//!   Default emits `Gray8`; opt into `keep_format` to preserve the
+//!   input RGB / RGBA shape. RGB / RGBA / Gray8 (identity); YUV →
+//!   `Unsupported`.
+//!
 //! r22 additions:
 //!
 //! - [`Reinhard`](reinhard::Reinhard) — 2002 Reinhard et al. global
@@ -446,6 +455,7 @@ pub mod kuwahara;
 pub mod laplacian;
 pub mod level;
 pub mod linear_stretch;
+pub mod max_rgb;
 pub mod modulate;
 pub mod morphology;
 pub mod motion_blur;
@@ -573,6 +583,7 @@ pub use kuwahara::Kuwahara;
 pub use laplacian::Laplacian;
 pub use level::Level;
 pub use linear_stretch::LinearStretch;
+pub use max_rgb::{MaxRgb, MaxRgbMode};
 pub use modulate::Modulate;
 pub use morphology::{
     EdgeOp, Morphology, MorphologyChain, MorphologyEdge, MorphologyOp, StructuringElement,

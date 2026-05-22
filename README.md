@@ -302,6 +302,14 @@ physically-meaningful luminance.
   Convenience constructors `red_filter()` / `green_filter()` /
   `blue_filter()`. Output defaults to `Gray8`; opt into `keep_format`
   to emit grey-equalled RGB / RGBA. RGB / RGBA only.
+- **`MaxRgb`** + **`MaxRgbMode`** — per-pixel `max(R, G, B)` collapse
+  to greyscale (this is the **V** channel of HSV per Smith 1978
+  *Color Gamut Transform Pairs*). `MaxRgbMode::Min` flips it to the
+  dual `min(R, G, B)` (useful as a chroma proxy in
+  `S_HSV = (V - m) / V`). Output defaults to `Gray8`; opt into
+  `keep_format` to emit grey-equalled RGB / RGBA with alpha
+  pass-through. Gray8 input is identity. YUV → `Unsupported`. Factory
+  aliases: `max-rgb`, `hsv-value`, `min-rgb`.
 - **`BorderedFrame`** — flat solid-coloured border with independent
   per-side widths. Distinct from `Frame`, which paints a 3-D bevel.
   Gray8 / RGB / RGBA. IM analogue: `-bordercolor C -border WxH`.

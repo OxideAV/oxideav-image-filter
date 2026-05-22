@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r23: land `MaxRgb` + `MaxRgbMode` — per-pixel `max(R, G, B)` (HSV-V)
+  or `min(R, G, B)` channel-collapse to greyscale. Stateless,
+  branch-free, `O(W·H)`. Default output is single-plane `Gray8`; the
+  `keep_format` flag preserves the input RGB / RGBA shape with all
+  three colour channels equal to the picked value (RGBA alpha
+  pass-through). Gray8 input is identity; YUV returns `Unsupported`
+  because the operator is defined per-RGB-channel. Three new factory
+  names wired into `register()`: `max-rgb`, `hsv-value` (alias —
+  matches the HSV value-channel definition from Smith 1978), `min-rgb`.
+  Filter count: 122 → 123 named types; factory count: 157 → 160 names.
+
 - r22: land six new filters covering three classic global HDR tone-
   mapping operators (Reinhard 2002, Hable Uncharted-2 GDC 2010, Drago
   Eurographics 2003), a per-channel `Curves` adjustment primitive with
