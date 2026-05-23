@@ -301,6 +301,18 @@
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
 //!
+//! r105 additions:
+//!
+//! - [`Scharr`](scharr::Scharr) + [`ScharrMagnitude`](scharr::ScharrMagnitude)
+//!   — Scharr 3×3 first-derivative edge operator (Scharr 2000). Row /
+//!   column weights `±3 ±10 ±3`, magnitude divided by `4` so the
+//!   output lands in the same band as the other 3×3 detectors;
+//!   magnitude `sqrt(Gx²+Gy²)` (L2, default) or `|Gx|+|Gy|` (L1),
+//!   clamped to `[0,255]`. Luma-collapses any supported input;
+//!   output `Gray8`. Lowest orientation error of the three 3×3
+//!   first-derivative kernels here ([`Prewitt`](prewitt::Prewitt) is
+//!   flat ±1; [`Edge`] is Sobel ±1 ±2 ±1).
+//!
 //! r101 additions:
 //!
 //! - [`Prewitt`](prewitt::Prewitt) + [`PrewittMagnitude`](prewitt::PrewittMagnitude)
@@ -498,6 +510,7 @@ pub mod resize;
 pub mod roberts;
 pub mod roll;
 pub mod rotate;
+pub mod scharr;
 pub mod selective_color;
 pub mod sepia;
 pub mod shade;
@@ -630,6 +643,7 @@ pub use resize::{Interpolation, Resize};
 pub use roberts::{Roberts, RobertsMagnitude};
 pub use roll::Roll;
 pub use rotate::Rotate;
+pub use scharr::{Scharr, ScharrMagnitude};
 pub use selective_color::{BandAdjust, HueBand, SelectiveColor};
 pub use sepia::Sepia;
 pub use shade::Shade;

@@ -331,6 +331,9 @@ pub fn register(ctx: &mut RuntimeContext) {
     // r101 factory: Prewitt 3×3 first-derivative edge operator.
     ctx.filters.register("prewitt", Box::new(make_prewitt));
 
+    // r105 factory: Scharr 3×3 first-derivative edge operator.
+    ctx.filters.register("scharr", Box::new(make_scharr));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -4986,6 +4989,52 @@ fn make_roberts(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
     )))
 }
 
+fn make_scharr(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Scharr, ScharrMagnitude};
+    let p = params.as_object();
+    // Accept `magnitude: "l1" | "l2"` (default l2). The `l1` boolean
+    // shorthand is also honoured.
+    let mag = p
+        .and_then(|m| m.get("magnitude"))
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            if s.eq_ignore_ascii_case("l1") {
+                ScharrMagnitude::L1
+            } else {
+                ScharrMagnitude::L2
+            }
+        })
+        .or_else(|| {
+            p.and_then(|m| m.get("l1"))
+                .and_then(|v| v.as_bool())
+                .map(|b| {
+                    if b {
+                        ScharrMagnitude::L1
+                    } else {
+                        ScharrMagnitude::L2
+                    }
+                })
+        })
+        .unwrap_or(ScharrMagnitude::L2);
+    let f = Scharr::new().with_magnitude(mag);
+    let in_port = video_in_port(inputs);
+    // Scharr output is always Gray8.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 fn make_prewitt(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::{Prewitt, PrewittMagnitude};
     let p = params.as_object();
@@ -5260,6 +5309,8 @@ mod tests {
             "roberts-cross",
             // r101 addition (prewitt edge operator).
             "prewitt",
+            // r105 addition (scharr edge operator).
+            "scharr",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -7359,6 +7410,35 @@ mod tests {
         assert!(c
             .filters
             .make("prewitt", &json!({"l1": true}), &inputs)
+            .is_ok());
+    }
+
+    #[test]
+    fn scharr_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("scharr", &json!({}), &inputs)
+            .expect("scharr factory");
+        let out_format = match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => *format,
+            _ => panic!("expected video port"),
+        };
+        assert_eq!(out_format, PixelFormat::Gray8);
+    }
+
+    #[test]
+    fn scharr_factory_accepts_l1_magnitude() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        assert!(c
+            .filters
+            .make("scharr", &json!({"magnitude": "l1"}), &inputs)
+            .is_ok());
+        assert!(c
+            .filters
+            .make("scharr", &json!({"l1": true}), &inputs)
             .is_ok());
     }
 

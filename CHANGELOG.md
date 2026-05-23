@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r105: land `Scharr` + `ScharrMagnitude` — the Scharr 3×3 first-
+  derivative edge operator (Hannes Scharr, "Optimal Operators in
+  Digital Image Processing", PhD thesis, University of Heidelberg,
+  2000). The two `±3 ±10 ±3`-weighted 3×3 kernels give `Gx` as the
+  Scharr-weighted right-minus-left column and `Gy` as the Scharr-
+  weighted bottom-minus-top row over the 3×3 neighbourhood centred
+  on `(x, y)`; the row / column weights sum to `16`, so the raw
+  magnitude is divided by `4` so the output lands in the same
+  `[0, 255]` band as `Edge` (Sobel) and `Prewitt`. The edge
+  magnitude is the Euclidean `sqrt(Gx²+Gy²)` (`ScharrMagnitude::L2`,
+  default) or the Manhattan `|Gx|+|Gy|` (`L1`), clamped to
+  `[0, 255]`. The one-pixel border is edge-clamped so the output
+  keeps the input dimensions. Any supported input is luma-collapsed
+  first; the output is always `Gray8`. The `±3 ±10 ±3` weighting
+  gives the lowest orientation error of the three 3×3 first-
+  derivative kernels in this crate (Sobel `±1 ±2 ±1`, Prewitt flat
+  `±1`). Unlike `EdgeDetect`'s `L1`-only Scharr kernel, this
+  dedicated filter defaults to the true Euclidean magnitude. Factory
+  name `scharr` wired into `register()`; accepts `magnitude:
+  "l1"|"l2"` (or the `l1: true` boolean shorthand). Stateless,
+  single-frame, `O(W·H)`.
+
 - r101: land `Prewitt` + `PrewittMagnitude` — the Prewitt 3×3
   first-derivative edge operator (Judith M. S. Prewitt, "Object
   Enhancement and Extraction", 1970). The two flat `±1`-weighted 3×3

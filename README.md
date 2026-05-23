@@ -486,6 +486,16 @@ physically-meaningful luminance.
   `Edge` (Sobel). Output `Gray8`. Unlike `EdgeDetect`'s `L1`-only
   Prewitt kernel, the default here is the true Euclidean magnitude.
   Factory alias: `prewitt`.
+- **`Scharr`** + **`ScharrMagnitude`** — Scharr 3×3 first-derivative
+  edge operator (Scharr 2000): row / column weights `±3 ±10 ±3`,
+  giving the lowest orientation error of the three 3×3 first-
+  derivative kernels here. `Gx` is the Scharr-weighted right-minus-
+  left column, `Gy` the Scharr-weighted bottom-minus-top row; raw
+  magnitude is divided by `4` so the response lands in the same band
+  as `Edge` / `Prewitt`. Magnitude `sqrt(Gx²+Gy²)` (`L2`, default) or
+  `|Gx|+|Gy|` (`L1`), clamped to `[0, 255]`. Output `Gray8`. Unlike
+  `EdgeDetect`'s `L1`-only Scharr kernel, the default here is the
+  true Euclidean magnitude. Factory alias: `scharr`.
 - **`HoughCircles`** — circle detection via a 3-D Hough accumulator
   indexed by `(radius, cx, cy)`. Sobel-magnitude voters cast votes
   along Bresenham circles of each candidate radius into the
