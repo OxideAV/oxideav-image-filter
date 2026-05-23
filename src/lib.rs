@@ -301,6 +301,17 @@
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
 //!
+//! r101 additions:
+//!
+//! - [`Prewitt`](prewitt::Prewitt) + [`PrewittMagnitude`](prewitt::PrewittMagnitude)
+//!   — Prewitt 3×3 first-derivative edge operator (Prewitt 1970). Flat
+//!   `±1`-weighted horizontal / vertical kernels; `Gx` is right-column
+//!   minus left-column, `Gy` is bottom-row minus top-row. Magnitude is
+//!   `sqrt(Gx²+Gy²)` (L2, default) or `|Gx|+|Gy|` (L1), clamped to
+//!   `[0,255]`. Luma-collapses any supported input; output `Gray8`.
+//!   Wider, less noise-sensitive support than [`Roberts`](roberts::Roberts);
+//!   flatter weighting than [`Edge`] (Sobel).
+//!
 //! r24 additions:
 //!
 //! - [`Roberts`](roberts::Roberts) + [`RobertsMagnitude`](roberts::RobertsMagnitude)
@@ -478,6 +489,7 @@ pub mod pixelate;
 pub mod polar;
 pub mod posterize;
 pub mod posterize_channels;
+pub mod prewitt;
 pub mod quantize;
 pub mod radial_blur;
 pub mod registry;
@@ -609,6 +621,7 @@ pub use pixelate::Pixelate;
 pub use polar::{Polar, PolarDirection};
 pub use posterize::Posterize;
 pub use posterize_channels::PosterizeChannels;
+pub use prewitt::{Prewitt, PrewittMagnitude};
 pub use quantize::Quantize;
 pub use radial_blur::RadialBlur;
 pub use registry::{__oxideav_entry, register};

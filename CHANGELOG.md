@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r101: land `Prewitt` + `PrewittMagnitude` — the Prewitt 3×3
+  first-derivative edge operator (Judith M. S. Prewitt, "Object
+  Enhancement and Extraction", 1970). The two flat `±1`-weighted 3×3
+  kernels give `Gx` = (right column − left column) and `Gy` =
+  (bottom row − top row), each summed over the orthogonal axis of the
+  3×3 neighbourhood centred on `(x, y)`; the edge magnitude is the
+  Euclidean `sqrt(Gx²+Gy²)` (`PrewittMagnitude::L2`, default) or the
+  Manhattan `|Gx|+|Gy|` (`L1`), clamped to `[0, 255]`. The one-pixel
+  border is edge-clamped so the output keeps the input dimensions.
+  Any supported input is luma-collapsed first; the output is always
+  `Gray8`. Wider, less noise-sensitive support than `Roberts`;
+  flatter, less directionally-biased weighting than `Edge` (Sobel).
+  Unlike `EdgeDetect`'s `L1`-only Prewitt kernel, this dedicated
+  filter defaults to the true Euclidean magnitude. Factory name
+  `prewitt` wired into `register()`; accepts `magnitude: "l1"|"l2"`
+  (or the `l1: true` boolean shorthand). Stateless, single-frame,
+  `O(W·H)`.
+
 - r24: land `Roberts` + `RobertsMagnitude` — the Roberts cross 2×2
   diagonal-difference edge operator (Lawrence Roberts, MIT PhD thesis,
   1963). The two responses are `Gx = a − d` and `Gy = b − c` over the

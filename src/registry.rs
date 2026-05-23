@@ -328,6 +328,9 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("roberts-cross", Box::new(make_roberts));
 
+    // r101 factory: Prewitt 3×3 first-derivative edge operator.
+    ctx.filters.register("prewitt", Box::new(make_prewitt));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -4983,6 +4986,52 @@ fn make_roberts(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
     )))
 }
 
+fn make_prewitt(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Prewitt, PrewittMagnitude};
+    let p = params.as_object();
+    // Accept `magnitude: "l1" | "l2"` (default l2). The `l1` boolean
+    // shorthand is also honoured.
+    let mag = p
+        .and_then(|m| m.get("magnitude"))
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            if s.eq_ignore_ascii_case("l1") {
+                PrewittMagnitude::L1
+            } else {
+                PrewittMagnitude::L2
+            }
+        })
+        .or_else(|| {
+            p.and_then(|m| m.get("l1"))
+                .and_then(|v| v.as_bool())
+                .map(|b| {
+                    if b {
+                        PrewittMagnitude::L1
+                    } else {
+                        PrewittMagnitude::L2
+                    }
+                })
+        })
+        .unwrap_or(PrewittMagnitude::L2);
+    let f = Prewitt::new().with_magnitude(mag);
+    let in_port = video_in_port(inputs);
+    // Prewitt output is always Gray8.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5209,6 +5258,8 @@ mod tests {
             // r24 additions (roberts cross + alias).
             "roberts",
             "roberts-cross",
+            // r101 addition (prewitt edge operator).
+            "prewitt",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -7279,6 +7330,35 @@ mod tests {
         assert!(c
             .filters
             .make("roberts-cross", &json!({"l1": true}), &inputs)
+            .is_ok());
+    }
+
+    #[test]
+    fn prewitt_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("prewitt", &json!({}), &inputs)
+            .expect("prewitt factory");
+        let out_format = match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => *format,
+            _ => panic!("expected video port"),
+        };
+        assert_eq!(out_format, PixelFormat::Gray8);
+    }
+
+    #[test]
+    fn prewitt_factory_accepts_l1_magnitude() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        assert!(c
+            .filters
+            .make("prewitt", &json!({"magnitude": "l1"}), &inputs)
+            .is_ok());
+        assert!(c
+            .filters
+            .make("prewitt", &json!({"l1": true}), &inputs)
             .is_ok());
     }
 

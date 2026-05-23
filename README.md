@@ -477,6 +477,15 @@ physically-meaningful luminance.
   derivative detector; output `Gray8`. Unlike `EdgeDetect`'s
   `L1`-only Roberts kernel, the default here is the true Euclidean
   magnitude. Factory aliases: `roberts`, `roberts-cross`.
+- **`Prewitt`** + **`PrewittMagnitude`** — Prewitt 3×3 first-
+  derivative edge operator (Prewitt 1970): flat `±1`-weighted
+  horizontal / vertical kernels, `Gx` = right-column − left-column,
+  `Gy` = bottom-row − top-row, magnitude `sqrt(Gx²+Gy²)` (`L2`,
+  default) or `|Gx|+|Gy|` (`L1`), clamped to `[0, 255]`. Wider, less
+  noise-sensitive support than `Roberts`; flatter weighting than
+  `Edge` (Sobel). Output `Gray8`. Unlike `EdgeDetect`'s `L1`-only
+  Prewitt kernel, the default here is the true Euclidean magnitude.
+  Factory alias: `prewitt`.
 - **`HoughCircles`** — circle detection via a 3-D Hough accumulator
   indexed by `(radius, cx, cy)`. Sobel-magnitude voters cast votes
   along Bresenham circles of each candidate radius into the
