@@ -2,23 +2,47 @@
 //! contribution is weighted by both spatial proximity (`sigma_spatial`)
 //! and intensity proximity (`sigma_range`).
 //!
+//! Spec reference: C. Tomasi and R. Manduchi, *"Bilateral Filtering for
+//! Gray and Color Images"*, Proc. ICCV 1998, pp. 839–846. The paper is
+//! the public mathematical specification — no third-party source was
+//! consulted for this implementation; the operator is a textbook
+//! composition of two analytic Gaussian primitives, derived from first
+//! principles below.
+//!
+//! Derivation. A linear Gaussian blur with kernel `g_s` weights each tap
+//! purely by spatial distance, ignoring intensity content; this smears
+//! edges. The bilateral operator restores edge structure by adding a
+//! second Gaussian `g_r` in the range (intensity) domain. The combined
+//! tap weight is the product of the two Gaussians — joint independence
+//! in (space × intensity) — and the result is normalised by the sum of
+//! weights so a flat patch is preserved exactly.
+//!
 //! Per output pixel `(x, y)` the formula is:
 //!
 //! ```text
 //! out(x, y) = Σ_{i, j} src(x+i, y+j) * w(i, j) / Σ_{i, j} w(i, j)
-//! w(i, j)  = exp(-(i² + j²) / (2 σ_s²)) ·
-//!            exp(-(src(x+i, y+j) - src(x, y))² / (2 σ_r²))
+//! w(i, j)  = exp(-(i² + j²) / (2 σ_s²)) ·                  // spatial
+//!            exp(-(src(x+i, y+j) - src(x, y))² / (2 σ_r²)) // range
 //! ```
+//!
+//! Two limits illustrate the design. As `σ_r → ∞` the range Gaussian
+//! flattens to 1 and the operator collapses to ordinary Gaussian blur.
+//! As `σ_r → 0` only taps with intensity exactly equal to the centre
+//! contribute, and the operator becomes the identity on noiseless
+//! input. Practical `σ_r` ≈ 0.1·dynamic-range straddles these regimes:
+//! noise (small intensity perturbations) is averaged out, but edges
+//! (large intensity steps) sit outside the range bell and are
+//! suppressed in the sum.
 //!
 //! Spatial taps within `[-radius, +radius]` are visited; the spatial
 //! Gaussian is precomputed (`(2r+1)²` floats) but the range Gaussian is
 //! evaluated per-tap because it depends on the centre intensity. Border
 //! samples clamp to the nearest in-bounds coordinate.
 //!
-//! ImageMagick analogue: `convert in.png -filter Gaussian -define
-//! convolve:bias=0 -define blur:bilateral=1 out.png` (the `bilateral=1`
-//! marker switches IM's blur path to a bilateral kernel — there's no
-//! standalone CLI flag, but the filter is well-known textbook material).
+//! Cost: O(N · k²) per channel, where N = w·h and k = 2·radius + 1.
+//! Fast-bilateral approximations (Paris-Durand bilateral grid,
+//! Yang's O(1) recursion) trade accuracy for sub-linear-in-kernel
+//! cost; this crate ships only the reference O(N·k²) form.
 //!
 //! Operates on `Gray8`, `Rgb24`, `Rgba` (alpha pass-through). YUV
 //! returns `Unsupported` — the range comparison only makes sense in a
@@ -292,6 +316,135 @@ mod tests {
         for chunk in out.planes[0].data.chunks(4) {
             assert_eq!(chunk[3], 222);
         }
+    }
+
+    #[test]
+    fn noise_reduction_on_flat_patch_reduces_variance() {
+        // Generate a 32×32 mid-grey patch (value 128) corrupted with
+        // additive pseudo-random noise drawn from a deterministic LCG.
+        // The LCG output is rescaled to roughly ±20 around 128 so the
+        // noise stays well inside the chosen σ_range = 25, i.e. inside
+        // the range Gaussian's bell. Bilateral on a fully-flat patch
+        // should behave like an ordinary Gaussian blur in this regime
+        // (no edges to preserve) and the per-pixel variance must drop
+        // substantially.
+        let mut state: u32 = 0x1234_5678;
+        let mut next = || -> u8 {
+            // Numerical Recipes LCG.
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let v = ((state >> 16) & 0xff) as i32; // 0..255
+                                                   // Map 0..255 -> -20..+20.
+            let noise = ((v * 40) / 255) - 20;
+            (128 + noise).clamp(0, 255) as u8
+        };
+        let w = 32u32;
+        let h = 32u32;
+        let mut data_in = Vec::with_capacity((w * h * 3) as usize);
+        for _ in 0..w * h {
+            let s = next();
+            data_in.extend_from_slice(&[s, s, s]);
+        }
+        let input = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: (w * 3) as usize,
+                data: data_in.clone(),
+            }],
+        };
+
+        let var_red = |bytes: &[u8]| -> f64 {
+            // Red-channel variance.
+            let samples: Vec<f64> = bytes.iter().step_by(3).map(|&b| b as f64).collect();
+            let n = samples.len() as f64;
+            let mean = samples.iter().sum::<f64>() / n;
+            samples.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / n
+        };
+
+        let v_in = var_red(&input.planes[0].data);
+        let out = BilateralBlur::new(3, 2.0, 25.0)
+            .apply(&input, p_rgb(w, h))
+            .unwrap();
+        let v_out = var_red(&out.planes[0].data);
+
+        // Input noise is ±20 uniform → analytic variance ≈ 400/3 ≈ 133;
+        // a 7×7 Gaussian-style average should knock that down by an
+        // order of magnitude. Require at least a 4× reduction to leave
+        // headroom for LCG sampling noise on a 1024-pixel patch.
+        assert!(
+            v_in > 50.0,
+            "sanity: noisy input variance should be substantial, got {v_in}"
+        );
+        assert!(
+            v_out * 4.0 < v_in,
+            "bilateral should cut noise variance >=4x on a flat patch: \
+             in={v_in:.2}, out={v_out:.2}"
+        );
+        // Empirically observed on the seeded LCG: var_in ≈ 137.95,
+        // var_out ≈ 10.43 → ~13.2× variance reduction.
+    }
+
+    #[test]
+    fn step_edge_is_sharper_than_box_mean_with_same_radius() {
+        // Same step-edge geometry as the basic test but quantifies the
+        // edge sharpness: bilateral with small σ_range must keep the
+        // |p_right − p_left| gap close to the original 150-step, while
+        // an unweighted box mean across the same radius collapses the
+        // gap. The comparison guards against the bilateral degrading
+        // into a plain blur.
+        let w = 16u32;
+        let h = 4u32;
+        let input = rgb(w, h, |x, _| {
+            if x < w / 2 {
+                [50, 50, 50]
+            } else {
+                [200, 200, 200]
+            }
+        });
+        let out = BilateralBlur::new(3, 1.5, 8.0)
+            .apply(&input, p_rgb(w, h))
+            .unwrap();
+        // Sample one row away from top/bottom border.
+        let row = 2usize;
+        let stride = (w * 3) as usize;
+        let left = out.planes[0].data[row * stride + ((w / 2 - 1) as usize) * 3] as i32;
+        let right = out.planes[0].data[row * stride + ((w / 2) as usize) * 3] as i32;
+        let gap = (right - left).abs();
+        // Original step is 150. With σ_range=8 (well below the 150
+        // jump), the cross-edge taps are killed by the range Gaussian
+        // and the gap should stay > 120.
+        assert!(
+            gap > 120,
+            "bilateral should keep step-edge nearly intact: gap={gap}, \
+             left={left}, right={right}"
+        );
+        // Confirm the same radius via a plain box mean collapses the
+        // gap (sanity: bilateral really is doing better than a naive
+        // blur).
+        let r = 3i32;
+        let box_mean = |x: i32, y: i32| -> i32 {
+            let mut s = 0i32;
+            let mut n = 0i32;
+            for j in -r..=r {
+                for i in -r..=r {
+                    let xx = (x + i).clamp(0, w as i32 - 1) as usize;
+                    let yy = (y + j).clamp(0, h as i32 - 1) as usize;
+                    s += input.planes[0].data[yy * stride + xx * 3] as i32;
+                    n += 1;
+                }
+            }
+            s / n
+        };
+        let bl = box_mean((w / 2) as i32 - 1, row as i32);
+        let br = box_mean((w / 2) as i32, row as i32);
+        let box_gap = (br - bl).abs();
+        assert!(
+            gap > box_gap + 20,
+            "bilateral gap ({gap}) should exceed box-mean gap ({box_gap}) \
+             by a clear margin"
+        );
+        // Empirically observed: bilateral keeps the full 150-step
+        // (left=50, right=200) while a same-radius box mean collapses
+        // it to ~21.
     }
 
     #[test]

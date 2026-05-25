@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r131: add a `BilateralBlur` derivation block citing Tomasi &
+  Manduchi (ICCV 1998), document the σ_r → 0 / σ_r → ∞ limits, and
+  ship two quantitative behavioural tests: (a) a seeded ±20 LCG
+  noise patch at `radius=3, σ_s=2.0, σ_r=25` whose channel
+  variance drops ~13.2× (137.95 → 10.43), and (b) a 150-step
+  vertical edge at `radius=3, σ_s=1.5, σ_r=8` whose left/right
+  pixels stay at 50 / 200 (gap = 150) where a same-radius box mean
+  collapses the gap to ~21. No public API change — implementation
+  was already correct since r16; round 131 just nails down the
+  spec citation and the noise-reduction proof.
+
 - r105: land `Scharr` + `ScharrMagnitude` — the Scharr 3×3 first-
   derivative edge operator (Hannes Scharr, "Optimal Operators in
   Digital Image Processing", PhD thesis, University of Heidelberg,

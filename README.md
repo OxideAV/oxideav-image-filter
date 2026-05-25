@@ -366,13 +366,20 @@ physically-meaningful luminance.
 
 ### Sharpening + artistic
 
-- **`BilateralBlur`** — edge-preserving Gaussian blur: each tap is
-  weighted by both spatial proximity (`sigma_spatial`) and
-  intensity proximity (`sigma_range`), so step edges survive a
-  heavy smoothing pass. Border samples clamp to the nearest
-  in-bounds coordinate; alpha pass-through on RGBA. Gray8 / RGB /
-  RGBA. IM analogue: `-define blur:bilateral=1` on the Gaussian
-  blur path.
+- **`BilateralBlur`** — edge-preserving Gaussian blur (Tomasi &
+  Manduchi, *Bilateral Filtering for Gray and Color Images*, ICCV
+  1998): each tap is weighted by the product of two analytic
+  Gaussians, one over spatial distance (`sigma_spatial`) and one
+  over intensity distance (`sigma_range`), so step edges survive a
+  heavy smoothing pass. Reference O(N·k²) implementation (no
+  bilateral-grid / O(1) recursion shortcut). Measured behaviour
+  (see `bilateral_blur::tests`): a seeded ±20 noise patch sees a
+  ~13× variance reduction at `radius=3, σ_s=2.0, σ_r=25`; a 150-
+  amplitude vertical step edge at `radius=3, σ_s=1.5, σ_r=8` is
+  preserved with gap=150 (vs a same-radius box mean's gap=21).
+  Border samples clamp to the nearest in-bounds coordinate; alpha
+  pass-through on RGBA. Gray8 / RGB / RGBA. IM analogue:
+  `-define blur:bilateral=1` on the Gaussian blur path.
 - **`Kuwahara`** — quadrant-variance edge-preserving smoothing
   (1976 Kuwahara/Hachimura paper). For each pixel splits the
   `(2*radius+1)²` window into four overlapping quadrants; the
