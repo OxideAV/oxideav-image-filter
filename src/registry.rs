@@ -334,6 +334,12 @@ pub fn register(ctx: &mut RuntimeContext) {
     // r105 factory: Scharr 3×3 first-derivative edge operator.
     ctx.filters.register("scharr", Box::new(make_scharr));
 
+    // r174 factory: Frei–Chen 3×3 orthonormal-basis edge / line
+    // detector. Two-name registration so `frei-chen` / `freichen` both
+    // work as factory aliases.
+    ctx.filters.register("frei-chen", Box::new(make_frei_chen));
+    ctx.filters.register("freichen", Box::new(make_frei_chen));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -5019,6 +5025,53 @@ fn make_scharr(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
     let f = Scharr::new().with_magnitude(mag);
     let in_port = video_in_port(inputs);
     // Scharr output is always Gray8.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+/// Factory for the Frei–Chen edge / line detector. Accepts
+/// `mode: "edge" | "line"` (default `edge`). For convenience the
+/// short-form alias `line: true` also selects line mode.
+fn make_frei_chen(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{FreiChen, FreiChenMode};
+    let p = params.as_object();
+    let mode = p
+        .and_then(|m| m.get("mode"))
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            if s.eq_ignore_ascii_case("line") {
+                FreiChenMode::Line
+            } else {
+                FreiChenMode::Edge
+            }
+        })
+        .or_else(|| {
+            p.and_then(|m| m.get("line"))
+                .and_then(|v| v.as_bool())
+                .map(|b| {
+                    if b {
+                        FreiChenMode::Line
+                    } else {
+                        FreiChenMode::Edge
+                    }
+                })
+        })
+        .unwrap_or(FreiChenMode::Edge);
+    let f = FreiChen::new().with_mode(mode);
+    let in_port = video_in_port(inputs);
+    // Frei–Chen output is always Gray8.
     let out_port = match &in_port.params {
         PortParams::Video {
             width,

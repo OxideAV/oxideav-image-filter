@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r174: land `FreiChen` + `FreiChenMode` — the Frei–Chen 3×3
+  orthonormal-basis edge / line detector (Werner Frei & Chung-Ching
+  Chen, "Fast Boundary Detection: A Generalization and a New
+  Algorithm", *IEEE Transactions on Computers* C-26(10):988–998,
+  October 1977). The filter treats each 3×3 luma neighbourhood as a
+  9-dimensional vector and projects it onto an orthonormal basis of
+  9 templates partitioned into three sub-spaces: an **edge sub-space**
+  (`S1..S4`: two `1/(2√2)`-scaled cardinal gradients plus two
+  diagonal gradients), a **line sub-space** (`S5..S8`: two cardinal
+  ripples plus two discrete-Laplacian variants), and a **mean sub-
+  space** (`S9 = 1/3 · 1`). The output at each pixel is the cosine of
+  the angle between the neighbourhood vector and the requested sub-
+  space — `sqrt(E/T)` for `FreiChenMode::Edge` (default, sensitive
+  to step edges) or `sqrt(L/T)` for `FreiChenMode::Line` (sensitive
+  to ripples / Laplacian-like ridges) where `T = E + L + p9²`. Because
+  the metric is a normalised ratio rather than a raw magnitude, a
+  perfect edge / line gives `255` regardless of contrast — a
+  qualitatively distinct response from the magnitude-based 3×3
+  detectors (`Edge` Sobel / `Prewitt` / `Scharr`). Any supported
+  input is luma-collapsed first (Gray8 / YUV use the Y plane
+  directly; RGB / RGBA use the `(R + 2G + B) / 4` quick luma); the
+  one-pixel border is clamped to the nearest in-bounds sample; the
+  output is always `Gray8` of the input dimensions. Cost is `O(W·H)`
+  (each 3×3 neighbourhood projects through nine fixed weight vectors).
+  Tests: 14 (orthogonality + unit-norm of all 9 templates, hand-
+  derived horizontal step response at the centre pixel
+  (edge ≈128, line ≈74), pure-edge cosine = 1 for a mean-zero step
+  patch, pure-edge cosine for an S2-aligned column step, Laplacian-
+  pattern cosine = `sqrt(1/2) ≈ 180` on the line metric and zero on
+  the edge metric, `cos²(edge) + cos²(line) ≤ 1` Pythagorean spot-
+  check across a 16×16 ramp, RGB / YUV / Gray8 / format-rejection /
+  PTS-pass-through). Factory aliases: `frei-chen`, `freichen`.
+
 - r131: add a `BilateralBlur` derivation block citing Tomasi &
   Manduchi (ICCV 1998), document the σ_r → 0 / σ_r → ∞ limits, and
   ship two quantitative behavioural tests: (a) a seeded ±20 LCG

@@ -503,6 +503,20 @@ physically-meaningful luminance.
   `|Gx|+|Gy|` (`L1`), clamped to `[0, 255]`. Output `Gray8`. Unlike
   `EdgeDetect`'s `L1`-only Scharr kernel, the default here is the
   true Euclidean magnitude. Factory alias: `scharr`.
+- **`FreiChen`** + **`FreiChenMode`** — Frei–Chen 3×3 orthonormal-
+  basis edge / line detector (Frei & Chen 1977). Projects each 3×3
+  luma neighbourhood onto 9 mutually-orthogonal templates partitioned
+  into an edge sub-space (4 templates: two cardinal gradients + two
+  diagonal gradients, all scaled by `1/(2√2)`), a line sub-space
+  (4 templates: two cardinal ripples + two discrete-Laplacian
+  variants), and a 1-template mean sub-space. The output is the
+  cosine of the angle between the neighbourhood vector and the
+  selected sub-space — `sqrt(E/T)` for `FreiChenMode::Edge` (default,
+  sensitive to step edges) or `sqrt(L/T)` for `FreiChenMode::Line`
+  (sensitive to ripples / ridges). Because the metric is a normalised
+  ratio, a perfect edge / line gives `255` regardless of contrast —
+  qualitatively distinct from the magnitude-based detectors above.
+  Always emits `Gray8`. Factory aliases: `frei-chen`, `freichen`.
 - **`HoughCircles`** — circle detection via a 3-D Hough accumulator
   indexed by `(radius, cx, cy)`. Sobel-magnitude voters cast votes
   along Bresenham circles of each candidate radius into the

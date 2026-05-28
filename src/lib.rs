@@ -301,6 +301,22 @@
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
 //!
+//! r174 additions:
+//!
+//! - [`FreiChen`](frei_chen::FreiChen) + [`FreiChenMode`](frei_chen::FreiChenMode)
+//!   — Frei–Chen 3×3 orthonormal-basis edge / line detector
+//!   (Frei & Chen 1977). Projects every 3×3 luma neighbourhood onto
+//!   a basis of 9 mutually-orthogonal templates partitioned into edge
+//!   (`S1..S4`), line (`S5..S8`), and mean (`S9`) sub-spaces, then
+//!   reports the cosine of the angle to the requested sub-space —
+//!   [`FreiChenMode::Edge`] (default; sensitive to step edges) or
+//!   [`FreiChenMode::Line`] (sensitive to ripples / Laplacian-like
+//!   ridges). Luma-collapses any supported input; output `Gray8`.
+//!   Complements the magnitude-based 3×3 detectors
+//!   ([`Edge`] / [`Prewitt`](prewitt::Prewitt) / [`Scharr`](scharr::Scharr))
+//!   with a sub-space cosine, so a perfect edge / line gives `255`
+//!   regardless of contrast.
+//!
 //! r105 additions:
 //!
 //! - [`Scharr`](scharr::Scharr) + [`ScharrMagnitude`](scharr::ScharrMagnitude)
@@ -467,6 +483,7 @@ pub mod flip;
 pub mod flood_fill;
 pub mod flop;
 pub mod frame;
+pub mod frei_chen;
 pub mod function;
 pub mod gamma;
 pub mod gradient_conic;
@@ -598,6 +615,7 @@ pub use flip::Flip;
 pub use flood_fill::FloodFill;
 pub use flop::Flop;
 pub use frame::Frame;
+pub use frei_chen::{FreiChen, FreiChenMode};
 pub use function::{Function, FunctionOp};
 pub use gamma::Gamma;
 pub use gradient_conic::GradientConic;
