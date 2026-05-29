@@ -99,6 +99,13 @@
 //! - [`Laplacian`](laplacian::Laplacian) — 3×3 Laplacian
 //!   second-derivative filter; output is `|response|` clamped to
 //!   `[0, 255]`. IM: `-laplacian`.
+//! - [`LaplacianOfGaussian`](laplacian_of_gaussian::LaplacianOfGaussian)
+//!   — Marr–Hildreth 1980 Laplacian-of-Gaussian detector: discrete
+//!   sampling of `((x²+y²−2σ²)/σ⁴) · exp(−(x²+y²)/(2σ²))` on a
+//!   `(2·radius+1)²` grid; zero-mean-corrected so flat input maps to
+//!   zero. Two modes: `Magnitude` (|LoG|) or `ZeroCrossings` (binary
+//!   Marr–Hildreth edge map with slope-threshold gate). Configurable
+//!   `sigma` / `radius` / `output_gain` / `slope_threshold`.
 //! - [`LinearStretch`](linear_stretch::LinearStretch) — like
 //!   [`ContrastStretch`] but cut-offs are absolute pixel counts. IM:
 //!   `-linear-stretch black-pixels{xwhite-pixels}`.
@@ -300,6 +307,27 @@
 //!   automatic threshold maximising inter-class variance; emits binary
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
+//!
+//! r181 additions:
+//!
+//! - [`LaplacianOfGaussian`](laplacian_of_gaussian::LaplacianOfGaussian)
+//!   and [`LogMode`](laplacian_of_gaussian::LogMode) — Marr–Hildreth
+//!   Laplacian-of-Gaussian edge / zero-crossing detector (Marr and
+//!   Hildreth 1980). Samples the continuous `((x²+y²−2σ²)/σ⁴) ·
+//!   exp(−(x²+y²)/(2σ²))` kernel on a `(2r+1)²` grid (auto-radius
+//!   `ceil(3·σ)` by default), zero-means the coefficients so flat
+//!   input maps to exactly zero, and runs a dense 2-D convolution.
+//!   Two output modes: [`LogMode::Magnitude`] (default — `|LoG|`
+//!   clamped to `[0,255]`, second-derivative response complementing
+//!   the noise-amplifying [`Laplacian`](laplacian::Laplacian)) or
+//!   [`LogMode::ZeroCrossings`] (binary Marr–Hildreth edge map with a
+//!   slope-threshold gate to suppress quantisation-noise sign
+//!   changes). Configurable `sigma`, `radius`, `output_gain`,
+//!   `slope_threshold`. Luma-collapses any supported input; output
+//!   `Gray8`. The pre-blur makes this the scale-selective complement
+//!   to the bare 3×3 Laplacian and the 1st-derivative
+//!   [`Edge`] / [`Prewitt`](prewitt::Prewitt) /
+//!   [`Scharr`](scharr::Scharr) / [`Roberts`](roberts::Roberts).
 //!
 //! r174 additions:
 //!
@@ -503,6 +531,7 @@ pub mod implode;
 pub mod inner_shadow;
 pub mod kuwahara;
 pub mod laplacian;
+pub mod laplacian_of_gaussian;
 pub mod level;
 pub mod linear_stretch;
 pub mod max_rgb;
@@ -635,6 +664,7 @@ pub use implode::Implode;
 pub use inner_shadow::InnerShadow;
 pub use kuwahara::Kuwahara;
 pub use laplacian::Laplacian;
+pub use laplacian_of_gaussian::{LaplacianOfGaussian, LogMode};
 pub use level::Level;
 pub use linear_stretch::LinearStretch;
 pub use max_rgb::{MaxRgb, MaxRgbMode};

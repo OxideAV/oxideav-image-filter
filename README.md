@@ -469,6 +469,22 @@ physically-meaningful luminance.
 - **`Laplacian`** — 3×3 Laplacian (second-derivative) edge filter.
   Output is `|response|` clamped to `[0, 255]` as a `Gray8` frame.
   IM: `-laplacian`.
+- **`LaplacianOfGaussian`** + **`LogMode`** — Marr–Hildreth 1980
+  Laplacian-of-Gaussian edge / zero-crossing detector. Samples the
+  continuous `((x²+y²−2σ²)/σ⁴) · exp(−(x²+y²)/(2σ²))` kernel on a
+  `(2·radius+1)²` grid (auto-radius `ceil(3·σ)`, clamped to `[1, 16]`),
+  zero-means the coefficients so flat input produces zero response,
+  then runs a dense 2-D convolution. Two output modes:
+  `LogMode::Magnitude` (default) returns `|LoG · output_gain|` clamped
+  to `[0, 255]` — the scale-selective second-derivative complement to
+  the noise-amplifying bare 3×3 `Laplacian`. `LogMode::ZeroCrossings`
+  returns the binary Marr–Hildreth edge map (255 where the gain-scaled
+  LoG response changes sign between adjacent pixels AND the straddling
+  gap exceeds `slope_threshold`; default `4.0`, set to `0.0` to report
+  every crossing). Configurable `sigma` (default `1.4`), `radius`,
+  `output_gain` (default `1.0`), `slope_threshold`. Luma-collapses any
+  supported input; output is always `Gray8`. Factory aliases:
+  `laplacian-of-gaussian`, `log`, `marr-hildreth`.
 - **`Canny`** — full Canny edge pipeline: Gaussian pre-blur →
   Sobel gradient + direction → non-maximum suppression →
   hysteresis thresholding. Output is binary `Gray8` (0 / 255).

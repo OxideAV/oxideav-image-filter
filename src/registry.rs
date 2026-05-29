@@ -340,6 +340,14 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("frei-chen", Box::new(make_frei_chen));
     ctx.filters.register("freichen", Box::new(make_frei_chen));
 
+    // r181 factory: Marr–Hildreth Laplacian-of-Gaussian edge /
+    // zero-crossing detector. Three aliases so `laplacian-of-gaussian`
+    // / `log` / `marr-hildreth` all resolve to the same factory.
+    ctx.filters
+        .register("laplacian-of-gaussian", Box::new(make_log));
+    ctx.filters.register("log", Box::new(make_log));
+    ctx.filters.register("marr-hildreth", Box::new(make_log));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -5088,6 +5096,81 @@ fn make_frei_chen(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamF
     )))
 }
 
+fn make_log(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{LaplacianOfGaussian, LogMode};
+    let p = params.as_object();
+    let mut f = LaplacianOfGaussian::new();
+    if let Some(sigma) = p.and_then(|m| m.get("sigma")).and_then(|v| v.as_f64()) {
+        if !(sigma.is_finite() && sigma > 0.0) {
+            return Err(Error::invalid("log: sigma must be > 0".to_string()));
+        }
+        f = f.with_sigma(sigma as f32);
+    }
+    if let Some(radius) = p.and_then(|m| m.get("radius")).and_then(|v| v.as_u64()) {
+        f = f.with_radius(radius as u32);
+    }
+    // Accept `mode: "magnitude" | "zero-crossings"` (default magnitude).
+    // The `zero_crossings: true` boolean shorthand also flips the mode.
+    if let Some(mode) = p.and_then(|m| m.get("mode")).and_then(|v| v.as_str()) {
+        let m = if mode.eq_ignore_ascii_case("zero-crossings")
+            || mode.eq_ignore_ascii_case("zerocrossings")
+            || mode.eq_ignore_ascii_case("crossings")
+        {
+            LogMode::ZeroCrossings
+        } else {
+            LogMode::Magnitude
+        };
+        f = f.with_mode(m);
+    } else if let Some(b) = p
+        .and_then(|m| m.get("zero_crossings"))
+        .and_then(|v| v.as_bool())
+    {
+        f = f.with_mode(if b {
+            LogMode::ZeroCrossings
+        } else {
+            LogMode::Magnitude
+        });
+    }
+    if let Some(g) = p
+        .and_then(|m| m.get("output_gain"))
+        .and_then(|v| v.as_f64())
+    {
+        if !g.is_finite() {
+            return Err(Error::invalid(
+                "log: output_gain must be finite".to_string(),
+            ));
+        }
+        f = f.with_output_gain(g as f32);
+    }
+    if let Some(t) = p
+        .and_then(|m| m.get("slope_threshold"))
+        .and_then(|v| v.as_f64())
+    {
+        if !t.is_finite() {
+            return Err(Error::invalid(
+                "log: slope_threshold must be finite".to_string(),
+            ));
+        }
+        f = f.with_slope_threshold(t as f32);
+    }
+    let in_port = video_in_port(inputs);
+    // LaplacianOfGaussian output is always Gray8.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 fn make_prewitt(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::{Prewitt, PrewittMagnitude};
     let p = params.as_object();
@@ -5364,6 +5447,15 @@ mod tests {
             "prewitt",
             // r105 addition (scharr edge operator).
             "scharr",
+            // r174 additions (Frei–Chen 3×3 orthonormal-basis edge /
+            // line detector + spelling alias).
+            "frei-chen",
+            "freichen",
+            // r181 additions (Marr–Hildreth Laplacian-of-Gaussian
+            // edge / zero-crossing detector + spelling aliases).
+            "laplacian-of-gaussian",
+            "log",
+            "marr-hildreth",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -7405,6 +7497,59 @@ mod tests {
             _ => panic!("expected video port"),
         };
         assert_eq!(out_format, PixelFormat::Gray8);
+    }
+
+    #[test]
+    fn log_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("log", &json!({"sigma": 1.0}), &inputs)
+            .expect("log factory");
+        let out_format = match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => *format,
+            _ => panic!("expected video port"),
+        };
+        assert_eq!(out_format, PixelFormat::Gray8);
+    }
+
+    #[test]
+    fn log_factory_accepts_zero_crossings_mode() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        // Long-form spelling.
+        assert!(c
+            .filters
+            .make(
+                "laplacian-of-gaussian",
+                &json!({"sigma": 1.0, "mode": "zero-crossings", "slope_threshold": 2.0}),
+                &inputs
+            )
+            .is_ok());
+        // Marr-Hildreth spelling alias + boolean shorthand.
+        assert!(c
+            .filters
+            .make(
+                "marr-hildreth",
+                &json!({"sigma": 1.4, "zero_crossings": true}),
+                &inputs
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn log_factory_rejects_non_positive_sigma() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        assert!(c
+            .filters
+            .make("log", &json!({"sigma": 0.0}), &inputs)
+            .is_err());
+        assert!(c
+            .filters
+            .make("log", &json!({"sigma": -1.0}), &inputs)
+            .is_err());
     }
 
     #[test]

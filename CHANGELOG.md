@@ -9,6 +9,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r181: land `LaplacianOfGaussian` + `LogMode` — the Marr–Hildreth
+  Laplacian-of-Gaussian edge / zero-crossing detector (David Marr &
+  Ellen Hildreth, "Theory of Edge Detection", *Proceedings of the Royal
+  Society of London. Series B, Biological Sciences*
+  207(1167):187–217, February 1980). The filter samples the continuous
+  LoG kernel `K(x, y) = ((x²+y²−2σ²)/σ⁴) · exp(−(x²+y²)/(2σ²))` on a
+  `(2·radius+1)²` integer grid centred at the kernel origin (default
+  `radius = ceil(3·σ)` clamped to `[1, 16]`; three sigmas captures
+  ~99.7 % of the Gaussian envelope and matches the textbook truncation
+  rule), then zero-means the coefficients (subtracts the discrete
+  arithmetic mean) so that a flat constant input produces exactly zero
+  response everywhere — the load-bearing fix for the discrete
+  quantisation error in the kernel's DC component. The convolution is
+  dense 2-D (the LoG is **not** rank-1 separable, unlike the bare
+  Gaussian) at `O(W·H·(2r+1)²)`; samples on the one-pixel-or-greater
+  border are edge-clamped to the nearest in-bounds pixel so the output
+  keeps the input dimensions. Two output modes are offered: the
+  default [`LogMode::Magnitude`] returns `|LoG(x, y) · output_gain|`
+  clamped to `[0, 255]` (a soft second-derivative response that peaks
+  on either side of an edge and is zero on the edge itself — the
+  scale-selective, noise-suppressed complement to the bare 3×3
+  `Laplacian`), and [`LogMode::ZeroCrossings`] returns the binary
+  Marr–Hildreth edge map (`255` where the gain-multiplied LoG response
+  changes sign between a pixel and one of its 4-neighbours AND the
+  absolute response gap straddling the crossing exceeds the configurable
+  `slope_threshold`; `0` elsewhere — the slope gate is the textbook
+  fix for the detector's tendency to mark flat backgrounds as edges
+  through quantisation-noise sign changes). Configurable knobs:
+  `sigma` (Gaussian standard deviation in pixels; default `1.4` per
+  Marr–Hildreth's worked example), `radius` (override the auto-radius;
+  clamped to `[1, 16]`), `output_gain` (global multiplier applied
+  before clamping / thresholding; default `1.0`), `slope_threshold`
+  (zero-crossings mode only; default `4.0`, set to `0.0` to report
+  every sign change). Any supported input is collapsed to a luma
+  plane first (Gray8 / YUV use the Y plane directly; RGB / RGBA use
+  the `(R + 2G + B) / 4` quick luma, sharing the existing
+  `Laplacian::build_luma_plane` helper); the output is always `Gray8`
+  of the input dimensions. The filter complements the
+  noise-amplifying [`Laplacian`] (bare 3×3, no pre-blur), the
+  magnitude-based 1st-derivative kernels (`Edge` Sobel / `Prewitt` /
+  `Scharr` / `Roberts`), the multi-stage `Canny` (1st-derivative with
+  NMS + hysteresis), and the orthonormal-basis `FreiChen` (1st
+  cosine projection) by adding an *isotropic, second-derivative,
+  scale-selective* member to the edge-detector family. Tests: 19
+  (hand-derived classical sign pattern for the radius-1 / σ=1
+  kernel — centre & cardinals negative, corners positive, 4-fold
+  rotational symmetry of cardinals & corners; zero-mean correction
+  proven across a sweep of `radius ∈ {1,2,3,5,7}` × `sigma ∈
+  {0.7,1.0,1.4,2.0,3.0}` to `|mean| < 1e-5`; flat input → zero
+  magnitude; single bright pixel produces decaying |response|
+  envelope; 4-fold isotropy of the magnitude response under a
+  cross-shaped fixture; flat input → empty zero-crossings map;
+  vertical step edge produces zero-crossings on or adjacent to the
+  central column with quiet far columns; slope-threshold gate
+  suppresses faint-ramp crossings entirely while a zero threshold
+  reports every sign change; RGB / Yuv420P luma collapse; PTS
+  pass-through; sigma-zero rejection; non-finite gain rejection;
+  unsupported-format rejection; 1×1 input → zero; builder-method
+  composition; negative-slope-threshold clamp; with-radius clamp to
+  `[1, 16]`). Three new factory names wired into `register()`:
+  `laplacian-of-gaussian`, `log` (short alias), `marr-hildreth`
+  (paper-author alias). The factory accepts `sigma` (positive
+  float), `radius` (integer, clamped), `mode` (`"magnitude"` /
+  `"zero-crossings"`), `zero_crossings` (boolean shorthand for
+  flipping the mode), `output_gain` (finite float), and
+  `slope_threshold` (non-negative float). Three new factory smoke
+  tests cover the magnitude output shape, the zero-crossings mode
+  acceptance via both the long-form spelling and the boolean
+  shorthand, and sigma rejection.
+
 - r174: land `FreiChen` + `FreiChenMode` — the Frei–Chen 3×3
   orthonormal-basis edge / line detector (Werner Frei & Chung-Ching
   Chen, "Fast Boundary Detection: A Generalization and a New
