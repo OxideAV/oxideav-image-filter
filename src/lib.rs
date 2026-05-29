@@ -63,6 +63,13 @@
 //!   shift on direct-colour data).
 //! - [`Despeckle`](despeckle::Despeckle) — median-window
 //!   edge-preserving noise reduction; alpha pass-through.
+//! - [`Dither`](dither::Dither) — bit-depth-reduction dither with the
+//!   classic Bayer ordered (`2×2` / `4×4` / `8×8`) threshold maps and
+//!   the Floyd–Steinberg / JJN / Stucki / Sierra-3 / Sierra-2 /
+//!   Sierra-Lite / Atkinson error-diffusion kernel family. Default
+//!   `levels = 2` (1-bit B&W halftone); higher `levels` give multi-tone
+//!   dithered posterisation. Per-channel for RGB / RGBA (alpha
+//!   pass-through), luma-only on YUV.
 //! - [`Distort`](distort::Distort) — radial-polynomial barrel /
 //!   pincushion lens distortion (`k1` quadratic + `k2` quartic
 //!   coefficients). IM: `-distort barrel "k1 k2 ..."`.
@@ -497,6 +504,7 @@ pub mod difference;
 pub mod displacement_map;
 pub mod distance_transform;
 pub mod distort;
+pub mod dither;
 pub mod drago;
 pub mod drop_shadow;
 pub mod edge;
@@ -630,6 +638,7 @@ pub use difference::Difference;
 pub use displacement_map::DisplacementMap;
 pub use distance_transform::DistanceTransform;
 pub use distort::Distort;
+pub use dither::{BayerMatrix, DiffusionKernel, Dither, DitherMode};
 pub use drago::Drago;
 pub use drop_shadow::DropShadow;
 pub use edge::Edge;

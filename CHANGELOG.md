@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r186: land `Dither` + `DitherMode` + `BayerMatrix` +
+  `DiffusionKernel` — the classic bit-depth-reduction dither family
+  backed by the freshly-staged
+  `docs/image/filter/dithering-kernels.md` clean-room reference. The
+  module ships both ordered-dither (tiled Bayer threshold maps, sizes
+  `2×2` / `4×4` / `8×8`, built by the recursive
+  `M_2n = 4·M_n + M_2[hi, lo]` rule from Bayer 1973 IEEE ICC) and the
+  seven canonical error-diffusion kernels: Floyd–Steinberg (÷16,
+  Floyd & Steinberg 1976 SID), Jarvis–Judice–Ninke (÷48, Jarvis et al.
+  1976 CGIP), Stucki (÷42, Stucki 1981 IBM RZ1060), Sierra-3 (÷32),
+  Sierra-2 (÷16), Sierra-Lite / Filter-Lite / Sierra-2-4A (÷4) — the
+  three Sierra kernels are community-attributed c. 1989–1990 — and
+  Atkinson (÷8 with coefficient sum 6, so 2/8 of each pixel's
+  quantisation error is intentionally discarded; Apple, Macintosh-era
+  late 1980s). The error-diffusion path accumulates per-pixel
+  residues in an `i32` buffer indexed by `(y·width + x)` so the
+  arithmetic stays exact across the whole scan; the per-neighbour
+  residue is divided by the kernel divisor exactly once at the
+  destination read. Output bit-depth is configurable via `with_levels`
+  — the default `levels = 2` gives a 1-bit black-and-white halftone
+  (the Macintosh / newsprint use case); `levels = 4` gives a 2-bit
+  dithered quantisation; etc. Per-channel for `Rgb24` / `Rgba` (alpha
+  on RGBA is pass-through unchanged), luma-only on YUV (chroma
+  planes are left untouched so hue/saturation stay put, matching every
+  other "tone" filter in this crate). 12 new factory aliases —
+  `dither` (configurable via JSON `kernel: "..."` / `levels: N` /
+  `matrix: 2|4|8`), `dither-floyd-steinberg` & `dither-fs`,
+  `dither-jjn` & `dither-jarvis`, `dither-stucki`, `dither-sierra3`,
+  `dither-sierra2`, `dither-sierra-lite`, `dither-atkinson`,
+  `dither-bayer` & `ordered-dither`. 24 module-level unit tests pin
+  the Bayer recurrence (including the
+  `M_4[i, j] = 4·M_2[i mod 2, j mod 2] + M_2[i/2, j/2]` self-similar
+  identity), the index-set permutation property of the 8×8 map, the
+  coefficient-sum / divisor invariant for every kernel (FS / JJN /
+  Stucki / Sierra-3 / Sierra-2 / Sierra-Lite all error-conserving;
+  Atkinson divisor 8 with Σ = 6), the binary `{0, 255}` output at
+  `levels = 2`, the quartile-only `{0, 85, 170, 255}` output at
+  `levels = 4`, mean conservation for Floyd–Steinberg on a flat-grey
+  field, the demonstrably non-conserving behaviour for Atkinson,
+  endpoint preservation (pure black / pure white round-trip on
+  ordered dither), statelessness across repeated `apply` calls for
+  both modes, RGB / RGBA / YUV plane handling (chroma untouched on
+  YUV; alpha untouched on RGBA), and rejection of unsupported pixel
+  formats. Five additional registry smoke tests cover every alias
+  via the JSON parameter path. Factory count climbs from 161 → 173
+  filter names.
+
 - r181: land `LaplacianOfGaussian` + `LogMode` — the Marr–Hildreth
   Laplacian-of-Gaussian edge / zero-crossing detector (David Marr &
   Ellen Hildreth, "Theory of Edge Detection", *Proceedings of the Royal

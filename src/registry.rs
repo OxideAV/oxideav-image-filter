@@ -348,6 +348,34 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("log", Box::new(make_log));
     ctx.filters.register("marr-hildreth", Box::new(make_log));
 
+    // r186 factory: classic bit-depth-reduction dither (Bayer ordered
+    // + the Floyd–Steinberg / Jarvis–Judice–Ninke / Stucki /
+    // Sierra-3 / Sierra-2 / Sierra-Lite / Atkinson error-diffusion
+    // family). Per-kernel + per-mode names so a pipeline can pick one
+    // without packing it into a JSON param.
+    ctx.filters.register("dither", Box::new(make_dither));
+    ctx.filters
+        .register("dither-floyd-steinberg", Box::new(make_dither_fs));
+    ctx.filters.register("dither-fs", Box::new(make_dither_fs));
+    ctx.filters
+        .register("dither-jjn", Box::new(make_dither_jjn));
+    ctx.filters
+        .register("dither-jarvis", Box::new(make_dither_jjn));
+    ctx.filters
+        .register("dither-stucki", Box::new(make_dither_stucki));
+    ctx.filters
+        .register("dither-sierra3", Box::new(make_dither_sierra3));
+    ctx.filters
+        .register("dither-sierra2", Box::new(make_dither_sierra2));
+    ctx.filters
+        .register("dither-sierra-lite", Box::new(make_dither_sierra_lite));
+    ctx.filters
+        .register("dither-atkinson", Box::new(make_dither_atkinson));
+    ctx.filters
+        .register("dither-bayer", Box::new(make_dither_bayer));
+    ctx.filters
+        .register("ordered-dither", Box::new(make_dither_bayer));
+
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors ImageMagick's `-compose <op>` family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
@@ -5171,6 +5199,210 @@ fn make_log(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>
     )))
 }
 
+// ------------------------------------------------------------------
+// r186: Dither factories (bit-depth-reduction; Bayer ordered + the
+// FS / JJN / Stucki / Sierra family / Atkinson error-diffusion
+// kernels). All seven kernels and three Bayer matrix sizes share a
+// single parse helper so the eleven registered names + aliases stay
+// one-liners.
+// ------------------------------------------------------------------
+
+fn make_dither(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    let f = parse_dither(params, None)?;
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_dither_fs(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DiffusionKernel;
+    let f = parse_dither(
+        params,
+        Some(ForcedMode::Diffusion(DiffusionKernel::FloydSteinberg)),
+    )?;
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_dither_jjn(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DiffusionKernel;
+    let f = parse_dither(params, Some(ForcedMode::Diffusion(DiffusionKernel::Jjn)))?;
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_dither_stucki(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DiffusionKernel;
+    let f = parse_dither(params, Some(ForcedMode::Diffusion(DiffusionKernel::Stucki)))?;
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_dither_sierra3(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DiffusionKernel;
+    let f = parse_dither(
+        params,
+        Some(ForcedMode::Diffusion(DiffusionKernel::Sierra3)),
+    )?;
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_dither_sierra2(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DiffusionKernel;
+    let f = parse_dither(
+        params,
+        Some(ForcedMode::Diffusion(DiffusionKernel::Sierra2)),
+    )?;
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_dither_sierra_lite(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DiffusionKernel;
+    let f = parse_dither(
+        params,
+        Some(ForcedMode::Diffusion(DiffusionKernel::SierraLite)),
+    )?;
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_dither_atkinson(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DiffusionKernel;
+    let f = parse_dither(
+        params,
+        Some(ForcedMode::Diffusion(DiffusionKernel::Atkinson)),
+    )?;
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_dither_bayer(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::BayerMatrix;
+    // Pull the matrix size from `params.matrix` / `params.size` so the
+    // user can swap 2/4/8 without re-naming the filter.
+    let p = params.as_object();
+    let size = p
+        .and_then(|m| m.get("matrix").or_else(|| m.get("size")))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4);
+    let matrix = match size {
+        2 => BayerMatrix::M2,
+        4 => BayerMatrix::M4,
+        8 => BayerMatrix::M8,
+        other => {
+            return Err(Error::invalid(format!(
+                "dither-bayer: matrix size must be 2, 4 or 8 (got {other})",
+            )));
+        }
+    };
+    let f = parse_dither(params, Some(ForcedMode::Ordered(matrix)))?;
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+enum ForcedMode {
+    Diffusion(crate::DiffusionKernel),
+    Ordered(crate::BayerMatrix),
+}
+
+/// Shared parser for every dither factory. If `forced` is set the
+/// algorithm is fixed and only `levels` is read from `params`;
+/// otherwise the algorithm comes from `params.kernel` / `params.mode`
+/// with Floyd–Steinberg as the default.
+fn parse_dither(params: &Value, forced: Option<ForcedMode>) -> Result<crate::Dither> {
+    use crate::{BayerMatrix, DiffusionKernel, Dither};
+    let p = params.as_object();
+    let levels = p
+        .and_then(|m| m.get("levels"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2)
+        .min(u32::MAX as u64) as u32;
+    let f = match forced {
+        Some(ForcedMode::Diffusion(k)) => Dither::error_diffusion(k),
+        Some(ForcedMode::Ordered(m)) => Dither::ordered(m),
+        None => {
+            // Parse `mode` / `kernel` strings from the parameters
+            // map. Unknown values fall through to Floyd–Steinberg.
+            let kernel_name = p
+                .and_then(|m| m.get("kernel").or_else(|| m.get("mode")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("floyd-steinberg");
+            match kernel_name.to_ascii_lowercase().as_str() {
+                "floyd-steinberg" | "fs" | "floydsteinberg" => {
+                    Dither::error_diffusion(DiffusionKernel::FloydSteinberg)
+                }
+                "jjn" | "jarvis" | "jarvis-judice-ninke" => {
+                    Dither::error_diffusion(DiffusionKernel::Jjn)
+                }
+                "stucki" => Dither::error_diffusion(DiffusionKernel::Stucki),
+                "sierra3" | "sierra-3" => Dither::error_diffusion(DiffusionKernel::Sierra3),
+                "sierra2" | "sierra-2" => Dither::error_diffusion(DiffusionKernel::Sierra2),
+                "sierra-lite" | "sierralite" | "sierra-2-4a" => {
+                    Dither::error_diffusion(DiffusionKernel::SierraLite)
+                }
+                "atkinson" => Dither::error_diffusion(DiffusionKernel::Atkinson),
+                "bayer2" | "bayer-2" | "ordered2" => Dither::ordered(BayerMatrix::M2),
+                "bayer4" | "bayer-4" | "ordered4" | "bayer" | "ordered" => {
+                    Dither::ordered(BayerMatrix::M4)
+                }
+                "bayer8" | "bayer-8" | "ordered8" => Dither::ordered(BayerMatrix::M8),
+                other => {
+                    return Err(Error::invalid(format!(
+                        "dither: unknown kernel/mode '{other}'",
+                    )));
+                }
+            }
+        }
+    };
+    Ok(f.with_levels(levels))
+}
+
 fn make_prewitt(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::{Prewitt, PrewittMagnitude};
     let p = params.as_object();
@@ -5456,6 +5688,20 @@ mod tests {
             "laplacian-of-gaussian",
             "log",
             "marr-hildreth",
+            // r186 additions (classic dither: Bayer ordered + every
+            // canonical error-diffusion kernel + spelling aliases).
+            "dither",
+            "dither-floyd-steinberg",
+            "dither-fs",
+            "dither-jjn",
+            "dither-jarvis",
+            "dither-stucki",
+            "dither-sierra3",
+            "dither-sierra2",
+            "dither-sierra-lite",
+            "dither-atkinson",
+            "dither-bayer",
+            "ordered-dither",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -5707,6 +5953,76 @@ mod tests {
         // With 2 levels, every sample should be in {0, 255}.
         for &v in &out.planes[0].data {
             assert!(v == 0 || v == 255, "posterize{{2}} produced {v}");
+        }
+    }
+
+    #[test]
+    fn dither_factory_round_trip_for_every_kernel() {
+        // Every dither factory must round-trip a flat-grey gray input
+        // to a binary {0, 255} field at the default `levels = 2`.
+        let c = ctx();
+        for name in [
+            "dither",
+            "dither-fs",
+            "dither-floyd-steinberg",
+            "dither-jjn",
+            "dither-jarvis",
+            "dither-stucki",
+            "dither-sierra3",
+            "dither-sierra2",
+            "dither-sierra-lite",
+            "dither-atkinson",
+            "dither-bayer",
+            "ordered-dither",
+        ] {
+            let inputs = [gray_in_port(4, 4)];
+            let f = c
+                .filters
+                .make(name, &json!({}), &inputs)
+                .unwrap_or_else(|e| panic!("{name} factory failed: {e}"));
+            let out = run_one(f, gray_4x4(|_, _| 128));
+            for &v in &out.planes[0].data {
+                assert!(v == 0 || v == 255, "{name} produced {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn dither_factory_rejects_unknown_kernel() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let r = c
+            .filters
+            .make("dither", &json!({"kernel": "made-up-thing"}), &inputs);
+        let err = match r {
+            Ok(_) => panic!("unknown kernel must error"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("dither"));
+    }
+
+    #[test]
+    fn dither_bayer_rejects_unsupported_matrix_size() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        assert!(c
+            .filters
+            .make("dither-bayer", &json!({"matrix": 3}), &inputs)
+            .is_err());
+    }
+
+    #[test]
+    fn dither_factory_honours_levels_override() {
+        // levels = 4 → output codes from the quartile set only.
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let f = c
+            .filters
+            .make("dither-fs", &json!({"levels": 4}), &inputs)
+            .expect("dither-fs factory");
+        let out = run_one(f, gray_4x4(|x, y| ((x * 16 + y * 16) & 0xff) as u8));
+        for &v in &out.planes[0].data {
+            assert!(matches!(v, 0 | 85 | 170 | 255), "4-level produced {v}");
         }
     }
 

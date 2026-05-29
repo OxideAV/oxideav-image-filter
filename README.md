@@ -116,6 +116,36 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   range. IM: `-normalize`.
 - **`Posterize`** — reduce each channel to `N` intensity levels. IM:
   `-posterize N`.
+- **`Dither`** + **`DitherMode`** + **`BayerMatrix`** +
+  **`DiffusionKernel`** — bit-depth-reduction dither with two
+  algorithm families:
+  - **Bayer ordered dither** with tiled `2×2` / `4×4` / `8×8`
+    threshold maps built by the standard
+    `M_2n = 4·M_n + M_2[hi, lo]` recurrence (Bayer 1973 IEEE ICC).
+    No state, perfectly parallel, produces the classic crosshatch
+    texture.
+  - **Error diffusion** along a left-to-right raster scan: the seven
+    canonical kernels Floyd–Steinberg (÷16, 1976 SID),
+    Jarvis–Judice–Ninke (÷48, 1976 CGIP), Stucki (÷42, 1981 IBM
+    RZ1060), Sierra-3 (÷32), Sierra-2 (÷16), Sierra-Lite (÷4) — the
+    three Sierra kernels are community-attributed c. 1989–1990 —
+    and Atkinson (÷8 with coefficient sum 6, so 2/8 of each pixel's
+    quantisation error is intentionally discarded; Apple, late
+    1980s). Per-channel for R / G / B (alpha pass-through on
+    RGBA), luma-only on YUV.
+
+  Output bit-depth is configurable via `with_levels`. Default
+  `levels = 2` gives a 1-bit black-and-white halftone (Macintosh /
+  newsprint / 1-bit-display use case); higher `levels` give a
+  multi-tone dithered posterisation (the colour count drops but
+  the visible banding does not appear). Factory aliases: `dither`
+  (configurable via `{"kernel": "atkinson", "levels": 4}`),
+  `dither-floyd-steinberg` / `dither-fs`, `dither-jjn` /
+  `dither-jarvis`, `dither-stucki`, `dither-sierra3`,
+  `dither-sierra2`, `dither-sierra-lite`, `dither-atkinson`,
+  `dither-bayer` / `ordered-dither` (matrix size via
+  `{"matrix": 2|4|8}`).
+
 - **`Solarize`** — invert pixels above a threshold. IM: `-solarize N%`.
 - **`AdaptiveThreshold`** — local-mean-based binarisation with a
   configurable `(2*radius+1)²` window and signed offset; box-sum
