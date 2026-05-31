@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- r198: land `Gabor` + `GaborMode` — the oriented Gaussian-modulated
+  cosine filter (Dennis Gabor, "Theory of Communication", *Journal of
+  the Institution of Electrical Engineers* 93(III):429–457, 1946; John
+  G. Daugman, "Uncertainty relation for resolution in space, spatial
+  frequency, and orientation optimized by two-dimensional visual
+  cortical filters", *Journal of the Optical Society of America A*
+  2(7):1160–1169, July 1985). The filter samples the continuous
+  `exp(-(x'² + γ²·y'²) / (2σ²)) · cos(2π·x'/λ + ψ)` kernel on a
+  `(2·radius+1)²` integer grid centred at the kernel origin (where
+  `x' = (x − cx)·cos θ + (y − cy)·sin θ`,
+  `y' = -(x − cx)·sin θ + (y − cy)·cos θ`); the default radius
+  is `ceil(3·σ·max(1, 1/γ))` clamped to `[1, 32]`, so the kernel
+  support tracks the elongated envelope when `γ < 1`. The discrete
+  coefficients are zero-meaned (DC component subtracted) so a flat
+  constant input produces exactly zero response — the same fix
+  already applied to the discrete LoG kernel, and the textbook
+  recommendation (Petkov & Kruizinga 1997 *Biological Cybernetics*).
+  The convolution is dense 2-D (the Gabor is not rank-1 separable
+  for general θ and γ ≠ 1) at `O(W·H·(2r+1)²)` cost; border samples
+  edge-clamp to the nearest in-bounds pixel so the output keeps the
+  input dimensions. Two output modes are offered:
+  [`GaborMode::Signed`] (default) linearly remaps the raw response
+  from `[-R, +R]` to `[0, 255]` with neutral grey 128 marking zero
+  response (preserves the orientation + phase polarity of the
+  carrier — the linear "simple cell" response), and
+  [`GaborMode::Magnitude`] linearly remaps `|response|` from
+  `[0, R]` to `[0, 255]` (classical oriented-energy response — the
+  half-rectified simple-cell or one half of a quadrature-pair
+  complex-cell magnitude). The renderer's `R` is the maximum
+  absolute discrete response against a `[0, 255]` grating
+  (half the L1 norm of the zero-mean kernel), computed once at
+  kernel-build time. Configurable knobs: `wavelength` (carrier
+  period in pixels along `x'`; rejected if `< 2` per the spatial
+  Nyquist limit), `orientation_degrees` (CCW from positive
+  image-x), `phase_degrees` (0 = even-symmetric cosine for
+  bar-like response, 90 = odd-symmetric sine for step-edge
+  response), `sigma` (envelope standard deviation in pixels;
+  must be `> 0`), `gamma` (envelope spatial-aspect ratio
+  `σ_y / σ_x`; `1.0` = isotropic, `< 1.0` = elongated along the
+  carrier; must be `> 0`), `radius` (override the
+  `ceil(3·σ·max(1, 1/γ))` auto-selection; clamped to `[1, 32]`),
+  `output_gain` (global multiplier applied before clamp). Any
+  supported input is collapsed to a luma plane first (Gray8 / YUV
+  use the Y plane directly; RGB / RGBA use the `(R + 2G + B) / 4`
+  quick luma, sharing the existing `laplacian::build_luma_plane`
+  helper); the output is always single-plane `Gray8` of the input
+  dimensions. The filter joins the edge / texture-energy family at
+  the "oriented bandpass" position complementing the isotropic
+  `LaplacianOfGaussian` (Marr–Hildreth) and the 1st-derivative
+  Sobel / Prewitt / Scharr / Roberts. Tests: 20 (zero-mean
+  correction proven across a sweep of `radius × sigma × gamma ×
+  wavelength × orientation × phase` to `|sum| < 1e-4`; flat
+  Gray8 input → exactly neutral grey 128 on signed output; flat
+  input → exactly 0 on magnitude output; a vertical-stripe carrier
+  matching the filter's orientation and wavelength excites the
+  signed response well off neutral grey; the orientation
+  selectivity test compares aligned vs perpendicular filter
+  responses on the same grating — aligned mean ≫ perpendicular
+  mean; the 180° rotation invariance of the even-symmetric (ψ=0)
+  Gabor kernel is preserved bit-exact in the interior; the
+  ψ=90° (odd-symmetric sine carrier) Gabor responds strongly at a
+  vertical step edge and weakly far from it; RGB / Yuv420P luma
+  collapse; PTS pass-through; sigma / gamma / wavelength /
+  output_gain rejection of out-of-range values; unsupported-format
+  rejection; 3×3 input smaller than the kernel still produces
+  zero-meaned flat output via border clamping; signed-noise mean
+  centres near 128; radius-clamping at the `[1, 32]` builder
+  endpoints; builder-method composition). Three new factory names
+  wired into `register()`: `gabor`, `gabor-filter`, `gabor-wavelet`.
+  The factory accepts `wavelength` (≥ 2; rejected otherwise),
+  `orientation_degrees` (or `orientation` / `theta`),
+  `phase_degrees` (or `phase` / `psi`), `sigma` (> 0), `gamma`
+  (or `aspect`; > 0), `radius` (integer, clamped),
+  `mode` (`"signed"` / `"magnitude"`), `magnitude` (boolean
+  shorthand for flipping the mode), and `output_gain` (finite
+  float). Four new factory smoke tests cover the Gray8 output
+  shape, every alias name, the magnitude / parameter-alias path,
+  and the wavelength / sigma / gamma rejection branches. Filter
+  count climbs from 128 → 129 named types (one new filter struct
+  `Gabor` plus the public companion `GaborMode`); factory count
+  climbs from 173 → 176 names.
+
 ## [0.1.2](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.1...v0.1.2) - 2026-05-29
 
 ### Added

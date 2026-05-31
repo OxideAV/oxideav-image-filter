@@ -315,6 +315,25 @@
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
 //!
+//! r198 additions:
+//!
+//! - [`Gabor`](gabor::Gabor) + [`GaborMode`](gabor::GaborMode) — oriented
+//!   Gaussian-modulated cosine filter (Gabor 1946; Daugman 1985). Discrete
+//!   sampling of `exp(-(x'² + γ²·y'²) / (2σ²)) · cos(2π·x'/λ + ψ)` on a
+//!   `(2·radius+1)²` grid with DC-removal so flat input maps to zero. Two
+//!   output modes: [`GaborMode::Signed`] (linear remap of `[-R, +R]` to
+//!   `[0, 255]` with neutral grey 128; preserves orientation + phase
+//!   polarity) and [`GaborMode::Magnitude`] (linear remap of `[0, R]` to
+//!   `[0, 255]`; classical oriented-energy response). Knobs: `wavelength`
+//!   (carrier period in pixels, `≥ 2`), `orientation_degrees`,
+//!   `phase_degrees`, `sigma`, `gamma` (envelope aspect ratio),
+//!   `radius`, `output_gain`. Luma-collapses any supported input;
+//!   output `Gray8`. Joins the edge / texture-energy family at the
+//!   "oriented bandpass" position complementing the isotropic
+//!   [`LaplacianOfGaussian`](laplacian_of_gaussian::LaplacianOfGaussian)
+//!   and the 1st-derivative [`Edge`] / [`Prewitt`](prewitt::Prewitt) /
+//!   [`Scharr`](scharr::Scharr) / [`Roberts`](roberts::Roberts).
+//!
 //! r181 additions:
 //!
 //! - [`LaplacianOfGaussian`](laplacian_of_gaussian::LaplacianOfGaussian)
@@ -521,6 +540,7 @@ pub mod flop;
 pub mod frame;
 pub mod frei_chen;
 pub mod function;
+pub mod gabor;
 pub mod gamma;
 pub mod gradient_conic;
 pub mod gradient_map;
@@ -655,6 +675,7 @@ pub use flop::Flop;
 pub use frame::Frame;
 pub use frei_chen::{FreiChen, FreiChenMode};
 pub use function::{Function, FunctionOp};
+pub use gabor::{Gabor, GaborMode};
 pub use gamma::Gamma;
 pub use gradient_conic::GradientConic;
 pub use gradient_map::{GradientMap, GradientStop};

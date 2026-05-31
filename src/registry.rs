@@ -348,6 +348,13 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("log", Box::new(make_log));
     ctx.filters.register("marr-hildreth", Box::new(make_log));
 
+    // r198 factory: oriented Gabor filter (Gabor 1946; Daugman 1985).
+    // Three aliases so `gabor` / `gabor-filter` / `gabor-wavelet` all
+    // resolve to the same factory.
+    ctx.filters.register("gabor", Box::new(make_gabor));
+    ctx.filters.register("gabor-filter", Box::new(make_gabor));
+    ctx.filters.register("gabor-wavelet", Box::new(make_gabor));
+
     // r186 factory: classic bit-depth-reduction dither (Bayer ordered
     // + the Floyd–Steinberg / Jarvis–Judice–Ninke / Stucki /
     // Sierra-3 / Sierra-2 / Sierra-Lite / Atkinson error-diffusion
@@ -5124,6 +5131,107 @@ fn make_frei_chen(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamF
     )))
 }
 
+fn make_gabor(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{Gabor, GaborMode};
+    let p = params.as_object();
+    let mut f = Gabor::new();
+    if let Some(w) = p.and_then(|m| m.get("wavelength")).and_then(|v| v.as_f64()) {
+        if !(w.is_finite() && w >= 2.0) {
+            return Err(Error::invalid(
+                "gabor: wavelength must be >= 2 (spatial Nyquist)".to_string(),
+            ));
+        }
+        f = f.with_wavelength(w as f32);
+    }
+    if let Some(t) = p
+        .and_then(|m| m.get("orientation_degrees"))
+        .or_else(|| p.and_then(|m| m.get("orientation")))
+        .or_else(|| p.and_then(|m| m.get("theta")))
+        .and_then(|v| v.as_f64())
+    {
+        if !t.is_finite() {
+            return Err(Error::invalid(
+                "gabor: orientation must be finite".to_string(),
+            ));
+        }
+        f = f.with_orientation_degrees(t as f32);
+    }
+    if let Some(ps) = p
+        .and_then(|m| m.get("phase_degrees"))
+        .or_else(|| p.and_then(|m| m.get("phase"))) // alias
+        .or_else(|| p.and_then(|m| m.get("psi")))
+        .and_then(|v| v.as_f64())
+    {
+        if !ps.is_finite() {
+            return Err(Error::invalid("gabor: phase must be finite".to_string()));
+        }
+        f = f.with_phase_degrees(ps as f32);
+    }
+    if let Some(s) = p.and_then(|m| m.get("sigma")).and_then(|v| v.as_f64()) {
+        if !(s.is_finite() && s > 0.0) {
+            return Err(Error::invalid("gabor: sigma must be > 0".to_string()));
+        }
+        f = f.with_sigma(s as f32);
+    }
+    if let Some(g) = p
+        .and_then(|m| m.get("gamma"))
+        .or_else(|| p.and_then(|m| m.get("aspect"))) // alias
+        .and_then(|v| v.as_f64())
+    {
+        if !(g.is_finite() && g > 0.0) {
+            return Err(Error::invalid("gabor: gamma must be > 0".to_string()));
+        }
+        f = f.with_gamma(g as f32);
+    }
+    if let Some(r) = p.and_then(|m| m.get("radius")).and_then(|v| v.as_u64()) {
+        f = f.with_radius(r as u32);
+    }
+    if let Some(mode) = p.and_then(|m| m.get("mode")).and_then(|v| v.as_str()) {
+        let m = if mode.eq_ignore_ascii_case("magnitude")
+            || mode.eq_ignore_ascii_case("energy")
+            || mode.eq_ignore_ascii_case("abs")
+        {
+            GaborMode::Magnitude
+        } else {
+            GaborMode::Signed
+        };
+        f = f.with_mode(m);
+    } else if let Some(b) = p.and_then(|m| m.get("magnitude")).and_then(|v| v.as_bool()) {
+        f = f.with_mode(if b {
+            GaborMode::Magnitude
+        } else {
+            GaborMode::Signed
+        });
+    }
+    if let Some(g) = p
+        .and_then(|m| m.get("output_gain"))
+        .and_then(|v| v.as_f64())
+    {
+        if !g.is_finite() {
+            return Err(Error::invalid(
+                "gabor: output_gain must be finite".to_string(),
+            ));
+        }
+        f = f.with_output_gain(g as f32);
+    }
+    let in_port = video_in_port(inputs);
+    // Gabor output is always Gray8.
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
+        _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 fn make_log(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::{LaplacianOfGaussian, LogMode};
     let p = params.as_object();
@@ -9230,5 +9338,79 @@ mod tests {
             .expect("displacement-map factory");
         assert_eq!(f.input_ports().len(), 2);
         assert_eq!(f.output_ports().len(), 1);
+    }
+
+    #[test]
+    fn gabor_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [rgba_in_port(8, 8)];
+        let f = c
+            .filters
+            .make("gabor", &json!({"wavelength": 6.0}), &inputs)
+            .expect("gabor factory");
+        let out_format = match &f.output_ports()[0].params {
+            PortParams::Video { format, .. } => *format,
+            _ => panic!("expected video port"),
+        };
+        assert_eq!(out_format, PixelFormat::Gray8);
+    }
+
+    #[test]
+    fn gabor_factory_accepts_all_aliases() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        assert!(c.filters.make("gabor", &json!({}), &inputs).is_ok());
+        assert!(c.filters.make("gabor-filter", &json!({}), &inputs).is_ok());
+        assert!(c.filters.make("gabor-wavelet", &json!({}), &inputs).is_ok());
+    }
+
+    #[test]
+    fn gabor_factory_accepts_magnitude_mode() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        // Long-form mode string.
+        assert!(c
+            .filters
+            .make(
+                "gabor",
+                &json!({"mode": "magnitude", "wavelength": 4.0, "sigma": 2.0}),
+                &inputs,
+            )
+            .is_ok());
+        // Boolean shorthand.
+        assert!(c
+            .filters
+            .make("gabor", &json!({"magnitude": true}), &inputs)
+            .is_ok());
+        // Param aliases.
+        assert!(c
+            .filters
+            .make(
+                "gabor",
+                &json!({"theta": 45.0, "psi": 90.0, "aspect": 0.7}),
+                &inputs,
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn gabor_factory_rejects_bad_parameters() {
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        // wavelength below spatial Nyquist.
+        assert!(c
+            .filters
+            .make("gabor", &json!({"wavelength": 1.0}), &inputs)
+            .is_err());
+        // sigma non-positive.
+        assert!(c
+            .filters
+            .make("gabor", &json!({"sigma": 0.0}), &inputs)
+            .is_err());
+        // gamma non-positive.
+        assert!(c
+            .filters
+            .make("gabor", &json!({"gamma": -0.5}), &inputs)
+            .is_err());
     }
 }

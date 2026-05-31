@@ -549,6 +549,28 @@ physically-meaningful luminance.
   `|Gx|+|Gy|` (`L1`), clamped to `[0, 255]`. Output `Gray8`. Unlike
   `EdgeDetect`'s `L1`-only Scharr kernel, the default here is the
   true Euclidean magnitude. Factory alias: `scharr`.
+- **`Gabor`** + **`GaborMode`** — Gabor 1946 / Daugman 1985 oriented
+  Gaussian-modulated cosine filter. Samples the continuous
+  `exp(-(x'² + γ²·y'²) / (2σ²)) · cos(2π·x'/λ + ψ)` kernel on a
+  `(2·radius+1)²` grid (auto-radius `ceil(3·σ·max(1, 1/γ))`,
+  clamped to `[1, 32]`), zero-means the coefficients so flat input
+  produces zero response, then runs a dense 2-D convolution. Two
+  output modes: `GaborMode::Signed` (default) maps `[-R, +R]` to
+  `[0, 255]` with neutral grey 128 = zero (preserves orientation
+  + phase polarity — the linear "simple cell" response), or
+  `GaborMode::Magnitude` maps `[0, R]` to `[0, 255]` (classical
+  oriented-energy response). Configurable `wavelength` (carrier
+  period in pixels, must be `≥ 2`), `orientation_degrees`,
+  `phase_degrees` (0 = even cosine for bar response, 90 = odd sine
+  for step-edge response), `sigma`, `gamma` (envelope aspect ratio
+  `σ_y / σ_x`; `1.0` isotropic, `< 1.0` elongated along the
+  carrier), `radius`, `output_gain`. Luma-collapses any supported
+  input; output always `Gray8`. Joins the edge / texture-energy
+  family at the "oriented bandpass" position complementing the
+  isotropic `LaplacianOfGaussian` (Marr–Hildreth) and the
+  1st-derivative `Edge` (Sobel) / `Prewitt` / `Scharr` /
+  `Roberts`. Factory aliases: `gabor`, `gabor-filter`,
+  `gabor-wavelet`.
 - **`FreiChen`** + **`FreiChenMode`** — Frei–Chen 3×3 orthonormal-
   basis edge / line detector (Frei & Chen 1977). Projects each 3×3
   luma neighbourhood onto 9 mutually-orthogonal templates partitioned
