@@ -1,4 +1,4 @@
-//! Non-photorealistic "charcoal sketch" stylise (ImageMagick `-charcoal R`).
+//! Non-photorealistic "charcoal sketch" stylise (documented `-charcoal R` CLI).
 //!
 //! Pipeline (per-pixel, all in 8-bit luma space):
 //!

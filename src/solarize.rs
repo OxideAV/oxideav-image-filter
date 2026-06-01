@@ -8,7 +8,7 @@
 //! v' = if v >= threshold { 255 - v } else { v }
 //! ```
 //!
-//! ImageMagick spells this `-solarize N%`; the CLI is responsible for
+//! The documented CLI spells this `-solarize N%`; the CLI is responsible for
 //! mapping percent syntax to the `u8` threshold taken here.
 
 use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};

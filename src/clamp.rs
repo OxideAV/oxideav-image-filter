@@ -6,7 +6,7 @@
 //! caller wants explicit floor/ceiling behaviour.
 //!
 //! Clean-room implementation — a one-line per-sample piecewise map.
-//! Mirrors ImageMagick's `-clamp` (which only forces samples back into
+//! Mirrors the documented `-clamp` CLI convention (which only forces samples back into
 //! `[0, 1]` in normalised float space; we extend it slightly so callers
 //! can also specify a tighter window).
 //!

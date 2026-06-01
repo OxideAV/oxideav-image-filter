@@ -14,7 +14,7 @@
 //!
 //! Pixels inside `radius` of the centre keep their full value; pixels
 //! beyond the radius fall off as a Gaussian with standard deviation
-//! `sigma`. Parameter semantics mirror ImageMagick's `-vignette
+//! `sigma`. Parameter semantics mirror the documented CLI's `-vignette
 //! RxS{+x{+y}}` (with `radius`/`sigma` interpreted in pixels and
 //! `(x, y)` interpreted as image-relative offsets that we encode as
 //! normalised `[0.0, 1.0]` to keep the API resolution-independent).
@@ -77,7 +77,7 @@ impl ImageFilter for Vignette {
         let row_bytes = w * bpp;
         let cx = self.x * params.width as f32;
         let cy = self.y * params.height as f32;
-        // ImageMagick default: sigma = 0.65 * min(w, h) when caller
+        // Documented CLI default: sigma = 0.65 * min(w, h) when caller
         // passes 0 / unset.
         let sigma = if self.sigma > 0.0 {
             self.sigma

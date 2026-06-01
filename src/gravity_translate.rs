@@ -1,6 +1,6 @@
 //! Gravity-anchored canvas placement: re-window the input on a new
 //! canvas of `(width, height)` with the input pinned to a 9-point
-//! cardinal compass anchor (`-gravity` in ImageMagick).
+//! cardinal compass anchor (`-gravity` in the documented CLI).
 //!
 //! Clean-room: this is `Extent` with the `(offset_x, offset_y)`
 //! computed from a symbolic anchor instead of given numerically.
@@ -18,7 +18,7 @@
 use crate::{extent::Extent, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
-/// 9-point compass anchor mirroring ImageMagick's `-gravity`.
+/// 9-point compass anchor mirroring the documented `-gravity` CLI.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gravity {
     NorthWest,

@@ -1,7 +1,7 @@
 //! Fixed-colour canvas: replace every input pixel with a constant
 //! `[R, G, B, A]` colour. Output shape (`format`, `width`, `height`) is
 //! taken from the stream parameters — this is effectively `xc:`-style
-//! `-canvas`/`-fill colour` from ImageMagick.
+//! `-canvas`/`-fill colour` from the documented CLI.
 //!
 //! Clean-room: trivial — for every output sample we emit the configured
 //! colour. No input-pixel sampling at all (the input frame is consumed
@@ -19,7 +19,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 pub struct Canvas {
     /// Fill colour as `[R, G, B, A]`. For `Gray8` only `R` is used; for
     /// YUV the Y plane uses `R` and chroma planes are painted with the
-    /// neutral value `128` (matching ImageMagick's behaviour when an
+    /// neutral value `128` (matching the documented CLI behaviour when an
     /// RGB colour is laid down on a YUV pipeline).
     pub colour: [u8; 4],
 }

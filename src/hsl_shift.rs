@@ -13,7 +13,7 @@
 //! — only the L shift affects them. Alpha is preserved on `Rgba`.
 //!
 //! Operates on `Rgb24` / `Rgba`. YUV inputs return `Unsupported`.
-//! ImageMagick has no direct one-liner for this — `-modulate` mixes
+//! no direct one-liner CLI exists for this — `-modulate` mixes
 //! `B,S,H` but on different scales (percentages of brightness, etc.);
 //! this filter uses normalised additive shifts on the same `[0, 1]`
 //! axis as `S`/`L`.

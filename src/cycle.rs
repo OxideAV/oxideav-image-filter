@@ -1,6 +1,6 @@
 //! Channel-value cycle: rotate every per-channel sample by `N` modulo 256.
 //!
-//! ImageMagick analogue: `-cycle N` (paletted images rotate the
+//! CLI analogue: `-cycle N` (paletted images rotate the
 //! colourmap; for direct-colour images the operator is defined on the
 //! per-channel byte value with wrap-around). This crate produces direct
 //! colour, so we apply the rotation to the raw sample bytes.

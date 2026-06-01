@@ -22,7 +22,7 @@
 //! (default opaque black) is used for samples that fall outside
 //! `[0, w-1] × [0, h-1]`.
 //!
-//! Convention (matches ImageMagick `-distort barrel`):
+//! Convention (matches documented `-distort barrel` CLI):
 //!
 //! - **`k1 > 0`** (and small `k2`) — *pincushion*: the centre is sampled
 //!   from further out, so the image appears to bulge inward at the

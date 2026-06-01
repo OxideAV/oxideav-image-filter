@@ -1,6 +1,6 @@
 //! "Implode" / "Explode" radial pinch effect.
 //!
-//! ImageMagick's `-implode N` operator: bend rays from the image centre
+//! the documented `-implode N` CLI operator: bend rays from the image centre
 //! either inward (positive `factor`, the classic implode look) or
 //! outward (negative `factor`, "explode"). Per-pixel inverse mapping
 //! with bilinear sampling, leaving everything outside the inscribed

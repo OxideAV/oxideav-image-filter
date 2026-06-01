@@ -1,7 +1,7 @@
 //! Block-average mosaic ("pixelate"): collapse each `N×N` tile to its
 //! mean colour.
 //!
-//! Visually identical to ImageMagick's `-scale W/N x H/N -scale W x H`
+//! Visually identical to the documented `-scale W/N x H/N -scale W x H` CLI
 //! two-step (downscale → nearest-neighbour upscale) but implemented
 //! as a single pass — for each output pixel we compute the floor-tile
 //! coordinates `(tx, ty) = (x / block, y / block)`, average every

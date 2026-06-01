@@ -24,7 +24,7 @@
 //! Edge samples reuse the row / column they would otherwise wrap into
 //! (border-clamp).
 //!
-//! ImageMagick's `-shade` has a colour-pass-through mode (the
+//! the documented `-shade` CLI has a colour-pass-through mode (the
 //! `+shade` form) where the shaded grayscale modulates the original
 //! pixel; we expose that via [`Shade::with_color`].
 //!

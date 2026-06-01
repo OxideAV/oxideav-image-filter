@@ -2,7 +2,7 @@
 //!
 //! Builds a 1-D Gaussian-weighted kernel of length `2*radius + 1`,
 //! then samples each output pixel along a line rotated by
-//! `angle_degrees` from horizontal. Classical ImageMagick behaviour
+//! `angle_degrees` from horizontal. Classical CLI behaviour
 //! for `-motion-blur RxS+A`.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, gaussian_kernel, plane_dims};

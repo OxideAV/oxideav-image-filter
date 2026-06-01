@@ -16,7 +16,7 @@
 //! Operates on `Gray8`, `Rgb24`, `Rgba`, and planar YUV. Background
 //! handling for YUV uses Y = `bg[0]`, U / V = 128 (neutral chroma) so
 //! the padding region renders as a desaturated grey of the requested
-//! luma — matching the way ImageMagick paints `-extent` on a YUV
+//! luma — matching the documented CLI semantics for `-extent` on a YUV
 //! pipeline.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};

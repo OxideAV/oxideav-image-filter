@@ -1,7 +1,7 @@
 //! Rotate a frame by an arbitrary angle around its centre, using
 //! bilinear resampling and growing the canvas so no pixel is clipped.
 //!
-//! This is the ImageMagick `-rotate N` model: positive N rotates
+//! This is the documented `-rotate N` CLI model: positive N rotates
 //! *clockwise* (matching the convention that image y grows downward,
 //! so a "clockwise" rotation in the viewer's frame is a mathematically
 //! negative rotation in the standard x-right/y-up plane). The
@@ -20,7 +20,7 @@ use crate::{is_supported_format, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Rotate a frame by `degrees` around its centre. Positive values
-/// rotate clockwise (ImageMagick convention). The output canvas is
+/// rotate clockwise (Documented CLI convention). The output canvas is
 /// grown to fit the rotated rectangle; any pixels that would fall
 /// outside the source become [`background`](Self::with_background).
 #[derive(Clone, Debug)]

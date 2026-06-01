@@ -11,7 +11,7 @@
 //! ```
 //!
 //! Bright pixels pull toward the target colour more than dark pixels —
-//! the classic ImageMagick `-tint` behaviour.
+//! the classic `-tint` CLI behaviour.
 
 use crate::{ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};

@@ -1,4 +1,4 @@
-//! Sinusoidal pixel displacement (ImageMagick `-wave AxL`).
+//! Sinusoidal pixel displacement (documented `-wave AxL` CLI).
 //!
 //! Bends each row of the image up or down by a sine wave whose
 //! amplitude (peak vertical shift in pixels) and wavelength (horizontal

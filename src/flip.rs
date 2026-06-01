@@ -1,4 +1,4 @@
-//! Mirror a frame vertically — top row becomes bottom row. ImageMagick
+//! Mirror a frame vertically — top row becomes bottom row. The documented CLI
 //! calls this `-flip` (flop is the horizontal cousin, see [`Flop`](crate::Flop)).
 
 use crate::{is_supported_format, ImageFilter, VideoStreamParams};

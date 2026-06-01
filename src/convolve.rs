@@ -1,4 +1,4 @@
-//! User-supplied convolution kernel (ImageMagick `-convolve "..."`).
+//! User-supplied convolution kernel (documented `-convolve "..."` CLI).
 //!
 //! Applies an arbitrary square `N×N` kernel (N must be odd: 1, 3, 5, 7,
 //! ...) to a video frame. For each output pixel, sums the elementwise

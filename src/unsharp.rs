@@ -5,7 +5,7 @@
 //! amplifying noise in smooth regions). Otherwise
 //! `out = clamp(orig + amount*diff)`.
 //!
-//! This is the ImageMagick `-unsharp RxS+A+T` behaviour.
+//! This is the documented `-unsharp RxS+A+T` CLI behaviour.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
 use crate::sharpen::unsharp_mask_plane;

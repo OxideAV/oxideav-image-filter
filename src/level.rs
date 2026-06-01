@@ -8,7 +8,7 @@
 //! ```
 //!
 //! with endpoints clamped at 0 and 255 to avoid divide-by-zero when
-//! `white == black`. Mirrors ImageMagick's `-level LOW,MID,HIGH`.
+//! `white == black`. Mirrors the documented `-level LOW,MID,HIGH` CLI.
 
 use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};

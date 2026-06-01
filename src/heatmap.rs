@@ -17,7 +17,7 @@
 //! - **Grayscale** — degenerate identity ramp; useful for tests.
 //!
 //! The ramps are evaluated from clean-room piecewise-linear key points;
-//! no external palette files are bundled.
+//! palette tables are built from the listed references.
 //!
 //! # Pixel formats
 //!

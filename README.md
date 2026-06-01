@@ -157,6 +157,23 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   reads the Y plane). Complement to `AdaptiveThreshold` (local window)
   and `Threshold` (manual cut). Factory aliases: `otsu-threshold`,
   `otsu`.
+- **`Niblack`** — Niblack 1986 adaptive local-statistics threshold
+  (Niblack, *An Introduction to Digital Image Processing*, §5.1).
+  For each pixel computes the local mean `μ(x, y)` and standard
+  deviation `σ(x, y)` over the `(2·radius + 1)²` neighbourhood, then
+  binarises against `T(x, y) = μ + k · σ`. Default `k = -0.2` is the
+  textbook page-segmentation bias (threshold sits below the local
+  mean by a fraction of the local spread so faint ink against a
+  brightish, locally-noisy background is reliably captured); positive
+  `k` biases the threshold above the mean for the complementary
+  light-on-dark case. Separable box-sum implementation runs in
+  `O(W · H)` regardless of `radius`. Optional `invert` flag swaps the
+  two output levels. Emits binary `Gray8` (luma-collapses Gray8 / RGB
+  / RGBA / planar YUV via the existing edge-family helper). Joins
+  the segmentation family at the "local mean + local σ threshold"
+  position complementing `AdaptiveThreshold` (local mean only) and
+  `OtsuThreshold` (global automatic cut). Factory aliases: `niblack`,
+  `niblack-threshold`.
 - **`Equalize`** — per-channel histogram equalisation via CDF
   mapping. Luma-only on YUV. IM: `-equalize`.
 - **`AutoGamma`** — pick a per-channel gamma so the geometric mean
@@ -171,7 +188,7 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`ShadowHighlight`** — independent shadow lift + highlight recovery
   gated by a soft tonal mask (peaks at the extremes, zero at midtone).
   Mid-grey passes through unchanged. RGB / RGBA / Gray8 / YUV (luma
-  only). Lr-style "Shadows" / "Highlights" sliders.
+  only). Photo-editor-style "Shadows" / "Highlights" sliders.
 - **`Evaluate`** + **`EvaluateOp`** — per-pixel arithmetic LUT with a
   single scalar operand. Operators: `Add`, `Subtract`, `Multiply`,
   `Divide`, `Pow`, `Max`, `Min`, `Set`, `And`, `Or`, `Xor`,
@@ -325,7 +342,7 @@ physically-meaningful luminance.
   channel multipliers (up to ±50 % at the extremes); G and alpha pass
   through. Per-channel 256-entry LUT, `O(W·H)` regardless of `warmth`.
   RGB / RGBA.
-- **`Vibrance`** — Lr-style saturation boost that spares already-
+- **`Vibrance`** — photo-editor-style saturation boost that spares already-
   saturated pixels via `1 - s` per-pixel weighting (vs `Modulate`
   which scales `S` uniformly). RGB / RGBA only.
 - **`BwMix`** — black-and-white conversion with per-channel weights.
@@ -390,7 +407,7 @@ physically-meaningful luminance.
   through. RGB / RGBA only. Factory aliases: `selective-color`,
   `selective-colour`.
 - **`FloodFill`** — seeded scanline flood-fill with per-channel
-  Chebyshev tolerance (matching ImageMagick's `-fuzz`). Iterative
+  Chebyshev tolerance (matching the documented `-fuzz` CLI). Iterative
   span-fill keeps the work `O(W·H)`; out-of-bounds seeds error.
   Gray8 / RGB / RGBA.
 
@@ -441,7 +458,7 @@ physically-meaningful luminance.
 - **`Unsharp`** — explicit unsharp-mask with `threshold` gate: only
   high-contrast regions are sharpened. IM: `-unsharp RxS+A+T`.
 - **`Clarity`** — large-radius unsharp-mask preset for mid-frequency
-  tonal pop ("Lightroom Clarity" slider). Defaults: `radius = 30`,
+  tonal pop (classical photo-editor "Clarity" slider). Defaults: `radius = 30`,
   `sigma = 15.0`, `amount = 0.5`, `threshold = 10`. IM analogue:
   `-unsharp 30x15+0.5+10`.
 - **`Emboss`** — 3×3 relief convolution with `+128` bias. IM: `-emboss R`.

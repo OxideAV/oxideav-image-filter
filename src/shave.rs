@@ -14,7 +14,7 @@ use oxideav_core::{Error, VideoFrame};
 
 /// Trim a `x_border × y_border` margin from every edge of the frame.
 ///
-/// Equivalent to ImageMagick `-shave XxY`. Output size is
+/// Equivalent to the documented `-shave XxY` CLI. Output size is
 /// `(W - 2·x_border) × (H - 2·y_border)`. Returns
 /// [`Error::invalid`](oxideav_core::Error) when the requested borders
 /// would shrink the image to zero or negative width/height.

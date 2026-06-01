@@ -8,7 +8,7 @@
 //! - Already-vivid pixels (`s ≈ 1`) move very little.
 //! - Drab / pastel pixels (`s ≈ 0`) take the full boost.
 //!
-//! This is the Lightroom-style "Vibrance" slider — visually distinct from
+//! This is the classic photo-editor "Vibrance" slider — visually distinct from
 //! a flat saturation crank because it skips the look of over-saturated
 //! skin tones / sky highlights.
 //!

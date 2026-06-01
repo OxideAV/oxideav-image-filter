@@ -1,6 +1,6 @@
-//! Pencil-sketch stylise (ImageMagick `-sketch radius,sigma,angle`).
+//! Pencil-sketch stylise (documented `-sketch radius,sigma,angle` CLI).
 //!
-//! Clean-room implementation of the documented ImageMagick pipeline:
+//! Clean-room implementation of the documented CLI pipeline:
 //!
 //! 1. Reduce the input to a tight `Gray8` luma plane.
 //! 2. Apply a directional motion blur of `radius` / `sigma` along

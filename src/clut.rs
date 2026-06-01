@@ -6,7 +6,7 @@
 //! CLUT (rescaled to the CLUT's length) and the result is the CLUT
 //! sample at that index.
 //!
-//! Mirrors ImageMagick's `-clut`. The input order matches `Composite`:
+//! Mirrors the documented `-clut` CLI. The input order matches `Composite`:
 //! `src` (foreground = image being recoloured) on input port 0, `dst`
 //! (background = CLUT) on input port 1, output emits on port 0.
 //!

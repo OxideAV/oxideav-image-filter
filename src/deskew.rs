@@ -1,4 +1,4 @@
-//! Auto-deskew via projection-variance scoring (ImageMagick `-deskew threshold`).
+//! Auto-deskew via projection-variance scoring (documented `-deskew threshold` CLI).
 //!
 //! Estimates a small in-plane rotation that aligns text / scanlines with
 //! the horizontal axis, then applies the inverse rotation. Algorithm

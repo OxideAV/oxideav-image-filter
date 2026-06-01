@@ -4,7 +4,7 @@
 //! rectangle that contains all samples differing from a reference
 //! background colour by more than the configured `fuzz` tolerance. The
 //! reference colour defaults to the corner pixel `(0, 0)` of the source
-//! — this matches ImageMagick's behaviour when neither `-bordercolor`
+//! — this matches the documented CLI behaviour when neither `-bordercolor`
 //! nor `-background` is set on the command line.
 //!
 //! Clean-room: detect the bbox, then call [`Crop`](crate::crop::Crop).

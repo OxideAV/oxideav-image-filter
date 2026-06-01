@@ -4,7 +4,7 @@
 //!
 //! Output shape (`format`, `width`, `height`) is taken from the stream
 //! parameters — like [`Canvas`](crate::canvas::Canvas) the input frame
-//! is consumed only for its `pts`. ImageMagick analogue:
+//! is consumed only for its `pts`. CLI analogue:
 //! `radial-gradient:colour1-colour2`.
 //!
 //! Clean-room: for each pixel `(x, y)` compute

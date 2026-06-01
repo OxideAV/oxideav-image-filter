@@ -1,6 +1,6 @@
 //! Sigmoid-curve contrast adjustment.
 //!
-//! ImageMagick's `-sigmoidal-contrast CxM%` operator: a smooth S-curve
+//! the documented `-sigmoidal-contrast CxM%` CLI operator: a smooth S-curve
 //! around a midpoint. With `contrast = 0` the curve degenerates to the
 //! identity; positive values steepen contrast around the midpoint
 //! while keeping the endpoints anchored at 0 / 255.

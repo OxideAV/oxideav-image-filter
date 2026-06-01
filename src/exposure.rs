@@ -12,13 +12,13 @@
 //! sensor would respond to a longer / shorter exposure; multiplying in
 //! gamma-space (the trivial alternative) crushes highlights faster and
 //! lifts shadows slower than physics says. Same end-to-end formula
-//! ImageMagick reaches for via `-evaluate Multiply` applied between
+//! historically reached for via `-evaluate Multiply` applied between
 //! `-colorspace RGB` and `-colorspace sRGB` round-trips, except we fold
 //! the round-trip into a single 256-entry LUT so the cost is `O(W·H)`.
 //!
 //! Operates on `Gray8`, `Rgb24`, `Rgba`. YUV inputs return `Unsupported`
 //! because the linear-light round-trip needs RGB-space data — the
-//! ImageMagick analogue (`-colorspace RGB -evaluate Multiply k -colorspace
+//! CLI analogue (`-colorspace RGB -evaluate Multiply k -colorspace
 //! sRGB`) likewise refuses YUV. Alpha is preserved on RGBA.
 
 use crate::{ImageFilter, VideoStreamParams};

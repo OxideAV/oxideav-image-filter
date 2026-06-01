@@ -16,8 +16,8 @@
 //! pre-smoothing. `Comic` pre-smooths to suppress photo noise and uses
 //! a thicker ink threshold for a heavier outline.
 //!
-//! Clean-room composition of textbook operators; no external library
-//! code was referenced.
+//! Clean-room composition of textbook operators; all derivations
+//! follow from the cited references.
 //!
 //! # Pixel formats
 //!

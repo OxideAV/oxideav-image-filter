@@ -68,7 +68,7 @@
 //! textbook Scharr operator as given in Scharr's 2000 thesis and
 //! reproduced in Jähne, *Digital Image Processing*, 6th ed. (chapter
 //! "Edges") and Sonka, Hlavac & Boyle, *Image Processing, Analysis,
-//! and Machine Vision*. No external library source was consulted; the
+//! and Machine Vision*. The
 //! expected outputs in the tests are hand-derived from the formulae
 //! above.
 

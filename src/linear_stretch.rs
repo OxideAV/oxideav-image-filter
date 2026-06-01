@@ -2,7 +2,7 @@
 //!
 //! Like [`ContrastStretch`](crate::ContrastStretch) but the cut-off
 //! amounts are given as **absolute pixel counts** rather than
-//! percentages. ImageMagick's `-linear-stretch 100x50` says "burn 100
+//! percentages. the documented `-linear-stretch 100x50` CLI says "burn 100
 //! pixels to black, blow out 50 pixels to white" regardless of image
 //! size.
 //!

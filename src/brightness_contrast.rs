@@ -1,4 +1,4 @@
-//! ImageMagick-style `-brightness-contrast` combining linear brightness
+//! documented-CLI-style `-brightness-contrast` combining linear brightness
 //! and contrast adjustments in one pass.
 //!
 //! Clean-room formula from the textbook definition of a linear tone

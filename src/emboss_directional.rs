@@ -17,7 +17,7 @@
 //! ```
 //!
 //! Distinct from [`Emboss`](crate::Emboss), which is fixed at the
-//! ImageMagick default kernel (south-east light).
+//! Documented CLI default kernel (south-east light).
 //!
 //! # Pixel formats
 //!

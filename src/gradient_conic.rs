@@ -4,7 +4,7 @@
 //! to `start_angle + 360°`.
 //!
 //! Output shape comes from the stream parameters; the input frame is
-//! consumed only for its `pts`. ImageMagick analogue:
+//! consumed only for its `pts`. CLI analogue:
 //! `gradient:` with the `gradient-direction:angular` setting (no direct
 //! one-liner — this is a textbook angular sweep).
 //!

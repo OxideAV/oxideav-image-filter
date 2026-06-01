@@ -2,7 +2,7 @@
 //!
 //! Walks every tone sample through a parameterised function in the
 //! normalised `[0, 1]` space, then clamps the result back to
-//! `[0, 255]`. Mirrors ImageMagick's `-function` family: callers pick
+//! `[0, 255]`. Mirrors the documented `-function` CLI family: callers pick
 //! the function "kind" via [`FunctionOp`] and pass a slice of `f32`
 //! arguments whose meaning depends on the kind.
 //!

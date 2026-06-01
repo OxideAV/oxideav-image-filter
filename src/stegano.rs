@@ -1,4 +1,4 @@
-//! LSB-plane steganography embed (ImageMagick `-stegano offset`).
+//! LSB-plane steganography embed (documented `-stegano offset` CLI).
 //!
 //! Two-input filter that hides the most-significant bits of one image
 //! (`src` — the "watermark") inside the least-significant bit-plane of

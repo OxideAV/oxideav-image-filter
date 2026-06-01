@@ -6,7 +6,7 @@
 //! out_rgb = in_rgb * (1 - amount) + target_rgb * amount
 //! ```
 //!
-//! Alpha is preserved on RGBA. Mirrors ImageMagick's `-colorize <pct>`
+//! Alpha is preserved on RGBA. Mirrors the documented `-colorize <pct>` CLI
 //! using its source-fill colour, with `amount = pct / 100`.
 
 use crate::{ImageFilter, VideoStreamParams};

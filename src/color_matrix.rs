@@ -3,7 +3,7 @@
 //!
 //! Multiplies every pixel by a 3×3 matrix (with an optional 3×1 offset
 //! vector for the equivalent of an affine 3×4 matrix) and clamps the
-//! result back into `[0, 255]`. Identical to ImageMagick's
+//! result back into `[0, 255]`. Identical to the documented CLI's
 //! `-color-matrix`/`-recolor` family — useful for hue rotations,
 //! channel swaps, sepia recipes, and custom colour grading.
 //!

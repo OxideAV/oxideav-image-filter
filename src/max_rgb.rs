@@ -36,9 +36,9 @@
 //! # Clean-room reference
 //!
 //! The HSV value definition `V = max(R, G, B)` appears in Smith 1978
-//! and is universal across colour-graphics texts; no external library
-//! source was consulted. Stateless single-frame definition, derivable
-//! from the one-line formula above.
+//! and is universal across colour-graphics texts; all derivations
+//! follow from the cited references. Stateless single-frame
+//! definition, derivable from the one-line formula above.
 
 use crate::{ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};

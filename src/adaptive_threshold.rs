@@ -1,4 +1,4 @@
-//! Local-mean-based adaptive threshold (ImageMagick `-thresh local`).
+//! Local-mean-based adaptive threshold (documented `-thresh local` CLI).
 //!
 //! For each sample, compare it against the mean of its `(2*radius+1)²`
 //! local neighbourhood. If the sample is brighter than the local mean

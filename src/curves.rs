@@ -1,10 +1,9 @@
 //! Curves — per-channel monotone cubic curves adjustment.
 //!
-//! "Curves" is the per-channel tonal-mapping primitive in every
-//! photo-editor (Photoshop, GIMP, darktable). The user specifies a
-//! small set of control points `(x, y)` on `[0, 255]² → [0, 255]²` and
-//! the editor fits a smooth monotone curve through them. Three classic
-//! interpolants apply (Curves Photoshop docs, GIMP devel-docs §curves):
+//! "Curves" is the per-channel tonal-mapping primitive in every classical
+//! photo-editor. The user specifies a small set of control points
+//! `(x, y)` on `[0, 255]² → [0, 255]²` and the editor fits a smooth
+//! monotone curve through them. Three classic interpolants apply:
 //!
 //! 1. **Linear** — straight segments between control points. Cheapest;
 //!    visible kinks at every knot.
@@ -29,7 +28,7 @@
 //! pass-through.
 //!
 //! Operates on `Gray8` / `Rgb24` / `Rgba` and planar YUV (master curve
-//! on luma plane only — chroma untouched, matching ImageMagick's
+//! on luma plane only — chroma untouched, matching the documented CLI's
 //! `-channel RGB -function …` convention for tonal ops).
 
 use crate::{ImageFilter, VideoStreamParams};

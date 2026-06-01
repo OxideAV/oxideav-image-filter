@@ -1,4 +1,4 @@
-//! Hough-transform line detection (ImageMagick `-hough-lines WxH`).
+//! Hough-transform line detection (documented `-hough-lines WxH` CLI).
 //!
 //! Detects straight lines in a binary edge map and renders them onto a
 //! single-plane `Gray8` canvas (black background, white line trace).
@@ -16,7 +16,7 @@
 //!
 //! `theta` is quantised to `n_theta` evenly-spaced bins in `[0, π)`;
 //! `rho` to `n_rho` bins of width `1.0` covering `±sqrt(w² + h²) / 2`.
-//! The defaults (`n_theta = 180`, ½°-bins) match the ImageMagick model.
+//! The defaults (`n_theta = 180`, ½°-bins) match the documented CLI model.
 
 use crate::{is_supported_format, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};

@@ -9,6 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r205: land `Niblack` — Wayne Niblack's adaptive local-statistics
+  threshold (Niblack, *An Introduction to Digital Image Processing*,
+  Prentice-Hall 1986, §5.1 — page-segmentation example). For each
+  pixel the filter computes the mean `μ(x, y)` and standard deviation
+  `σ(x, y)` of the `(2·radius + 1)²` neighbourhood centred at
+  `(x, y)`, then emits `255` where `sample(x, y) ≥ T(x, y)` with
+  `T(x, y) = μ(x, y) + k · σ(x, y)`, `0` elsewhere (or the inverted
+  test if [`Niblack::invert`] is set). The default `k = -0.2` is
+  Niblack's textbook page-segmentation bias — the threshold sits
+  below the local mean by a fraction of the local spread, so dark
+  ink against a brightish but locally-noisy background is reliably
+  captured; positive `k` biases the threshold above the mean for the
+  complementary light-on-dark case. Local mean and standard
+  deviation are computed via the `Var(X) = E(X²) − E(X)²` identity
+  with two separable box-sum passes (one over `I`, one over `I²`);
+  the variance is clamped to `0` before the `sqrt` to absorb the
+  tiny floating-point negatives that show up on near-constant
+  patches when cancellation eats every significant digit (the
+  textbook fix — otherwise we'd ship a `NaN` σ on flat input). The
+  whole pipeline runs in `O(W · H)` regardless of `radius`, the
+  same cost class as the existing `AdaptiveThreshold`. Border
+  samples clamp to the nearest in-bounds pixel so the output keeps
+  the input dimensions. Any supported input is collapsed to a luma
+  plane first (Gray8 / YUV use the Y plane directly; RGB / RGBA use
+  the `(R + 2G + B) / 4` quick luma) via the existing
+  `laplacian::build_luma_plane` helper; output is always single-
+  plane `Gray8`. The filter joins the segmentation family at the
+  "local mean + local σ threshold" position complementing
+  [`AdaptiveThreshold`] (local mean only — Niblack with `k = 0`)
+  and [`OtsuThreshold`] (a single global cut chosen to maximise
+  between-class variance). Tests: 15 (flat input with `k = 0` is
+  all-white; flat input with `invert` is all-black; flat input with
+  positive `k` near a one-pixel disturbance dips below the
+  threshold; ink against a bright background with `k = -0.2`
+  correctly binarises ink to black and background to white; the
+  separable box-sum implementation matches a brute-force double-
+  loop reference on a varied 11×9 pattern across `radius ∈ {0, 1,
+  2, 3, 5}` to `|Δ mean| < 1e-9` and `|Δ σ| < 1e-6`; end-to-end
+  per-pixel binarisation matches a brute-force reference on a non-
+  trivial 13×11 pattern at `radius = 2, k = -0.2`; negative `k`
+  splits a ramp toward black on the left and white on the right;
+  positive `k` produces no more white pixels than negative `k` on
+  the same ramp; RGB and Yuv420P inputs collapse to luma correctly;
+  non-finite `k` and zero dimensions are rejected; unsupported
+  pixel formats are rejected; output shape matches input; PTS
+  pass-through; builder chain composes; a near-constant patch
+  with one off-by-one pixel does not ship NaNs through the
+  variance-clamping fix; the smallest 3×3 window matches the
+  brute-force reference on a bright-centre fixture). Two new
+  factory names wired into `register()`: `niblack`,
+  `niblack-threshold`. The factory accepts `radius` (integer),
+  `k` (finite float), and `invert` (boolean). Three new factory
+  smoke tests cover the Gray8 output port, every alias name plus
+  the invert flag, and the happy-path k acceptance. Filter count
+  climbs from 129 → 130 named types; factory count climbs from
+  176 → 178 names.
+
 - r198: land `Gabor` + `GaborMode` — the oriented Gaussian-modulated
   cosine filter (Dennis Gabor, "Theory of Communication", *Journal of
   the Institution of Electrical Engineers* 93(III):429–457, 1946; John
@@ -483,7 +540,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   via a triangular tonal mask `w(v) = (1 - 2|v - 0.5|).max(0)` peaking
   at the extremes; `balance` biases shadow vs highlight; RGB / RGBA),
   `FloodFill` (seeded scanline flood-fill with per-channel Chebyshev
-  tolerance — matching ImageMagick's `-fuzz`; iterative span-fill keeps
+  tolerance — matching the documented `-fuzz` CLI; iterative span-fill keeps
   the work `O(W·H)` and rejects out-of-bounds seeds; Gray8 / RGB /
   RGBA), `PosterizeChannels` (per-channel posterise with independent
   `r_levels` / `g_levels` / `b_levels` and optional `alpha_levels`;
@@ -535,7 +592,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Temperature` (warmth slider in `[-1, 1]` driving per-channel R / B
   multipliers up to ±50 % — G and alpha pass through; per-channel
   LUT so the cost is `O(W·H)` regardless of `warmth`; RGB / RGBA),
-  `Vibrance` (Lr-style saturation boost that spares already-saturated
+  `Vibrance` (photo-editor-style saturation boost that spares already-saturated
   pixels via `1 - s` per-pixel weighting — visually distinct from
   `Modulate`'s flat S-multiplier; RGB / RGBA only), `BwMix`
   (black-and-white conversion with per-channel weights; convenience
@@ -590,7 +647,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hsl-shift`. Filter count: 76 → 83 named types; factory count:
   89 → 99 names.
 
-- r15: land six new ImageMagick-compatible filters covering colour
+- r15: land six new documented-CLI-compatible filters covering colour
   transforms, photographic stylise, and adaptive thresholding. New
   filters: `HslRotate` (rotate the hue channel by N degrees via an
   RGB ⇒ HSL ⇒ rotate ⇒ RGB round-trip; achromatic greys are passed
@@ -617,7 +674,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (alias for `pixelate`), `channel-mixer`, `adaptive-threshold`.
   Filter count: 70 → 76 named types; factory count: 82 → 89 names.
 
-- r14: land six new ImageMagick-compatible filters covering edge-aware
+- r14: land six new documented-CLI-compatible filters covering edge-aware
   stylise, geometric correction, and stereo / steganography composition.
   New filters: `Sketch` (pencil-sketch stylise: directional motion blur
   + Sobel edge magnitude + invert; IM `-sketch radius,sigma,angle`),
@@ -637,7 +694,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stegano`, `stereo`. Filter count: 64 → 70 named types; factory
   count: 76 → 82 names.
 
-- r13: land seven new ImageMagick-style filters: five single-input
+- r13: land seven new documented-CLI-style filters: five single-input
   effects + two two-input colour-grading CLUTs. New filters:
   `BlueShift` (moonlight / scotopic-vision tint, per-pixel
   `(min/factor, min/factor, max/factor)`, IM `+blue-shift factor`),
@@ -659,7 +716,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `shade`, `paint`, `quantize`, `clut`, `hald-clut`. Filter count:
   57 → 64 named types; factory count: 69 → 76 names.
 
-- r12: land seven new ImageMagick-style filters covering tonal range
+- r12: land seven new documented-CLI-style filters covering tonal range
   control, colour matrices, parametric pixel-function maps, and
   spectral edge detectors. New filters: `Clamp` (clamp every tone
   sample into `[low, high]` with alpha / chroma preservation, IM
@@ -683,7 +740,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `color-matrix`), `function`, `laplacian`, `canny`. Filter count:
   50 → 57 named types; factory count: 60 → 69 names.
 
-- r11: land five new ImageMagick-style filters plus four overlay-family
+- r11: land five new documented-CLI-style filters plus four overlay-family
   composite operators. New filters: `Evaluate` (per-pixel arithmetic
   LUT — `Add` / `Subtract` / `Multiply` / `Divide` / `Pow` / `Max` /
   `Min` / `Set` / `And` / `Or` / `Xor` / `Threshold`, IM
@@ -704,7 +761,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `composite-colordodge`, `composite-colorburn`. Filter count:
   45 → 50 named types; factory count: 51 → 60 names.
 
-- r10: land six ImageMagick-style geometric / channel / morphology
+- r10: land six documented-CLI-style geometric / channel / morphology
   filters: `Roll` (circular pixel shift, IM `-roll +X+Y`), `Shave`
   (uniform border trim, IM `-shave XxY`), `Extent` (set canvas to
   `WxH+X+Y` with configurable background, IM `-extent`), `Trim`
@@ -832,7 +889,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `output_gray8`). One smoke test per newly-wired filter exercises the
   factory + adapter `push` path on a 4×4 fixture.
 - `Crop` is now re-exported from the crate root.
-- Implement four new ImageMagick-style filters and wire factories into
+- Implement four new documented-CLI-style filters and wire factories into
   `register()`: `Vignette` (Gaussian radial darkening; Rgb24/Rgba),
   `Colorize` (linear blend toward a target colour by `amount`;
   Rgb24/Rgba), `Equalize` (per-channel CDF histogram equalisation;
@@ -840,7 +897,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-channel gamma correction; Gray8/Rgb24/Rgba/YUV planar). Alpha is
   preserved on Rgba; YUV runs only on the luma plane for Equalize /
   AutoGamma.
-- Implement five more ImageMagick-style filters and wire factories into
+- Implement five more documented-CLI-style filters and wire factories into
   `register()`: `Tint` (luminance-weighted blend toward a target colour;
   Rgb24/Rgba), `SigmoidalContrast` (sigmoid-curve contrast adjustment
   via 256-entry LUT; Gray8/Rgb24/Rgba/YUV-luma), `Implode` (radial

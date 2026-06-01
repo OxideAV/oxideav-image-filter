@@ -5,7 +5,7 @@
 //! YUV source material.
 //!
 //! Clean-room implementation from the standard definition of a photo
-//! negative; parameter syntax mirrors ImageMagick's `-negate` flag so
+//! negative; parameter syntax mirrors the documented `-negate` CLI flag so
 //! the CLI layer can forward user input directly.
 
 use crate::{is_supported_format, ImageFilter, VideoStreamParams};

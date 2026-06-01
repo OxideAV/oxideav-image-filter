@@ -1,11 +1,11 @@
-//! Inverse barrel / pincushion distortion (ImageMagick `-distort BarrelInverse a,b,c,d`).
+//! Inverse barrel / pincushion distortion (documented `-distort BarrelInverse a,b,c,d` CLI).
 //!
 //! Where the [`Distort`](crate::distort::Distort) filter applies the
 //! polynomial radius scale `r_out = r · (a·r³ + b·r² + c·r + d)`
 //! directly (output radius is a polynomial in the input radius), this
 //! filter applies the **inverse** mapping — output samples are pulled
 //! from `r_in = r / (a·r³ + b·r² + c·r + d)`. Together the two are the
-//! `+barrel` / `-barrel-inverse` pair documented by ImageMagick.
+//! `+barrel` / `-barrel-inverse` pair documented by the documented CLI.
 //!
 //! Practical effect:
 //!

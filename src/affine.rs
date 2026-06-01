@@ -31,7 +31,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 #[derive(Clone, Copy, Debug)]
 pub struct Affine {
     /// Six matrix coefficients in `(sx, ry, rx, sy, tx, ty)` order
-    /// matching ImageMagick's `-distort Affine` argument convention:
+    /// matching the documented `-distort Affine` argument convention:
     ///
     /// ```text
     ///   dx = sx * sx_in + ry * sy_in + tx

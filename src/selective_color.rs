@@ -9,8 +9,8 @@
 //! applied scaled by that weight, then the pixel is rendered back to
 //! RGB.
 //!
-//! Clean-room hue bands match the Photoshop / Lightroom HSL panel
-//! convention:
+//! Clean-room hue bands follow the standard 6-band HSL convention used
+//! by classical photo-editor selective-colour panels:
 //!
 //! ```text
 //! Reds      0°

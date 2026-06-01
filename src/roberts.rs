@@ -49,7 +49,7 @@
 //! The two 2×2 kernels and the gradient-magnitude combination are the
 //! textbook Roberts cross as given in Roberts 1963 and reproduced in
 //! every image-processing text (e.g. Gonzalez & Woods, *Digital Image
-//! Processing*). No external library source was consulted; the
+//! Processing*). The
 //! expected outputs in the tests are hand-derived from the formulae
 //! above.
 

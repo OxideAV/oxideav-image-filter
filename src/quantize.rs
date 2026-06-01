@@ -3,7 +3,7 @@
 //! Reduces the number of distinct colours in an image to at most `N`
 //! by uniformly subdividing each RGB axis into `cbrt(N)` buckets and
 //! snapping every pixel to the centroid of its bucket. Mirrors
-//! ImageMagick's `-colors N` (the implicit `-quantize` step in IM 7
+//! the documented `-colors N` CLI (the implicit `-quantize` step in IM 7
 //! pipelines), simplified to a uniform-grid quantizer instead of a
 //! popularity / median-cut palette.
 //!

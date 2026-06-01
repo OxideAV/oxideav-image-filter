@@ -1,4 +1,4 @@
-//! Red/cyan anaglyph stereo composition (ImageMagick `-stereo`).
+//! Red/cyan anaglyph stereo composition (documented `-stereo` CLI).
 //!
 //! Combines a left-eye view (`src`) and a right-eye view (`dst`) into a
 //! single red/cyan anaglyph image suitable for viewing with red/cyan

@@ -1,8 +1,8 @@
 //! Contrast stretch (`-contrast-stretch black%xwhite%`).
 //!
 //! Like [`Normalize`](crate::Normalize) but the clip percentages are
-//! given as **pixel-count fractions** (the ImageMagick convention),
-//! not as fractions of the histogram. ImageMagick's
+//! given as **pixel-count fractions** (the Documented CLI convention),
+//! not as fractions of the histogram. The documented CLI's
 //! `-contrast-stretch 2x1%` says "burn 2% of the darkest pixels to
 //! black, blow out 1% of the brightest pixels to white".
 //!

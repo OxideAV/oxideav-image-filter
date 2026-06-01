@@ -3,7 +3,7 @@
 //! Standard definition: `v' = 255 * (v/255)^(1/gamma)`. A gamma of 1.0
 //! is the identity; `gamma > 1.0` brightens midtones; `gamma < 1.0`
 //! darkens them. The transform is evaluated once into a 256-entry LUT
-//! and then applied per pixel, which matches ImageMagick's `-gamma G`
+//! and then applied per pixel, which matches the documented `-gamma G` CLI
 //! in parameter semantics while being implemented from the textbook
 //! formula (no source borrowed).
 

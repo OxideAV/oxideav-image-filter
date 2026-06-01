@@ -5,7 +5,7 @@
 //! which scans a luma proxy and applies a single `[lo, hi]` window to
 //! every channel — same window everywhere preserves hue, per-channel
 //! stretch maximises contrast at the cost of a small global colour
-//! cast. Both behaviours are useful; ImageMagick exposes both as
+//! cast. Both behaviours are useful; the documented CLI exposes both as
 //! `-normalize` and `-auto-level` respectively.
 //!
 //! Clean-room implementation: per-channel histogram min/max → linear

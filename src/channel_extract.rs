@@ -1,7 +1,7 @@
 //! Pull a single channel out of a multi-channel frame as `Gray8`
 //! (`-channel R -separate`).
 //!
-//! This is the simpler half of ImageMagick's `-separate` — instead of
+//! This is the simpler half of the documented `-separate` CLI — instead of
 //! emitting one frame per channel, the caller picks **one** channel
 //! (R / G / B / A on packed RGB / RGBA, or Y / U / V on planar YUV) and
 //! the filter returns a single-plane `Gray8` frame holding just that

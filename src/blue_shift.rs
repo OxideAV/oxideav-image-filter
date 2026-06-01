@@ -3,7 +3,7 @@
 //! Mimics the human visual system's "moonlight" / scotopic-vision
 //! response: at low ambient brightness the eye's rods take over from
 //! the cones and colour information collapses toward a desaturated
-//! blue-grey. ImageMagick's `-blue-shift` applies a similar effect
+//! blue-grey. the documented `-blue-shift` CLI applies a similar effect
 //! by replacing each pixel with `(min(R, G, B), min(R, G, B), max(R,
 //! G, B))` scaled by `factor`.
 //!
@@ -18,7 +18,7 @@
 //! ```
 //!
 //! `factor = 1.0` is identity-ish (low blue band). `factor < 1.0` (the
-//! ImageMagick default of `1.5`) brightens the blue channel relative to
+//! Documented CLI default of `1.5`) brightens the blue channel relative to
 //! the red / green and produces the characteristic moonlit tint.
 //!
 //! # Pixel formats
@@ -32,7 +32,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// Blue-shift / moonlight effect.
 #[derive(Clone, Copy, Debug)]
 pub struct BlueShift {
-    /// Scale divisor applied to all three output channels. ImageMagick
+    /// Scale divisor applied to all three output channels. The documented CLI
     /// uses `1.5` by default (so `255 / 1.5 = 170` is the saturation
     /// ceiling on the blue channel). `1.0` is a no-scale moonlight tint;
     /// larger values darken further.

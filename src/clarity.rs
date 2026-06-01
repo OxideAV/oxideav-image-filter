@@ -1,4 +1,4 @@
-//! Local-contrast boost ("clarity" in Lr / ACR terminology).
+//! Local-contrast boost ("clarity" in classical photo-editor terminology).
 //!
 //! Where [`Sharpen`](crate::sharpen::Sharpen) / [`Unsharp`](crate::unsharp::Unsharp)
 //! use a small radius (single-digit pixels) to pop fine detail, "clarity"
@@ -15,7 +15,7 @@
 //! - `amount = 0.5` — gentle boost (a full `1.0` is the unsharp-mask default).
 //! - `threshold = 10` — drops floor noise on smooth gradients.
 //!
-//! All four parameters are exposed so callers can override them. ImageMagick
+//! All four parameters are exposed so callers can override them. The documented CLI
 //! analogue: `-unsharp 30x15+0.5+10`.
 
 use crate::{ImageFilter, Unsharp, VideoStreamParams};

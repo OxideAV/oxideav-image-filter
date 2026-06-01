@@ -13,7 +13,8 @@
 //! proportional to those two masks, scaled by `balance` (which biases
 //! the shadow vs highlight side) and `amount` (overall strength).
 //!
-//! Inspired by Lightroom's Split Toning panel. The maths is clean-room.
+//! Modelled on the classic photo-editor Split Toning panel. The
+//! maths is clean-room.
 //!
 //! # Pixel formats
 //!

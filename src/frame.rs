@@ -17,7 +17,7 @@
 //!    opposite polarity (top / left dark, bottom / right bright) so
 //!    the frame looks recessed at the outer border and raised inside.
 //!
-//! Bevel shading uses ImageMagick's documented heuristic: the highlight
+//! Bevel shading uses a documented bevel-shading heuristic: the highlight
 //! is `min(255, channel * 1.5)` and the shadow is `channel * 0.5`.
 //! Both bevels can be `0` (no shading) and the four border / bevel
 //! widths can be set independently. When `outer_bevel + inner_bevel >
@@ -48,7 +48,7 @@ pub struct Frame {
 
 impl Default for Frame {
     fn default() -> Self {
-        // ImageMagick's `-frame 25x25+6+6` defaults — a chunky picture
+        // the documented `-frame 25x25+6+6` CLI defaults — a chunky picture
         // frame with both bevels visible.
         Self {
             width: 25,
@@ -152,7 +152,7 @@ impl ImageFilter for Frame {
         }
 
         // Step 2: outer bevel — top + left bright, bottom + right dark.
-        // Wait — ImageMagick's `-frame` outer bevel uses the OPPOSITE
+        // Wait — the documented `-frame` CLI outer bevel uses the OPPOSITE
         // polarity from the inner bevel so the whole frame looks raised
         // (outer top/left dark, outer bottom/right bright would invert
         // it). We follow IM: outer = recessed feel (top/left bright,

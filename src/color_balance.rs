@@ -12,7 +12,7 @@
 //! is clamped to `[0, 1]` and re-quantised. `gain == 1.0`,
 //! `lift == 0.0`, `gamma == 1.0` is the identity transform.
 //!
-//! ImageMagick analogue: there is no single one-liner for ASC CDL —
+//! CLI analogue: there is no single one-liner for ASC CDL —
 //! `-evaluate Multiply` is the gain row, `-evaluate Add` is the lift
 //! row, `-gamma` is the gamma row, and applying all three per channel
 //! requires a three-step `-channel` pipeline. This filter folds the

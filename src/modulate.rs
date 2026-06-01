@@ -1,4 +1,4 @@
-//! ImageMagick-style `-modulate B,S,H` — scales brightness/saturation
+//! documented-CLI-style `-modulate B,S,H` — scales brightness/saturation
 //! and rotates hue through HSL colour space.
 //!
 //! Clean-room implementation of the RGB↔HSL conversion following the
@@ -16,7 +16,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 ///   `0` produces greyscale; `200` doubles the distance from grey.
 /// - `hue_degrees` rotates hue by that many degrees (`0 = identity`).
 ///
-/// Maps to `convert -modulate B,S,H` in ImageMagick.
+/// Maps to `convert -modulate B,S,H` in the documented CLI.
 ///
 /// Pixel formats: `Rgb24`, `Rgba`. YUV inputs return
 /// [`Error::unsupported`] because a round-trip to RGB isn't done here.

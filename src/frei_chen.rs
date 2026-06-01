@@ -107,7 +107,7 @@
 //! given in Frei & Chen 1977 and reproduced in Pratt, *Digital Image
 //! Processing*, 4th ed. (chapter on edge detection); Gonzalez & Woods,
 //! *Digital Image Processing*, 4th ed.; and Jähne, *Digital Image
-//! Processing*, 6th ed. No external library source was consulted; the
+//! Processing*, 6th ed. The
 //! orthonormality is checked algebraically in the [`tests`] module
 //! (the integer cross-products of any two distinct templates, divided
 //! by the product of their divisors squared, sum to zero, and each

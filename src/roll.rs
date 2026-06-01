@@ -4,7 +4,7 @@
 //! borders so no information is lost — the column that scrolls past the
 //! right edge re-enters from the left, the row that scrolls off the
 //! bottom re-enters from the top. Negative offsets shift left / up;
-//! positive offsets shift right / down. Equivalent to the ImageMagick
+//! positive offsets shift right / down. Equivalent to the documented CLI
 //! `-roll WxH` / `-roll +X+Y` operation.
 //!
 //! Clean-room: the formula is `dst[(x + dx) mod W, (y + dy) mod H] =

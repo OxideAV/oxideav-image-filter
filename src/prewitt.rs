@@ -57,7 +57,7 @@
 //! textbook Prewitt operator as given in Prewitt 1970 and reproduced in
 //! every image-processing text (e.g. Gonzalez & Woods, *Digital Image
 //! Processing*; Sonka, Hlavac & Boyle, *Image Processing, Analysis, and
-//! Machine Vision*). No external library source was consulted; the
+//! Machine Vision*). The
 //! expected outputs in the tests are hand-derived from the formulae
 //! above.
 

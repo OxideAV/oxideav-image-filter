@@ -2,7 +2,7 @@
 //! every sample below becomes 0.
 //!
 //! Clean-room implementation from the standard threshold definition;
-//! parameter syntax mirrors ImageMagick's `-threshold N` flag (the CLI
+//! parameter syntax mirrors the documented `-threshold N` CLI flag (the CLI
 //! is responsible for mapping percent syntax to a `u8`).
 
 use crate::{is_supported_format, ImageFilter, VideoStreamParams};

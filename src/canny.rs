@@ -11,7 +11,7 @@
 //!
 //! Clean-room: all four steps are textbook closed-form algorithms,
 //! implemented inline. Output is always `Gray8`: `255` for edge
-//! pixels, `0` elsewhere. Mirrors ImageMagick's `-canny RxS+L%+H%`
+//! pixels, `0` elsewhere. Mirrors the documented `-canny RxS+L%+H%` CLI
 //! (we accept the thresholds in 0..=255 sample space directly so the
 //! caller doesn't have to track which percentage convention is in
 //! play).

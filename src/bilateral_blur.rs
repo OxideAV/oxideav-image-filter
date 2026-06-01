@@ -4,8 +4,7 @@
 //!
 //! Spec reference: C. Tomasi and R. Manduchi, *"Bilateral Filtering for
 //! Gray and Color Images"*, Proc. ICCV 1998, pp. 839–846. The paper is
-//! the public mathematical specification — no third-party source was
-//! consulted for this implementation; the operator is a textbook
+//! the public mathematical specification; the operator is a textbook
 //! composition of two analytic Gaussian primitives, derived from first
 //! principles below.
 //!

@@ -19,7 +19,7 @@
 //! corrected as a side effect (each channel is normalised toward a
 //! mid-grey 0.5 mean independently). YUV planar runs the correction on
 //! the luma plane only — chroma is left intact so hue/saturation
-//! stay stable. Mirrors ImageMagick's `-auto-gamma` parameter
+//! stay stable. Mirrors the documented `-auto-gamma` parameter convention
 //! semantics.
 
 use crate::{is_supported_format, ImageFilter, VideoStreamParams};

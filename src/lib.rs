@@ -11,7 +11,7 @@
 //!
 //! - [`Affine`](affine::Affine) — 2-D affine transform with bilinear
 //!   resampling. Six-coefficient `(sx, ry, rx, sy, tx, ty)` matrix
-//!   matching ImageMagick's `-distort Affine` argument convention.
+//!   matching the documented `-distort Affine` argument convention.
 //! - [`AutoGamma`](auto_gamma::AutoGamma) — auto-gamma: pick a per-channel
 //!   gamma so the geometric mean lands at 0.5.
 //! - [`BlueShift`](blue_shift::BlueShift) — night-vision / moonlight
@@ -56,7 +56,7 @@
 //!   channel (R/G/B/A or Y/U/V) out as a single-plane `Gray8` frame.
 //!   IM: `-channel <ch> -separate`.
 //! - [`Crop`](crop::Crop) — extract a rectangular subregion
-//!   `(x, y, width, height)` (ImageMagick `-crop WxH+X+Y`).
+//!   `(x, y, width, height)` (documented `-crop WxH+X+Y` CLI).
 //! - [`Cycle`](cycle::Cycle) — modular per-channel value rotation
 //!   (`out = (src + amount) mod 256` per RGB / luma byte; alpha and
 //!   chroma preserved). IM analogue: `-cycle N` (paletted-style sample
@@ -100,7 +100,7 @@
 //! - [`HaldClut`](hald_clut::HaldClut) — Hald CLUT image-as-LUT
 //!   colour grading (two-input). `dst` is a `(L²)×(L²)` Hald cube;
 //!   trilinear sampling per pixel. RGB / RGBA only. IM: `-hald-clut`.
-//! - [`Implode`](implode::Implode) — radial pinch / explode (ImageMagick
+//! - [`Implode`](implode::Implode) — radial pinch / explode (documented CLI
 //!   `-implode N`); bilinear-resampled inverse mapping inside the
 //!   inscribed circle.
 //! - [`Laplacian`](laplacian::Laplacian) — 3×3 Laplacian
@@ -117,9 +117,9 @@
 //!   [`ContrastStretch`] but cut-offs are absolute pixel counts. IM:
 //!   `-linear-stretch black-pixels{xwhite-pixels}`.
 //! - [`Level`](level::Level) — remap `[black, white]` to `[0, 255]`
-//!   with optional mid-tone gamma (ImageMagick `-level`).
+//!   with optional mid-tone gamma (documented `-level` CLI).
 //! - [`Modulate`](modulate::Modulate) — adjust brightness, saturation,
-//!   and hue via HSL round-trip (ImageMagick `-modulate`).
+//!   and hue via HSL round-trip (documented `-modulate` CLI).
 //! - [`Morphology`](morphology::Morphology) — N-iteration greyscale
 //!   dilate / erode with a 3×3 square or cross structuring element;
 //!   plus [`MorphologyChain`](morphology::MorphologyChain) for the
@@ -129,11 +129,11 @@
 //!   built from the same dilate / erode primitives. IM:
 //!   `-morphology EdgeIn|EdgeOut|Edge`.
 //! - [`MotionBlur`](motion_blur::MotionBlur) — directional 1-D Gaussian
-//!   blur along `angle_degrees` (ImageMagick `-motion-blur RxS+A`).
+//!   blur along `angle_degrees` (documented `-motion-blur RxS+A` CLI).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
 //!   on YUV inverts only Y so chroma (hue/saturation) is preserved.
 //! - [`Normalize`](normalize::Normalize) — auto-levels: stretch the
-//!   observed luma range to fill `[0, 255]` (ImageMagick `-normalize`).
+//!   observed luma range to fill `[0, 255]` (documented `-normalize` CLI).
 //! - [`Paint`](paint::Paint) — oil-paint stylise: per-pixel modal-bucket
 //!   vote in a `(2*radius+1)²` window then mean-of-mode RGB. IM:
 //!   `-paint radius`.
@@ -144,7 +144,7 @@
 //!   (`-distort Polar` / `-distort DePolar`). Bends an image into a fan
 //!   or unrolls a fan back into a rectangle; bilinear-sampled.
 //! - [`Posterize`](posterize::Posterize) — reduce each channel to `N`
-//!   intensity levels (ImageMagick `-posterize`).
+//!   intensity levels (documented `-posterize` CLI).
 //! - [`Quantize`](quantize::Quantize) — uniform-grid colour quantizer:
 //!   round each channel to one of `cbrt(N)` evenly-spaced palette
 //!   entries. IM: `-colors N` (uniform-cube variant).
@@ -155,18 +155,18 @@
 //! - [`Rotate`](rotate::Rotate) — arbitrary-angle rotation with bilinear
 //!   resampling; grows the canvas and fills gaps with a configurable
 //!   background colour.
-//! - [`Sepia`](sepia::Sepia) — warm-brown colour remap (ImageMagick
+//! - [`Sepia`](sepia::Sepia) — warm-brown colour remap (documented CLI
 //!   `-sepia-tone`); threshold controls the mix with the original.
 //! - [`Shade`](shade::Shade) — directional Lambertian relief shading
 //!   from an `(azimuth, elevation)` light vector. Optional colour
 //!   pass-through mode (`+shade`). IM: `-shade az,el`.
 //! - [`Solarize`](solarize::Solarize) — invert samples above a
-//!   threshold (ImageMagick `-solarize N%`).
+//!   threshold (documented `-solarize N%` CLI).
 //! - [`Spread`](spread::Spread) — random pixel-position perturbation
 //!   inside a `[-radius, radius]²` neighbourhood with a deterministic
-//!   PRNG (ImageMagick `-spread N`).
+//!   PRNG (documented `-spread N` CLI).
 //! - [`Srt`](srt::Srt) — Scale / Rotate / Translate composite warp
-//!   collapsing to a single 2×3 affine matrix; mirrors ImageMagick's
+//!   collapsing to a single 2×3 affine matrix; mirrors the documented CLI's
 //!   `-distort SRT "ox,oy sx[,sy] angle tx,ty"` shorthand.
 //! - [`Statistic`](statistic::Statistic) — rolling-window per-pixel
 //!   statistic (`Median` / `Min` / `Max` / `Mean`) over a configurable
@@ -176,10 +176,10 @@
 //! - [`Sharpen`](sharpen::Sharpen) — unsharp-mask sharpening with
 //!   `radius`/`sigma`/`amount`; YUV touches only luma.
 //! - [`SigmoidalContrast`](sigmoidal_contrast::SigmoidalContrast) —
-//!   sigmoid-curve contrast adjustment (ImageMagick
+//!   sigmoid-curve contrast adjustment (documented CLI
 //!   `-sigmoidal-contrast CxM%`).
 //! - [`Swirl`](swirl::Swirl) — radius-decaying rotational distortion
-//!   (ImageMagick `-swirl N`).
+//!   (documented `-swirl N` CLI).
 //! - [`Threshold`](threshold::Threshold) — binarise each sample to
 //!   black/white against a cut-off (YUV sets chroma to neutral 128).
 //! - [`TiltShift`](tilt_shift::TiltShift) — selective Gaussian blur
@@ -187,15 +187,15 @@
 //!   depth-of-field). IM rough analogue: `-blur` masked by a vertical
 //!   gradient.
 //! - [`Tint`](tint::Tint) — luminance-weighted tint toward a target
-//!   colour (ImageMagick `-tint`); bright pixels reach the target,
+//!   colour (documented `-tint` CLI); bright pixels reach the target,
 //!   dark pixels stay put.
 //! - [`Trim`](trim::Trim) — crop to the bounding box of pixels that
 //!   differ from a reference background colour by more than `fuzz` per
 //!   channel. IM: `-fuzz N% -trim`.
 //! - [`Unsharp`](unsharp::Unsharp) — threshold-gated unsharp-mask
-//!   (ImageMagick `-unsharp RxS+A+T`).
+//!   (documented `-unsharp RxS+A+T` CLI).
 //! - [`Vignette`](vignette::Vignette) — Gaussian radial darkening
-//!   centred at `(x, y)` with `radius` + `sigma` (ImageMagick
+//!   centred at `(x, y)` with `radius` + `sigma` (documented CLI
 //!   `-vignette RxS{+x{+y}}`).
 //! - [`Wave`](wave::Wave) — sinusoidal vertical displacement with
 //!   configurable amplitude (px) and wavelength (px). IM: `-wave AxL`.
@@ -273,7 +273,7 @@
 //!   shadow lift + highlight recovery gated by a soft tonal mask.
 //! - [`Temperature`](temperature::Temperature) — warmth slider that
 //!   biases R / B channels (per-channel LUT, alpha pass-through).
-//! - [`Vibrance`](vibrance::Vibrance) — Lr-style saturation boost that
+//! - [`Vibrance`](vibrance::Vibrance) — photo-editor-style saturation boost that
 //!   spares already-saturated pixels via `1 - s` weighting.
 //!
 //! r19 additions:
@@ -314,6 +314,23 @@
 //!   automatic threshold maximising inter-class variance; emits binary
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
+//!
+//! r205 additions:
+//!
+//! - [`Niblack`](niblack::Niblack) — Niblack 1986 adaptive local-statistics
+//!   threshold. For each pixel computes the mean `μ(x, y)` and standard
+//!   deviation `σ(x, y)` of the `(2·radius + 1)²` neighbourhood, then
+//!   binarises against `T(x, y) = μ + k · σ`. Default `k = -0.2` is
+//!   the textbook page-segmentation bias (threshold sits below the
+//!   local mean by a fraction of the local spread so faint ink against
+//!   a brightish, locally-noisy background is reliably captured).
+//!   Separable box-sum implementation runs in `O(W · H)` regardless of
+//!   `radius`. Output `Gray8`. Joins the segmentation family at the
+//!   "local mean + local σ threshold" position complementing
+//!   [`AdaptiveThreshold`](adaptive_threshold::AdaptiveThreshold)
+//!   (local mean only) and
+//!   [`OtsuThreshold`](otsu_threshold::OtsuThreshold) (global
+//!   automatic cut).
 //!
 //! r198 additions:
 //!
@@ -567,6 +584,7 @@ pub mod modulate;
 pub mod morphology;
 pub mod motion_blur;
 pub mod negate;
+pub mod niblack;
 pub mod normalize;
 pub mod otsu_threshold;
 pub mod paint;
@@ -704,6 +722,7 @@ pub use morphology::{
 };
 pub use motion_blur::MotionBlur;
 pub use negate::Negate;
+pub use niblack::Niblack;
 pub use normalize::Normalize;
 pub use otsu_threshold::OtsuThreshold;
 pub use paint::Paint;

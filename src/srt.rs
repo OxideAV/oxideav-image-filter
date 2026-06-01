@@ -1,6 +1,6 @@
 //! Scale / Rotate / Translate composite warp (`-distort SRT`).
 //!
-//! Mirrors ImageMagick's most-common shorthand for combined geometric
+//! Mirrors the canonical CLI shorthand for combined geometric
 //! transforms. The full argument signature is
 //!
 //! ```text
@@ -14,7 +14,7 @@
 //! - `(sx, sy)` are the X / Y scale factors. A single value is applied
 //!   isotropically.
 //! - `angle` is the rotation in degrees (positive = clockwise, matching
-//!   ImageMagick and our [`Rotate`](crate::Rotate) convention).
+//!   the documented CLI and our [`Rotate`](crate::Rotate) convention).
 //! - `(tx, ty)` is an additional post-rotation translation (the new
 //!   coordinates of the original `(ox, oy)` after the warp).
 //!

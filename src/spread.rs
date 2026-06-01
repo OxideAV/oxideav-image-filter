@@ -1,4 +1,4 @@
-//! Random pixel-position perturbation (ImageMagick `-spread N`).
+//! Random pixel-position perturbation (documented `-spread N` CLI).
 //!
 //! For each output pixel, sample the source from a random offset in the
 //! square `[-radius, radius]² ⊂ ℤ²`. The result is a "frosted glass"

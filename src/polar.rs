@@ -1,4 +1,4 @@
-//! Cartesian ⇄ polar coordinate distortion (ImageMagick `-distort Polar`
+//! Cartesian ⇄ polar coordinate distortion (documented `-distort Polar` CLI
 //! / `-distort DePolar`).
 //!
 //! The "polar" direction takes a rectangular Cartesian image and bends

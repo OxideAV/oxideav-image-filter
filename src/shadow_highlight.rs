@@ -1,12 +1,12 @@
-//! Independent shadow lift and highlight recovery — the Lightroom
-//! "Shadows" + "Highlights" sliders in one filter.
+//! Independent shadow lift and highlight recovery — the classic
+//! photo-editor "Shadows" + "Highlights" sliders in one filter.
 //!
 //! Two LUT-style adjustments folded into a single pass:
 //!
 //! - `shadow_amount > 0` brightens dark pixels (positive `shadows` slider).
 //! - `shadow_amount < 0` deepens shadows.
-//! - `highlight_amount > 0` recovers blown highlights (Lr's negative-direction
-//!   slider — we use positive = recover for ergonomics).
+//! - `highlight_amount > 0` recovers blown highlights (we adopt
+//!   positive = recover for ergonomics).
 //! - `highlight_amount < 0` boosts highlights.
 //!
 //! Each adjustment is gated by a soft tonal mask:

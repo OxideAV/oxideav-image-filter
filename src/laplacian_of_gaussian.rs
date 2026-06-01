@@ -105,7 +105,7 @@
 //! Image Processing*, 4th ed. (§10.2.6 "The Marr-Hildreth Edge
 //! Detector"), Jähne, *Digital Image Processing*, 6th ed. (chapter
 //! "Edges and Lines"), and Sonka, Hlavac & Boyle, *Image Processing,
-//! Analysis, and Machine Vision* (§5.3.4). No external library source
+//! Analysis, and Machine Vision* (§5.3.4). Implementation
 //! was consulted; the discrete kernel and the slope-gate are derived
 //! from first principles and the expected outputs in the tests are
 //! hand-computed from the formulae above.

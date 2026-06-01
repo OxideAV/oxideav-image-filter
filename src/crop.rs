@@ -1,4 +1,4 @@
-//! Extract a rectangular sub-region of a frame. ImageMagick's
+//! Extract a rectangular sub-region of a frame. The documented CLI's
 //! `-crop WxH+X+Y` is the canonical equivalent — the CLI layer parses
 //! the geometry string and this filter just takes the resulting
 //! `(x, y, w, h)` rectangle. Clean-room from the obvious definition:

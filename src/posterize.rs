@@ -9,7 +9,7 @@
 //! v'     = bucket * 255 / (N - 1)      // remapped to full range
 //! ```
 //!
-//! Matches ImageMagick's `-posterize N` parameter semantics.
+//! Matches the documented `-posterize N` parameter convention semantics.
 
 use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};

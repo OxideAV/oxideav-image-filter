@@ -5,7 +5,7 @@
 //!
 //! Clean-room implementation of the standard two-pass normalise
 //! operation — nothing borrowed from any other library. Parameter
-//! semantics mirror ImageMagick's `-normalize`; the `low_clip` /
+//! semantics mirror the documented `-normalize` CLI; the `low_clip` /
 //! `high_clip` knobs are explicit here because IM's defaults aren't
 //! universally useful and letting callers pick is clearer.
 

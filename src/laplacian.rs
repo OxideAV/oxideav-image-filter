@@ -9,7 +9,7 @@
 //!
 //! Clean-room implementation: the standard 3×3 Laplacian kernel
 //! (centre +4, 4-neighbours -1, corners 0). The output is the absolute
-//! value of the response, clamped to `[0, 255]`. ImageMagick's
+//! value of the response, clamped to `[0, 255]`. The documented CLI's
 //! `-laplacian` accepts a `radius` parameter that picks among a small
 //! family of fixed kernels; we expose the same radius knob with the
 //! classic 3×3 stencil at radius 1 (the IM default).

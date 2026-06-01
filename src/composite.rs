@@ -1,7 +1,7 @@
 //! Porter–Duff and arithmetic composite operators.
 //!
 //! Implements the sixteen standard two-input pixel composites that
-//! mirror ImageMagick's `-compose <op>` family. Every operator takes
+//! mirror the documented `-compose <op>` CLI family. Every operator takes
 //! a foreground (`src`) and a background (`dst`) frame of identical
 //! shape and pixel format, and produces a new frame.
 //!
@@ -47,7 +47,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which composite operator to apply.
 ///
-/// Names match ImageMagick's `-compose` argument exactly (so the
+/// Names match the documented `-compose` CLI argument exactly (so the
 /// pipeline can map a JSON `op` string straight onto a variant).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompositeOp {

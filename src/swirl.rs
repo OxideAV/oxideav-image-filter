@@ -1,4 +1,4 @@
-//! Radius-decaying rotational distortion (ImageMagick `-swirl N`).
+//! Radius-decaying rotational distortion (documented `-swirl N` CLI).
 //!
 //! Each pixel is rotated about the image centre by an angle that
 //! decreases linearly with radius — pixels at the centre rotate by the

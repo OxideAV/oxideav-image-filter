@@ -1,5 +1,5 @@
 //! Mirror a frame horizontally — left column becomes right column.
-//! ImageMagick calls this `-flop` (the vertical cousin is `Flip`).
+//! The documented CLI calls this `-flop` (the vertical cousin is `Flip`).
 
 use crate::{is_supported_format, ImageFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};

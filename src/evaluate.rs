@@ -1,7 +1,7 @@
 //! Per-pixel arithmetic evaluation (`-evaluate Op value`).
 //!
 //! Applies a single arithmetic operator to every channel of every
-//! pixel with a constant scalar operand. Mirrors ImageMagick's
+//! pixel with a constant scalar operand. Mirrors the documented CLI's
 //! `-evaluate <op> <value>` flag — common useful operators are
 //! `Add`, `Subtract`, `Multiply`, `Divide`, `Pow`, `Max`, `Min`,
 //! `Set` (replace), `And`, `Or`, `Xor`, and `Threshold`.
@@ -30,7 +30,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Which per-pixel arithmetic operator to apply.
 ///
-/// Names match ImageMagick's `-evaluate` operator argument so the
+/// Names match the documented `-evaluate` CLI operator argument so the
 /// pipeline can map a JSON `op` string straight onto a variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EvaluateOp {

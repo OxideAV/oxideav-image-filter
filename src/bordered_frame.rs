@@ -4,7 +4,7 @@
 //!
 //! Adds a uniform border of `(left, top, right, bottom)` pixels filled
 //! with a configurable `[R, G, B, A]` colour. The output canvas grows by
-//! `(left + right, top + bottom)`. ImageMagick analogue: `-bordercolor
+//! `(left + right, top + bottom)`. CLI analogue: `-bordercolor
 //! C -border WxH`.
 //!
 //! Operates on `Rgb24`, `Rgba`, and `Gray8`. YUV inputs return

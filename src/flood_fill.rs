@@ -4,7 +4,7 @@
 //! `(seed_x, seed_y)` pixel, paint a target colour into every
 //! 4-connected neighbour whose colour differs from the *seed sample*
 //! by less than `tolerance` per channel (Chebyshev distance — same
-//! semantics as ImageMagick's `-fuzz`).
+//! semantics as the documented `-fuzz` CLI).
 //!
 //! The traversal uses an explicit-stack iterative scanline algorithm:
 //!
