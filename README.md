@@ -71,25 +71,25 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Flop`** — mirror horizontally (left ↔ right).
 - **`Rotate`** — arbitrary-degree rotation with bilinear resampling and
   canvas grow; configurable background colour. 90°-multiples use an
-  exact axis-aligned fast path. IM: `-rotate N`.
+  exact axis-aligned fast path. documented CLI: `-rotate N`.
 - **`Crop`** — `(x, y, width, height)` subregion extraction; chroma
-  rects are ceil/floor-aligned for YUV subsampling. IM: `-crop WxH+X+Y`.
+  rects are ceil/floor-aligned for YUV subsampling. documented CLI: `-crop WxH+X+Y`.
 - **`Roll`** — circular pixel shift `(dx, dy)`; rows / columns wrap
   around the borders. Chroma offsets on planar YUV are scaled by the
   subsampling factor so the visible image translates as a rigid block.
-  IM: `-roll +X+Y`.
+  documented CLI: `-roll +X+Y`.
 - **`Shave`** — strip a uniform `(x_border, y_border)` margin off
   every edge (centred crop). Backed by `Crop` so YUV chroma alignment
-  matches. IM: `-shave XxY`.
+  matches. documented CLI: `-shave XxY`.
 - **`Extent`** — set the output canvas to a fixed `(width, height)`
   with a placement offset, padding the gaps with a configurable
   background colour. Negative offsets translate the input toward the
   upper-left so its right / bottom edge can land inside the window.
-  IM: `-extent WxH+X+Y`.
+  documented CLI: `-extent WxH+X+Y`.
 - **`Trim`** — auto-crop to the bounding box of pixels that differ
   from a reference background colour by more than `fuzz` per channel
   (Chebyshev / L-infinity tolerance). Background defaults to the
-  source's `(0, 0)` pixel. IM: `-fuzz N% -trim`.
+  source's `(0, 0)` pixel. documented CLI: `-fuzz N% -trim`.
 - **`AutoTrim`** — like `Trim`, but picks the dominant background
   colour via a 4-bit-per-channel histogram vote across the whole
   frame instead of trusting the `(0, 0)` corner sample. Noisy
@@ -99,23 +99,22 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `North` / `NorthEast` / `West` / `Centre` / `East` / `SouthWest` /
   `South` / `SouthEast`). Backed by `Extent` so YUV chroma
   subsampling alignment matches. Factory aliases: `gravity-translate`,
-  `gravity`. IM: `-gravity <anchor> -extent WxH`.
+  `gravity`. documented CLI: `-gravity <anchor> -extent WxH`.
 
 ### Tonal (LUT-based, typically fast)
 
 - **`Negate`** — invert pixel values. On YUV inverts only Y so
-  chroma (hue/saturation) is preserved. IM: `-negate`.
+  chroma (hue/saturation) is preserved. documented CLI: `-negate`.
 - **`Threshold`** — binarise at a per-channel threshold; chroma →
-  neutral 128 for YUV. IM: `-threshold N`.
-- **`Gamma`** — power-law gamma correction. IM: `-gamma G`.
+  neutral 128 for YUV. documented CLI: `-threshold N`.
+- **`Gamma`** — power-law gamma correction. documented CLI: `-gamma G`.
 - **`BrightnessContrast`** — linear brightness + contrast in the IM
-  range `−100..100`. IM: `-brightness-contrast BxC`.
+  range `−100..100`. documented CLI: `-brightness-contrast BxC`.
 - **`Level`** — remap `[black, white]` to `[0, 255]` with optional
-  mid-tone gamma. IM: `-level LOW,MID,HIGH`.
+  mid-tone gamma. documented CLI: `-level LOW,MID,HIGH`.
 - **`Normalize`** — two-pass auto-level stretch to use the full
-  range. IM: `-normalize`.
-- **`Posterize`** — reduce each channel to `N` intensity levels. IM:
-  `-posterize N`.
+  range. documented CLI: `-normalize`.
+- **`Posterize`** — reduce each channel to `N` intensity levels. documented CLI: `-posterize N`.
 - **`Dither`** + **`DitherMode`** + **`BayerMatrix`** +
   **`DiffusionKernel`** — bit-depth-reduction dither with two
   algorithm families:
@@ -146,11 +145,11 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `dither-bayer` / `ordered-dither` (matrix size via
   `{"matrix": 2|4|8}`).
 
-- **`Solarize`** — invert pixels above a threshold. IM: `-solarize N%`.
+- **`Solarize`** — invert pixels above a threshold. documented CLI: `-solarize N%`.
 - **`AdaptiveThreshold`** — local-mean-based binarisation with a
   configurable `(2*radius+1)²` window and signed offset; box-sum
   implementation is `O(W*H)` regardless of radius. Always emits
-  `Gray8` (RGB collapsed via Rec. 601 luma). IM: `-threshold local`.
+  `Gray8` (RGB collapsed via Rec. 601 luma). documented CLI: `-threshold local`.
 - **`OtsuThreshold`** — global automatic threshold maximising
   inter-class variance (1979 Otsu paper). Optional `invert` flag.
   Emits binary `Gray8` (RGB / RGBA collapsed via Rec. 601 luma; YUV
@@ -175,15 +174,14 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `OtsuThreshold` (global automatic cut). Factory aliases: `niblack`,
   `niblack-threshold`.
 - **`Equalize`** — per-channel histogram equalisation via CDF
-  mapping. Luma-only on YUV. IM: `-equalize`.
+  mapping. Luma-only on YUV. documented CLI: `-equalize`.
 - **`AutoGamma`** — pick a per-channel gamma so the geometric mean
-  lands at mid-grey 0.5 (`gamma = log(mean) / log(0.5)`). IM:
-  `-auto-gamma`.
+  lands at mid-grey 0.5 (`gamma = log(mean) / log(0.5)`). documented CLI: `-auto-gamma`.
 - **`SigmoidalContrast`** — sigmoid-curve contrast around a midpoint.
-  IM: `-sigmoidal-contrast CxM%`.
+  documented CLI: `-sigmoidal-contrast CxM%`.
 - **`Exposure`** — EV-stop adjustment in linear-light space (sRGB →
   linear → ×2^EV → sRGB). `+1.0` EV doubles the captured light,
-  `-1.0` EV halves it. RGB / RGBA / Gray8. IM analogue: `-colorspace
+  `-1.0` EV halves it. RGB / RGBA / Gray8. documented-CLI analogue: `-colorspace
   RGB -evaluate Multiply k -colorspace sRGB` folded into one LUT pass.
 - **`ShadowHighlight`** — independent shadow lift + highlight recovery
   gated by a soft tonal mask (peaks at the extremes, zero at midtone).
@@ -192,30 +190,28 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Evaluate`** + **`EvaluateOp`** — per-pixel arithmetic LUT with a
   single scalar operand. Operators: `Add`, `Subtract`, `Multiply`,
   `Divide`, `Pow`, `Max`, `Min`, `Set`, `And`, `Or`, `Xor`,
-  `Threshold`. Alpha (RGBA) and chroma (YUV) pass through. IM:
-  `-evaluate <op> N`.
+  `Threshold`. Alpha (RGBA) and chroma (YUV) pass through. documented CLI: `-evaluate <op> N`.
 - **`Cycle`** — modular per-channel value rotation
   (`out = (src + amount) mod 256`); alpha and chroma preserved. IM
   analogue: `-cycle N`.
 - **`Statistic`** + **`StatisticOp`** — rolling-window per-pixel
   `Median` / `Min` / `Max` / `Mean` over a `WxH` neighbourhood
-  (border-clamped). 1×1 window is identity. IM: `-statistic <op> WxH`.
+  (border-clamped). 1×1 window is identity. documented CLI: `-statistic <op> WxH`.
 - **`Clamp`** — clamp every tone sample into `[low, high]`. Alpha
-  preserved on RGBA; YUV touches only luma. IM: `-clamp` (extended
+  preserved on RGBA; YUV touches only luma. documented CLI: `-clamp` (extended
   with explicit endpoints).
 - **`AutoLevel`** — per-channel auto-stretch: independently fill
-  `[0, 255]` for each of R / G / B (RGB / RGBA). IM: `-auto-level`.
+  `[0, 255]` for each of R / G / B (RGB / RGBA). documented CLI: `-auto-level`.
 - **`ContrastStretch`** — burn the darkest `black%` and brightest
   `white%` of pixels then linearly stretch the rest, **per channel**
-  for RGB. IM: `-contrast-stretch black%xwhite%`.
+  for RGB. documented CLI: `-contrast-stretch black%xwhite%`.
 - **`LinearStretch`** — like `ContrastStretch` but cut-offs are
-  absolute pixel counts, not fractions. IM:
-  `-linear-stretch black-pixels{xwhite-pixels}`.
+  absolute pixel counts, not fractions. documented CLI: `-linear-stretch black-pixels{xwhite-pixels}`.
 - **`Function`** + **`FunctionOp`** — per-pixel mathematical-function
   map evaluated in normalised `[0, 1]` space. Operators:
   `Polynomial` (Horner-rule on descending coefficients), `Sinusoid`
   (`bias + amp · sin(2π · (freq · x + phase / 360))`), `ArcSin`,
-  `ArcTan`. IM: `-function <kind> args`.
+  `ArcTan`. documented CLI: `-function <kind> args`.
 - **`Curves`** + **`Curve`** + **`CurveInterpolation`** — per-channel
   tonal curves through user-supplied `(x, y)` control points.
   Three interpolants: `Linear` (segment-wise), `CatmullRom` (1974
@@ -264,13 +260,27 @@ physically-meaningful luminance.
   pixel to the nearest foreground pixel; useful for stroke
   thickening, signed-distance fields, contour render. Gray8 input
   only. Factory aliases: `distance-transform`, `distance`.
+- **`EuclideanDistanceTransform`** — exact-Euclidean distance
+  transform (Felzenszwalb–Huttenlocher 2012). Squared distance is
+  the lower envelope of upward parabolas `(p − q)² + f(q)`, one per
+  sample; the envelope is built by a single left-to-right march
+  (parabolas push/pop at most once each) with pairwise intersection
+  `s = ((f[q] + q²) − (f[v] + v²)) / (2q − 2v)`, and a second pass
+  reads distances by walking the envelope. The 2-D transform runs
+  the 1-D driver once per column then once per row, so the whole
+  filter is `O(d · N)` for an **exact** result — the precise
+  counterpart to `DistanceTransform`, which trades accuracy for
+  speed in the integer-chamfer approximation. Knobs:
+  `threshold` / `invert` / `scale`. Gray8 input only; Gray8 output
+  of the same dimensions. Factory aliases:
+  `euclidean-distance-transform`, `euclidean-distance`, `edt`.
 
 ### Colour
 
 - **`Modulate`** — brightness / saturation / hue via HSL round-trip.
-  RGB / RGBA only (YUV returns `Unsupported`). IM: `-modulate B,S,H`.
+  RGB / RGBA only (YUV returns `Unsupported`). documented CLI: `-modulate B,S,H`.
 - **`Sepia`** — sepia-tone matrix with optional `threshold` mix back
-  to grayscale. IM: `-sepia-tone N%`.
+  to grayscale. documented CLI: `-sepia-tone N%`.
 - **`Cyanotype`** — vintage blueprint colour remap. Reduces input
   to Rec.709 luminance and interpolates between a configurable
   shadow ("Prussian blue" `(15, 42, 111)`) and highlight (paper
@@ -280,25 +290,25 @@ physically-meaningful luminance.
   RGB; RGBA alpha pass-through. Factory aliases: `cyanotype`,
   `blueprint`.
 - **`Grayscale`** — Rec. 601 desaturate; optional `Gray8` collapse.
-  IM: `-colorspace Gray`.
+  documented CLI: `-colorspace Gray`.
 - **`Colorize`** — linear blend toward a target `[R, G, B, A]` colour
-  by a `0.0..=1.0` amount. IM: `-colorize N%`.
+  by a `0.0..=1.0` amount. documented CLI: `-colorize N%`.
 - **`Tint`** — luminance-weighted blend toward a target colour;
-  bright pixels reach the target, dark pixels stay put. IM: `-tint N`.
+  bright pixels reach the target, dark pixels stay put. documented CLI: `-tint N`.
 - **`Vignette`** — Gaussian radial darkening centred at `(x*w, y*h)`
-  with `radius` + `sigma`. IM: `-vignette RxS{+x{+y}}`.
+  with `radius` + `sigma`. documented CLI: `-vignette RxS{+x{+y}}`.
 - **`ColorMatrix`** — 3×3 colour matrix with optional 3-vector
   offset; equivalent of an affine 3×4 matrix on R / G / B. RGB / RGBA
-  only (YUV → `Unsupported`). IM: `-color-matrix matrix`,
+  only (YUV → `Unsupported`). documented CLI: `-color-matrix matrix`,
   `-recolor matrix`.
 - **`BlueShift`** — moonlight / scotopic-vision tint: per-pixel
-  `(min/factor, min/factor, max/factor)`. IM: `+blue-shift factor`.
+  `(min/factor, min/factor, max/factor)`. documented CLI: `+blue-shift factor`.
 - **`Quantize`** — uniform-grid colour quantizer: round each channel
-  to one of `cbrt(N)` evenly-spaced palette entries. IM: `-colors N`
+  to one of `cbrt(N)` evenly-spaced palette entries. documented CLI: `-colors N`
   (uniform-cube variant).
 - **`Frame`** — decorative bordered frame with a 3-D bevel
   (highlight on top / left, shadow on bottom / right). RGB / RGBA
-  only. IM: `-frame WxH+inner+outer-mat`.
+  only. documented CLI: `-frame WxH+inner+outer-mat`.
 - **`HslRotate`** — rotate the hue channel by N degrees in HSL space
   (`RGB ⇒ HSL ⇒ rotate ⇒ RGB` round-trip). Achromatic greys
   (R = G = B) are passed through unchanged. RGB / RGBA only.
@@ -359,7 +369,7 @@ physically-meaningful luminance.
   aliases: `max-rgb`, `hsv-value`, `min-rgb`.
 - **`BorderedFrame`** — flat solid-coloured border with independent
   per-side widths. Distinct from `Frame`, which paints a 3-D bevel.
-  Gray8 / RGB / RGBA. IM analogue: `-bordercolor C -border WxH`.
+  Gray8 / RGB / RGBA. documented-CLI analogue: `-bordercolor C -border WxH`.
 - **`DropShadow`** — soft offset shadow composited *behind* opaque
   RGBA subject pixels. Configurable `(offset_x, offset_y)`, blur
   `radius`, `opacity`, and `colour`. Box-blur approximates Gaussian
@@ -425,8 +435,7 @@ physically-meaningful luminance.
   amplitude vertical step edge at `radius=3, σ_s=1.5, σ_r=8` is
   preserved with gap=150 (vs a same-radius box mean's gap=21).
   Border samples clamp to the nearest in-bounds coordinate; alpha
-  pass-through on RGBA. Gray8 / RGB / RGBA. IM analogue:
-  `-define blur:bilateral=1` on the Gaussian blur path.
+  pass-through on RGBA. Gray8 / RGB / RGBA. documented-CLI analogue: `-define blur:bilateral=1` on the Gaussian blur path.
 - **`Kuwahara`** — quadrant-variance edge-preserving smoothing
   (1976 Kuwahara/Hachimura paper). For each pixel splits the
   `(2*radius+1)²` window into four overlapping quadrants; the
@@ -454,38 +463,36 @@ physically-meaningful luminance.
   the centre instead of around it). Gray8 / RGB / RGBA. Factory
   aliases: `radial-blur`, `spin-blur`.
 - **`Sharpen`** — unsharp-mask (Gaussian-blurred subtract +
-  re-addition). IM: `-sharpen RxS`.
+  re-addition). documented CLI: `-sharpen RxS`.
 - **`Unsharp`** — explicit unsharp-mask with `threshold` gate: only
-  high-contrast regions are sharpened. IM: `-unsharp RxS+A+T`.
+  high-contrast regions are sharpened. documented CLI: `-unsharp RxS+A+T`.
 - **`Clarity`** — large-radius unsharp-mask preset for mid-frequency
   tonal pop (classical photo-editor "Clarity" slider). Defaults: `radius = 30`,
-  `sigma = 15.0`, `amount = 0.5`, `threshold = 10`. IM analogue:
-  `-unsharp 30x15+0.5+10`.
-- **`Emboss`** — 3×3 relief convolution with `+128` bias. IM: `-emboss R`.
+  `sigma = 15.0`, `amount = 0.5`, `threshold = 10`. documented-CLI analogue: `-unsharp 30x15+0.5+10`.
+- **`Emboss`** — 3×3 relief convolution with `+128` bias. documented CLI: `-emboss R`.
 - **`EmbossDirectional`** — 3×3 relief with a configurable light
   azimuth (degrees CCW from East) and `depth` multiplier. Kernel
   weights track `(dx, -dy) · (cos a, sin a)`, so flipping the
   azimuth by 180° inverts polarity. Gray8 / RGB / RGBA (alpha
   pass-through) + planar YUV (luma plane only, chroma untouched).
   Factory: `emboss-directional`.
-- **`MotionBlur`** — 1-D Gaussian blur along `angle_degrees`. IM:
-  `-motion-blur RxS+A`.
+- **`MotionBlur`** — 1-D Gaussian blur along `angle_degrees`. documented CLI: `-motion-blur RxS+A`.
 - **`Implode`** — radial pinch / explode with bilinear resampling.
-  IM: `-implode N`.
-- **`Swirl`** — radius-decaying rotational distortion. IM: `-swirl N`.
+  documented CLI: `-implode N`.
+- **`Swirl`** — radius-decaying rotational distortion. documented CLI: `-swirl N`.
 - **`Despeckle`** — median-window edge-preserving noise reduction
-  (alpha pass-through). IM: `-despeckle`.
+  (alpha pass-through). documented CLI: `-despeckle`.
 - **`Wave`** — sinusoidal vertical pixel displacement (amplitude /
-  wavelength in pixels). IM: `-wave AxL`.
+  wavelength in pixels). documented CLI: `-wave AxL`.
 - **`Spread`** — random pixel-position perturbation inside a
   `[-radius, radius]²` neighbourhood, with a deterministic seed for
-  reproducibility. IM: `-spread N`.
+  reproducibility. documented CLI: `-spread N`.
 - **`Charcoal`** — non-photorealistic stylise: optional Gaussian
   pre-blur (`radius`, default `0`) ⇒ Sobel-on-luma ⇒ invert ⇒ `Gray8`
   sketch. Larger pre-blur radii thicken the strokes by suppressing
-  fine texture before the edge pass. IM: `-charcoal R`.
+  fine texture before the edge pass. documented CLI: `-charcoal R`.
 - **`Paint`** — oil-paint stylise: per-pixel modal-bucket vote in a
-  `(2*radius+1)²` window then mean-of-mode RGB. IM: `-paint radius`.
+  `(2*radius+1)²` window then mean-of-mode RGB. documented CLI: `-paint radius`.
 - **`Pixelate`** — block-average spatial mosaic; each `N×N` tile
   collapses to its mean colour. Distinct from `Quantize` which
   coarsens the colour axis only. Gray8 / RGB / RGBA + planar YUV
@@ -510,12 +517,12 @@ physically-meaningful luminance.
   `ink_color`. RGB / RGBA only. Factory aliases: `comic`, `manga`.
 - **`Shade`** — directional Lambertian relief shading from an
   `(azimuth, elevation)` light vector. Optional colour pass-through
-  mode (`+shade`). IM: `-shade az,el`.
+  mode (`+shade`). documented CLI: `-shade az,el`.
 - **`Convolve`** — user-supplied square `N×N` kernel (odd `N`); optional
-  bias / divisor; alpha pass-through on RGBA. IM: `-convolve "..."`.
+  bias / divisor; alpha pass-through on RGBA. documented CLI: `-convolve "..."`.
 - **`Laplacian`** — 3×3 Laplacian (second-derivative) edge filter.
   Output is `|response|` clamped to `[0, 255]` as a `Gray8` frame.
-  IM: `-laplacian`.
+  documented CLI: `-laplacian`.
 - **`LaplacianOfGaussian`** + **`LogMode`** — Marr–Hildreth 1980
   Laplacian-of-Gaussian edge / zero-crossing detector. Samples the
   continuous `((x²+y²−2σ²)/σ⁴) · exp(−(x²+y²)/(2σ²))` kernel on a
@@ -535,7 +542,7 @@ physically-meaningful luminance.
 - **`Canny`** — full Canny edge pipeline: Gaussian pre-blur →
   Sobel gradient + direction → non-maximum suppression →
   hysteresis thresholding. Output is binary `Gray8` (0 / 255).
-  IM: `-canny RxS+L%+H%`.
+  documented CLI: `-canny RxS+L%+H%`.
 - **`EdgeDetect`** + **`EdgeKernel`** — runtime-selectable gradient
   kernel (`Sobel` / `Prewitt` / `Scharr` / `Roberts`). Complements
   the fixed-Sobel `Edge`; same `Gray8` output shape and pixel-format
@@ -615,34 +622,33 @@ physically-meaningful luminance.
 - **`Morphology`** + **`MorphologyChain`** — N-iteration greyscale
   dilate / erode with a 3×3 square or cross structuring element; plus
   `open` (erode → dilate) and `close` (dilate → erode) compositions.
-  IM: `-morphology Dilate|Erode|Open|Close`.
+  documented CLI: `-morphology Dilate|Erode|Open|Close`.
 - **`MorphologyEdge`** — morphological edge / gradient operators
   built on the dilate / erode primitives:
   - `EdgeIn`  = `src - erode(src)`     — inner boundary.
   - `EdgeOut` = `dilate(src) - src`    — outer boundary.
   - `EdgeMagnitude` = `dilate - erode` — full per-pixel gradient.
-  IM: `-morphology EdgeIn|EdgeOut|Edge`.
+  documented CLI: `-morphology EdgeIn|EdgeOut|Edge`.
 - **`Perspective`** — 4-corner perspective warp; solves the 3×3
   homography from src/dst quads with 8×8 Gauss-Jordan elimination,
   then inverse-maps each output pixel via `H⁻¹` with bilinear
   sampling. Optional `output_size: (w, h)` (JSON keys `output_width`
   + `output_height`) emits a custom canvas size — useful when the dst
-  quad escapes the source rectangle. IM: `-distort Perspective "..."`.
+  quad escapes the source rectangle. documented CLI: `-distort Perspective "..."`.
 - **`Affine`** — 2-D affine warp with bilinear resampling. Six
   coefficients in `(sx, ry, rx, sy, tx, ty)` order; supplied either
   as `matrix: [...]` or per-named keys on the JSON factory.
-  Optional `output_size` for translation off-canvas. IM: `-distort
+  Optional `output_size` for translation off-canvas. documented CLI: `-distort
   Affine "sx,ry,rx,sy,tx,ty"`.
 - **`Srt`** — Scale / Rotate / Translate composite warp. Collapses
   `T(tx,ty) · R(θ) · S(sx,sy) · T(-ox,-oy)` into a single 2×3 affine
   matrix and reuses the [`Affine`] machinery. Origin defaults to the
   image centre on the JSON factory; uniform `scale` overrides
-  `sx`/`sy`. IM: `-distort SRT "ox,oy sx[,sy] angle tx,ty"`.
+  `sx`/`sy`. documented CLI: `-distort SRT "ox,oy sx[,sy] angle tx,ty"`.
 - **`Distort`** — full Brown-Conrady lens distortion model: radial
   (`k1` quadratic + `k2` quartic) plus optional tangential
   (`p1` + `p2`, default `0`) decentering coefficients. Pure-radial
-  mode (`p1 = p2 = 0`) is bit-identical to the legacy r7 output. IM:
-  `-distort barrel "k1 k2 ..."`.
+  mode (`p1 = p2 = 0`) is bit-identical to the legacy r7 output. documented CLI: `-distort barrel "k1 k2 ..."`.
 - **`TiltShift`** — selective Gaussian blur masked by an in-focus
   band (miniature-photography depth-of-field). Configurable
   `focus_centre`, `focus_height`, `falloff_height`, plus the
@@ -656,16 +662,16 @@ physically-meaningful luminance.
   multi-channel frame as a single-plane `Gray8` frame. Accepts
   `R` / `G` / `B` / `A` on packed RGB / RGBA and `Y` / `U` / `V` on
   planar YUV (chroma channels return at the subsampled grid size).
-  IM rough analogue: `-channel <ch> -separate`.
+  documented-CLI rough analogue: `-channel <ch> -separate`.
 
 ### Two-input compositing
 
 - **`Clut`** — 1-D Colour Look-Up Table. `src` is the image; `dst`
   is the CLUT (read row-major). Per-channel index lookup; alpha
-  pass-through. IM: `-clut`.
+  pass-through. documented CLI: `-clut`.
 - **`HaldClut`** — Hald CLUT image-as-LUT colour grading. `dst` is a
   `(L²)×(L²)` Hald cube; trilinear sampling per pixel. RGB / RGBA
-  only. IM: `-hald-clut`.
+  only. documented CLI: `-hald-clut`.
 - **`Difference`** — two-input pixel-wise absolute difference
   (`out = |src - dst|`). Cheap change-detection / motion mask, no
   Porter–Duff coverage algebra. Gray8 / RGB / RGBA / planar YUV.
@@ -699,7 +705,7 @@ physically-meaningful luminance.
     trait formalises the two-port shape; the
     `TwoInputImageFilterAdapter` shim buffers per-port frames and
     emits whenever both ports have a frame in hand.
-  - IM analogue: `-compose <op> -composite`.
+  - documented-CLI analogue: `-compose <op> -composite`.
 
 All single-input filters listed above share the `ImageFilter` trait — chain them
 manually with repeated `.apply()` calls, or feed them through

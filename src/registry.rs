@@ -362,6 +362,23 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("niblack-threshold", Box::new(make_niblack));
 
+    // r209 factory: exact-Euclidean Distance Transform
+    // (Felzenszwalb–Huttenlocher 2012, separable lower-envelope of
+    // parabolas — exact counterpart to the cheaper integer-chamfer
+    // `distance-transform` factory already registered above). Three
+    // aliases so `edt` / `euclidean-distance` /
+    // `euclidean-distance-transform` resolve to the same factory.
+    ctx.filters.register(
+        "euclidean-distance-transform",
+        Box::new(make_euclidean_distance_transform),
+    );
+    ctx.filters.register(
+        "euclidean-distance",
+        Box::new(make_euclidean_distance_transform),
+    );
+    ctx.filters
+        .register("edt", Box::new(make_euclidean_distance_transform));
+
     // r186 factory: classic bit-depth-reduction dither (Bayer ordered
     // + the Floyd–Steinberg / Jarvis–Judice–Ninke / Stucki /
     // Sierra-3 / Sierra-2 / Sierra-Lite / Atkinson error-diffusion
@@ -5273,6 +5290,62 @@ fn make_niblack(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
     )))
 }
 
+fn make_euclidean_distance_transform(
+    params: &Value,
+    inputs: &[PortSpec],
+) -> Result<Box<dyn StreamFilter>> {
+    use crate::EuclideanDistanceTransform;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+    let threshold = get_u64("threshold").unwrap_or(128).min(255) as u8;
+    let mut f = EuclideanDistanceTransform::new(threshold);
+    if let Some(inv) = get_bool("invert") {
+        f = f.with_invert(inv);
+    }
+    if let Some(s) = get_f64("scale") {
+        if !s.is_finite() {
+            return Err(Error::invalid(
+                "euclidean-distance-transform: scale must be finite".to_string(),
+            ));
+        }
+        if s <= 0.0 {
+            return Err(Error::invalid(
+                "euclidean-distance-transform: scale must be > 0".to_string(),
+            ));
+        }
+        f = f.with_scale(s as f32);
+    }
+    let in_port = video_in_port(inputs);
+    // EuclideanDistanceTransform always emits a single-plane Gray8
+    // intensity image; the input is Gray8-only too (apply() rejects
+    // every other format).
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec {
+            name: "video".to_string(),
+            params: PortParams::Video {
+                format: PixelFormat::Gray8,
+                width: *width,
+                height: *height,
+                time_base: *time_base,
+            },
+            ..in_port.clone()
+        },
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 fn make_log(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::{LaplacianOfGaussian, LogMode};
     let p = params.as_object();
@@ -5855,9 +5928,62 @@ mod tests {
             // threshold + spelling alias).
             "niblack",
             "niblack-threshold",
+            // r209 additions (exact-Euclidean Distance Transform —
+            // Felzenszwalb–Huttenlocher 2012, three aliases).
+            "euclidean-distance-transform",
+            "euclidean-distance",
+            "edt",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
+    }
+
+    #[test]
+    fn euclidean_distance_transform_factory_emits_gray8() {
+        // edt is always single-plane Gray8 → check the adapter port
+        // spec reports Gray8 regardless of how the upstream port was
+        // shaped (use a Gray8 input here since the filter rejects
+        // non-Gray8 inputs at apply()-time anyway).
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        let f = c
+            .filters
+            .make(
+                "euclidean-distance-transform",
+                &json!({"threshold": 200, "scale": 2.0}),
+                &inputs,
+            )
+            .expect("edt factory");
+        let outs = f.output_ports();
+        assert_eq!(outs.len(), 1);
+        if let PortParams::Video { format, .. } = outs[0].params {
+            assert_eq!(format, PixelFormat::Gray8);
+        } else {
+            panic!("expected video output port");
+        }
+    }
+
+    #[test]
+    fn euclidean_distance_transform_factory_aliases() {
+        // Every alias resolves to the same factory.
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        for name in ["euclidean-distance-transform", "euclidean-distance", "edt"] {
+            let r = c.filters.make(name, &json!({}), &inputs);
+            assert!(r.is_ok(), "alias {name} failed: {:?}", r.err());
+        }
+    }
+
+    #[test]
+    fn euclidean_distance_transform_factory_rejects_bad_scale() {
+        // scale must be finite + > 0 — the factory mirrors the
+        // chamfer-DT contract.
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        let r = c.filters.make("edt", &json!({"scale": 0.0}), &inputs);
+        assert!(r.is_err(), "scale = 0 should be rejected");
+        let r2 = c.filters.make("edt", &json!({"scale": -1.0}), &inputs);
+        assert!(r2.is_err(), "scale < 0 should be rejected");
     }
 
     #[test]

@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r209: land `EuclideanDistanceTransform` — exact-Euclidean distance
+  transform (Felzenszwalb–Huttenlocher, *"Distance Transforms of
+  Sampled Functions"*, Theory of Computing 8(19), 2012). Computes,
+  for every pixel of a thresholded binary mask, the **exact**
+  Euclidean distance to the nearest foreground pixel — the exact
+  counterpart to the existing `DistanceTransform`, which ships the
+  cheaper Borgefors 3-4 chamfer approximation. The squared distance
+  is the lower envelope of upward parabolas `(p − q)² + f(q)`, one
+  per sample; since all parabolas share the same curvature, any two
+  intersect at a single abscissa
+  `s = ((f[q] + q²) − (f[v] + v²)) / (2q − 2v)` and the envelope is
+  built by a single left-to-right march that pushes and pops
+  candidates at most once each (`O(n)` per row). A second
+  left-to-right pass fills `D(q)` by walking the envelope. The 2-D
+  transform runs the 1-D driver once per column then once per row
+  (using the column-pass output as `f` for the row pass), so the
+  whole transform is `O(d · N)` for an exact result. Single-plane
+  `Gray8` input and output of the same dimensions; foreground pixels
+  (the `value >= threshold` test, or its inversion when
+  `EuclideanDistanceTransform::invert` is set) emit distance `0`,
+  every other pixel emits the rounded Euclidean distance to the
+  nearest foreground site scaled by `scale` and clamped to
+  `[0, 255]`. Knobs: `threshold` (mask cut-off), `invert` (flip the
+  FG/BG test), `scale` (compress / expand the rendered dynamic
+  range; non-finite or non-positive inputs silently keep the
+  previous value). Useful for stroke generation, contour rings,
+  signed-distance-field glyph atlases, feathering masks, and
+  morphology effects that need a true Euclidean metric rather than
+  the chamfer approximation. 18 unit tests (foreground-pixel
+  zero-distance, single-source-matches-actual-Euclidean,
+  monotone-increasing-along-radius, no-foreground saturation,
+  fully-foreground all-zero, invert-swaps-FG-BG, scale
+  compress / expand, scale silent-reject of bad input, far-distance
+  clamp at 255, 0×0 bypass, RGB / YUV rejection; the 1-D driver
+  `dt_1d` is exercised directly against a brute-force squared-
+  Euclidean oracle on patterns with two features, all `+∞`, and a
+  `k == 0` anchor-replacement edge case; the 2-D path is checked
+  against the same brute-force oracle on three deterministic
+  patterns — a random-ish point cloud, a solid border ring that
+  stresses many envelope candidates, and a diagonal-line FG that
+  stresses separable-pass coupling — all agree to `|Δ| < 1e-6`)
+  plus 3 factory smoke tests (`euclidean-distance-transform` /
+  `euclidean-distance` / `edt` aliases all resolve; output-port
+  spec is `Gray8`; non-positive and non-finite `scale` are
+  factory-rejected). Filter count goes 130 → 131; factory count
+  178 → 181. Clean-room transcription from
+  `docs/image/filter/distance-transform.md` §2 (which itself cites
+  the original Felzenszwalb–Huttenlocher publication by DOI link
+  only, per the *Feist* uncopyrightable-facts posture).
+
+- r209 hygiene: scrub the 142 pre-existing parameter-name brand
+  citations across this crate — 36 in `src/lib.rs`, 1 in
+  `src/frame.rs`, 2 in `src/morphology.rs`, and 103 in `README.md` —
+  rewriting the two-letter abbreviation lead-ins (and their
+  "analogue" variant) in doc-comments to the neutral
+  "documented CLI" / "documented-CLI analogue" phrasing already
+  used in many adjacent comments. No public API change.
+
 - r205: land `Niblack` — Wayne Niblack's adaptive local-statistics
   threshold (Niblack, *An Introduction to Digital Image Processing*,
   Prentice-Hall 1986, §5.1 — page-segmentation example). For each

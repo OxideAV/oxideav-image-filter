@@ -37,10 +37,10 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MorphologyOp {
     /// Pixel becomes the **maximum** of the window — bright regions
-    /// expand. IM: `-morphology Dilate`.
+    /// expand. documented CLI: `-morphology Dilate`.
     Dilate,
     /// Pixel becomes the **minimum** of the window — bright regions
-    /// shrink. IM: `-morphology Erode`.
+    /// shrink. documented CLI: `-morphology Erode`.
     Erode,
 }
 

@@ -155,7 +155,7 @@ impl ImageFilter for Frame {
         // Wait — the documented `-frame` CLI outer bevel uses the OPPOSITE
         // polarity from the inner bevel so the whole frame looks raised
         // (outer top/left dark, outer bottom/right bright would invert
-        // it). We follow IM: outer = recessed feel (top/left bright,
+        // it). We follow documented CLI: outer = recessed feel (top/left bright,
         // bottom/right dark) WHEN the bevel sits above the inner ramp.
         // But the standard textbook "raised picture frame" puts
         // top/left bright everywhere — keep that for both bevels and

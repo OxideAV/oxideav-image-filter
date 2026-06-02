@@ -15,33 +15,30 @@
 //! - [`AutoGamma`](auto_gamma::AutoGamma) — auto-gamma: pick a per-channel
 //!   gamma so the geometric mean lands at 0.5.
 //! - [`BlueShift`](blue_shift::BlueShift) — night-vision / moonlight
-//!   tint: per-pixel `(min/factor, min/factor, max/factor)`. IM:
-//!   `+blue-shift factor`.
+//!   tint: per-pixel `(min/factor, min/factor, max/factor)`. documented CLI: //!   `+blue-shift factor`.
 //! - [`AutoLevel`](auto_level::AutoLevel) — per-channel auto-stretch:
-//!   independently fill `[0, 255]` for each of `R`/`G`/`B`. IM:
-//!   `-auto-level`.
+//!   independently fill `[0, 255]` for each of `R`/`G`/`B`. documented CLI: //!   `-auto-level`.
 //! - [`Canny`](canny::Canny) — Canny edge detector (Gaussian → Sobel
 //!   → non-max suppression → hysteresis). Output is binary `Gray8`.
-//!   IM: `-canny RxS+L%+H%`.
+//!   documented CLI: `-canny RxS+L%+H%`.
 //! - [`Clamp`](clamp::Clamp) — clamp every tone sample into
-//!   `[low, high]`. IM: `-clamp` (extended with explicit endpoints).
+//!   `[low, high]`. documented CLI: `-clamp` (extended with explicit endpoints).
 //! - [`Clut`](clut::Clut) — 1-D Colour Look-Up Table (two-input).
 //!   `src` is the image; `dst` is the CLUT (read row-major). Per-channel
-//!   index lookup; alpha pass-through. IM: `-clut`.
+//!   index lookup; alpha pass-through. documented CLI: `-clut`.
 //! - [`ColorMatrix`](color_matrix::ColorMatrix) — 3×3 colour matrix
-//!   with optional offset. RGB / RGBA only. IM: `-color-matrix`,
+//!   with optional offset. RGB / RGBA only. documented CLI: `-color-matrix`,
 //!   `-recolor`.
 //! - [`ContrastStretch`](contrast_stretch::ContrastStretch) — burn the
 //!   darkest `black%` and brightest `white%` of pixels then linearly
-//!   stretch the rest (per-channel for RGB). IM:
-//!   `-contrast-stretch black%xwhite%`.
+//!   stretch the rest (per-channel for RGB). documented CLI: //!   `-contrast-stretch black%xwhite%`.
 //! - [`Blur`](blur::Blur) — separable Gaussian blur with configurable
 //!   radius + sigma, optional plane selector (luma only / chroma only /
 //!   specific plane / all).
 //! - [`BrightnessContrast`](brightness_contrast::BrightnessContrast) —
 //!   linear brightness + contrast adjustment (LUT-based).
 //! - [`Charcoal`](charcoal::Charcoal) — non-photorealistic stylise
-//!   (Sobel-on-luma + invert ⇒ Gray8 sketch). IM: `-charcoal R`.
+//!   (Sobel-on-luma + invert ⇒ Gray8 sketch). documented CLI: `-charcoal R`.
 //! - [`Colorize`](colorize::Colorize) — linear blend toward a target
 //!   `[R, G, B, A]` colour by a `0.0..=1.0` amount.
 //! - [`Composite`](composite::Composite) — two-input Porter–Duff and
@@ -51,15 +48,15 @@
 //!   `colorburn`). Implements [`TwoInputImageFilter`].
 //! - [`Convolve`](convolve::Convolve) — user-supplied square `N×N`
 //!   convolution kernel (odd `N`); optional bias / divisor; alpha
-//!   pass-through on RGBA. IM: `-convolve "..."`.
+//!   pass-through on RGBA. documented CLI: `-convolve "..."`.
 //! - [`ChannelExtract`](channel_extract::ChannelExtract) — pull one
 //!   channel (R/G/B/A or Y/U/V) out as a single-plane `Gray8` frame.
-//!   IM: `-channel <ch> -separate`.
+//!   documented CLI: `-channel <ch> -separate`.
 //! - [`Crop`](crop::Crop) — extract a rectangular subregion
 //!   `(x, y, width, height)` (documented `-crop WxH+X+Y` CLI).
 //! - [`Cycle`](cycle::Cycle) — modular per-channel value rotation
 //!   (`out = (src + amount) mod 256` per RGB / luma byte; alpha and
-//!   chroma preserved). IM analogue: `-cycle N` (paletted-style sample
+//!   chroma preserved). documented-CLI analogue: `-cycle N` (paletted-style sample
 //!   shift on direct-colour data).
 //! - [`Despeckle`](despeckle::Despeckle) — median-window
 //!   edge-preserving noise reduction; alpha pass-through.
@@ -72,7 +69,7 @@
 //!   pass-through), luma-only on YUV.
 //! - [`Distort`](distort::Distort) — radial-polynomial barrel /
 //!   pincushion lens distortion (`k1` quadratic + `k2` quartic
-//!   coefficients). IM: `-distort barrel "k1 k2 ..."`.
+//!   coefficients). documented CLI: `-distort barrel "k1 k2 ..."`.
 //! - [`Edge`](edge::Edge) — Sobel edge magnitude; accepts colour input
 //!   and returns a single-plane luma-ish intensity image.
 //! - [`Emboss`](emboss::Emboss) — 3×3 relief convolution; luma-only
@@ -81,31 +78,31 @@
 //!   equalisation via CDF mapping.
 //! - [`Evaluate`](evaluate::Evaluate) — per-pixel arithmetic LUT
 //!   (Add / Sub / Mul / Div / Pow / Max / Min / Set / And / Or / Xor /
-//!   Threshold) with a single scalar operand. IM: `-evaluate <op> N`.
+//!   Threshold) with a single scalar operand. documented CLI: `-evaluate <op> N`.
 //! - [`Extent`](extent::Extent) — set the output canvas to a fixed
 //!   `(width, height)` with a placement offset, padding the gaps with a
-//!   configurable background colour. IM: `-extent WxH+X+Y`.
+//!   configurable background colour. documented CLI: `-extent WxH+X+Y`.
 //! - [`Function`](function::Function) — per-pixel mathematical
 //!   function map (`Polynomial`, `Sinusoid`, `ArcSin`, `ArcTan`)
-//!   evaluated in normalised `[0, 1]` space. IM: `-function`.
+//!   evaluated in normalised `[0, 1]` space. documented CLI: `-function`.
 //! - [`Flip`](flip::Flip) — mirror vertically (top row ↔ bottom row).
 //! - [`Flop`](flop::Flop) — mirror horizontally (left col ↔ right col).
 //! - [`Frame`](frame::Frame) — decorative bordered frame with a 3-D
 //!   bevel (highlight on top / left, shadow on bottom / right). RGB /
-//!   RGBA only. IM: `-frame WxH+inner+outer-mat`.
+//!   RGBA only. documented CLI: `-frame WxH+inner+outer-mat`.
 //! - [`Gamma`](gamma::Gamma) — power-law gamma curve applied per tone
 //!   channel (LUT-based; YUV only touches luma).
 //! - [`Grayscale`](grayscale::Grayscale) — desaturate RGB/RGBA with
 //!   Rec. 601 luma weights; optional Gray8 collapse.
 //! - [`HaldClut`](hald_clut::HaldClut) — Hald CLUT image-as-LUT
 //!   colour grading (two-input). `dst` is a `(L²)×(L²)` Hald cube;
-//!   trilinear sampling per pixel. RGB / RGBA only. IM: `-hald-clut`.
+//!   trilinear sampling per pixel. RGB / RGBA only. documented CLI: `-hald-clut`.
 //! - [`Implode`](implode::Implode) — radial pinch / explode (documented CLI
 //!   `-implode N`); bilinear-resampled inverse mapping inside the
 //!   inscribed circle.
 //! - [`Laplacian`](laplacian::Laplacian) — 3×3 Laplacian
 //!   second-derivative filter; output is `|response|` clamped to
-//!   `[0, 255]`. IM: `-laplacian`.
+//!   `[0, 255]`. documented CLI: `-laplacian`.
 //! - [`LaplacianOfGaussian`](laplacian_of_gaussian::LaplacianOfGaussian)
 //!   — Marr–Hildreth 1980 Laplacian-of-Gaussian detector: discrete
 //!   sampling of `((x²+y²−2σ²)/σ⁴) · exp(−(x²+y²)/(2σ²))` on a
@@ -114,8 +111,7 @@
 //!   Marr–Hildreth edge map with slope-threshold gate). Configurable
 //!   `sigma` / `radius` / `output_gain` / `slope_threshold`.
 //! - [`LinearStretch`](linear_stretch::LinearStretch) — like
-//!   [`ContrastStretch`] but cut-offs are absolute pixel counts. IM:
-//!   `-linear-stretch black-pixels{xwhite-pixels}`.
+//!   [`ContrastStretch`] but cut-offs are absolute pixel counts. documented CLI: //!   `-linear-stretch black-pixels{xwhite-pixels}`.
 //! - [`Level`](level::Level) — remap `[black, white]` to `[0, 255]`
 //!   with optional mid-tone gamma (documented `-level` CLI).
 //! - [`Modulate`](modulate::Modulate) — adjust brightness, saturation,
@@ -123,11 +119,10 @@
 //! - [`Morphology`](morphology::Morphology) — N-iteration greyscale
 //!   dilate / erode with a 3×3 square or cross structuring element;
 //!   plus [`MorphologyChain`](morphology::MorphologyChain) for the
-//!   open / close compositions. IM: `-morphology Dilate|Erode|Open|Close`.
+//!   open / close compositions. documented CLI: `-morphology Dilate|Erode|Open|Close`.
 //! - [`MorphologyEdge`](morphology::MorphologyEdge) — morphological
 //!   edge / gradient operators (`EdgeIn`, `EdgeOut`, `EdgeMagnitude`)
-//!   built from the same dilate / erode primitives. IM:
-//!   `-morphology EdgeIn|EdgeOut|Edge`.
+//!   built from the same dilate / erode primitives. documented CLI: //!   `-morphology EdgeIn|EdgeOut|Edge`.
 //! - [`MotionBlur`](motion_blur::MotionBlur) — directional 1-D Gaussian
 //!   blur along `angle_degrees` (documented `-motion-blur RxS+A` CLI).
 //! - [`Negate`](negate::Negate) — photo-negative of RGB/Gray channels;
@@ -135,11 +130,10 @@
 //! - [`Normalize`](normalize::Normalize) — auto-levels: stretch the
 //!   observed luma range to fill `[0, 255]` (documented `-normalize` CLI).
 //! - [`Paint`](paint::Paint) — oil-paint stylise: per-pixel modal-bucket
-//!   vote in a `(2*radius+1)²` window then mean-of-mode RGB. IM:
-//!   `-paint radius`.
+//!   vote in a `(2*radius+1)²` window then mean-of-mode RGB. documented CLI: //!   `-paint radius`.
 //! - [`Perspective`](perspective::Perspective) — 4-corner perspective
 //!   warp (homography solved from src/dst quads, inverse-mapped with
-//!   bilinear sampling). IM: `-distort Perspective "..."`.
+//!   bilinear sampling). documented CLI: `-distort Perspective "..."`.
 //! - [`Polar`](polar::Polar) — Cartesian ⇄ polar coordinate distortion
 //!   (`-distort Polar` / `-distort DePolar`). Bends an image into a fan
 //!   or unrolls a fan back into a rectangle; bilinear-sampled.
@@ -147,11 +141,11 @@
 //!   intensity levels (documented `-posterize` CLI).
 //! - [`Quantize`](quantize::Quantize) — uniform-grid colour quantizer:
 //!   round each channel to one of `cbrt(N)` evenly-spaced palette
-//!   entries. IM: `-colors N` (uniform-cube variant).
+//!   entries. documented CLI: `-colors N` (uniform-cube variant).
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
 //!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear.
 //! - [`Roll`](roll::Roll) — circular pixel shift `(dx, dy)`; rows /
-//!   columns wrap around the borders. IM: `-roll +X+Y`.
+//!   columns wrap around the borders. documented CLI: `-roll +X+Y`.
 //! - [`Rotate`](rotate::Rotate) — arbitrary-angle rotation with bilinear
 //!   resampling; grows the canvas and fills gaps with a configurable
 //!   background colour.
@@ -159,7 +153,7 @@
 //!   `-sepia-tone`); threshold controls the mix with the original.
 //! - [`Shade`](shade::Shade) — directional Lambertian relief shading
 //!   from an `(azimuth, elevation)` light vector. Optional colour
-//!   pass-through mode (`+shade`). IM: `-shade az,el`.
+//!   pass-through mode (`+shade`). documented CLI: `-shade az,el`.
 //! - [`Solarize`](solarize::Solarize) — invert samples above a
 //!   threshold (documented `-solarize N%` CLI).
 //! - [`Spread`](spread::Spread) — random pixel-position perturbation
@@ -170,9 +164,9 @@
 //!   `-distort SRT "ox,oy sx[,sy] angle tx,ty"` shorthand.
 //! - [`Statistic`](statistic::Statistic) — rolling-window per-pixel
 //!   statistic (`Median` / `Min` / `Max` / `Mean`) over a configurable
-//!   `WxH` neighbourhood. IM: `-statistic <op> WxH`.
+//!   `WxH` neighbourhood. documented CLI: `-statistic <op> WxH`.
 //! - [`Shave`](shave::Shave) — strip a uniform `(x_border, y_border)`
-//!   margin off every edge (centred crop). IM: `-shave XxY`.
+//!   margin off every edge (centred crop). documented CLI: `-shave XxY`.
 //! - [`Sharpen`](sharpen::Sharpen) — unsharp-mask sharpening with
 //!   `radius`/`sigma`/`amount`; YUV touches only luma.
 //! - [`SigmoidalContrast`](sigmoidal_contrast::SigmoidalContrast) —
@@ -184,44 +178,42 @@
 //!   black/white against a cut-off (YUV sets chroma to neutral 128).
 //! - [`TiltShift`](tilt_shift::TiltShift) — selective Gaussian blur
 //!   masked by a horizontal in-focus band (miniature-photography
-//!   depth-of-field). IM rough analogue: `-blur` masked by a vertical
+//!   depth-of-field). documented-CLI rough analogue: `-blur` masked by a vertical
 //!   gradient.
 //! - [`Tint`](tint::Tint) — luminance-weighted tint toward a target
 //!   colour (documented `-tint` CLI); bright pixels reach the target,
 //!   dark pixels stay put.
 //! - [`Trim`](trim::Trim) — crop to the bounding box of pixels that
 //!   differ from a reference background colour by more than `fuzz` per
-//!   channel. IM: `-fuzz N% -trim`.
+//!   channel. documented CLI: `-fuzz N% -trim`.
 //! - [`Unsharp`](unsharp::Unsharp) — threshold-gated unsharp-mask
 //!   (documented `-unsharp RxS+A+T` CLI).
 //! - [`Vignette`](vignette::Vignette) — Gaussian radial darkening
 //!   centred at `(x, y)` with `radius` + `sigma` (documented CLI
 //!   `-vignette RxS{+x{+y}}`).
 //! - [`Wave`](wave::Wave) — sinusoidal vertical displacement with
-//!   configurable amplitude (px) and wavelength (px). IM: `-wave AxL`.
+//!   configurable amplitude (px) and wavelength (px). documented CLI: `-wave AxL`.
 //!
 //! r14 additions:
 //!
 //! - [`BarrelInverse`](barrel_inverse::BarrelInverse) — polynomial
-//!   inverse radial distortion `r → r / (a·r³+b·r²+c·r+d)`. IM:
-//!   `-distort BarrelInverse a,b,c,d`.
+//!   inverse radial distortion `r → r / (a·r³+b·r²+c·r+d)`. documented CLI: //!   `-distort BarrelInverse a,b,c,d`.
 //! - [`Deskew`](deskew::Deskew) — auto-deskew via projection-variance
-//!   scoring + corrective rotation. IM: `-deskew threshold`.
+//!   scoring + corrective rotation. documented CLI: `-deskew threshold`.
 //! - [`HoughLines`](hough_lines::HoughLines) — polar Hough-transform
-//!   line detection; emits a `Gray8` line-trace canvas. IM:
-//!   `-hough-lines WxH`.
+//!   line detection; emits a `Gray8` line-trace canvas. documented CLI: //!   `-hough-lines WxH`.
 //! - [`Sketch`](sketch::Sketch) — pencil-sketch stylise (directional
-//!   blur + Sobel + invert). IM: `-sketch radius,sigma,angle`.
+//!   blur + Sobel + invert). documented CLI: `-sketch radius,sigma,angle`.
 //! - [`Stegano`](stegano::Stegano) — two-input LSB steganographic
-//!   embed: stamps `src`'s MSBs into `dst`'s LSBs. IM: `-stegano offset`.
+//!   embed: stamps `src`'s MSBs into `dst`'s LSBs. documented CLI: `-stegano offset`.
 //! - [`Stereo`](stereo::Stereo) — two-input red/cyan anaglyph stereo
-//!   composition. IM: `-stereo`.
+//!   composition. documented CLI: `-stereo`.
 //!
 //! r15 additions:
 //!
 //! - [`AdaptiveThreshold`](adaptive_threshold::AdaptiveThreshold) —
 //!   local-mean-based threshold (window radius + offset); emits
-//!   `Gray8`. IM: `-threshold local`.
+//!   `Gray8`. documented CLI: `-threshold local`.
 //! - [`ChannelMixer`](channel_mixer::ChannelMixer) — 4×4 linear
 //!   combination of source channels into destination channels plus a
 //!   4-vector offset; super-set of `ColorMatrix`.
@@ -314,6 +306,21 @@
 //!   automatic threshold maximising inter-class variance; emits binary
 //!   `Gray8`. Complement to `AdaptiveThreshold` (local-mean) /
 //!   `Threshold` (manual cut).
+//!
+//! r209 additions:
+//!
+//! - [`EuclideanDistanceTransform`](euclidean_distance_transform::EuclideanDistanceTransform)
+//!   — exact-Euclidean distance transform (Felzenszwalb–Huttenlocher
+//!   2012). Squared-distance is the lower envelope of upward parabolas
+//!   `(p−q)² + f(q)`; pairwise intersection `s = ((f[q]+q²)−(f[v]+v²))/
+//!   (2q−2v)`; separable one-pass-per-dimension gives `O(d·N)` total
+//!   for an exact result, in contrast to the cheaper but approximate
+//!   integer-chamfer [`DistanceTransform`](distance_transform::DistanceTransform)
+//!   already in the crate. Single-plane `Gray8` input and output;
+//!   `threshold`, `invert`, `scale` knobs to control mask polarity and
+//!   rendered dynamic range. Useful for stroke generation, contour
+//!   rings, SDF glyph atlases, feathering, and morphology effects that
+//!   need a true Euclidean metric.
 //!
 //! r205 additions:
 //!
@@ -548,6 +555,7 @@ pub mod edge_multi;
 pub mod emboss;
 pub mod emboss_directional;
 pub mod equalize;
+pub mod euclidean_distance_transform;
 pub mod evaluate;
 pub mod exposure;
 pub mod extent;
@@ -684,6 +692,7 @@ pub use edge_multi::{EdgeDetect, EdgeKernel};
 pub use emboss::Emboss;
 pub use emboss_directional::EmbossDirectional;
 pub use equalize::Equalize;
+pub use euclidean_distance_transform::EuclideanDistanceTransform;
 pub use evaluate::{Evaluate, EvaluateOp};
 pub use exposure::Exposure;
 pub use extent::Extent;
