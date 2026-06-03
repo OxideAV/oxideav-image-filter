@@ -214,12 +214,20 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `ArcTan`. documented CLI: `-function <kind> args`.
 - **`Curves`** + **`Curve`** + **`CurveInterpolation`** — per-channel
   tonal curves through user-supplied `(x, y)` control points.
-  Three interpolants: `Linear` (segment-wise), `CatmullRom` (1974
-  Catmull-Rom cubic), and `MonotoneCubic` (1980 Fritsch-Carlson
-  monotonicity-preserving Hermite — default; never overshoots).
-  Master curve runs on every tone channel; optional `red` / `green`
-  / `blue` overrides on RGB / RGBA. Gray8 / RGB / RGBA + planar YUV
-  (master curve on luma only). Cost is `O(W·H)` (per-channel 256-LUT).
+  Four interpolants: `Linear` (segment-wise), `CatmullRom` (1974
+  Catmull-Rom cubic), `MonotoneCubic` (1980 Fritsch-Carlson
+  monotonicity-preserving Hermite — default; never overshoots), and
+  `NaturalCubic` (de Boor 1978 `C²` interpolant — single global
+  tridiagonal solve for per-knot second derivatives via the Thomas
+  1949 algorithm, with the "natural" boundary `P''(x_0) = P''(x_{n−1})
+  = 0`). The natural spline is the smoothest of the four (continuous
+  second derivative across knots), at the cost of overshoot risk —
+  pick `MonotoneCubic` when slider monotonicity must hold. JSON
+  factory aliases for the new mode: `"natural-cubic"`,
+  `"natural_cubic"`, `"natural"`. Master curve runs on every tone
+  channel; optional `red` / `green` / `blue` overrides on RGB / RGBA.
+  Gray8 / RGB / RGBA + planar YUV (master curve on luma only). Cost
+  is `O(W·H)` (per-channel 256-LUT).
 
 ### Tone mapping (HDR-style)
 

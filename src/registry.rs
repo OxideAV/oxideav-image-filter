@@ -4849,6 +4849,7 @@ fn make_curves(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
         .map(|s| match s {
             "linear" => CurveInterpolation::Linear,
             "catmull-rom" | "catmull_rom" | "catmullrom" => CurveInterpolation::CatmullRom,
+            "natural-cubic" | "natural_cubic" | "natural" => CurveInterpolation::NaturalCubic,
             _ => CurveInterpolation::MonotoneCubic,
         })
         .unwrap_or(CurveInterpolation::MonotoneCubic);
@@ -5984,6 +5985,26 @@ mod tests {
         assert!(r.is_err(), "scale = 0 should be rejected");
         let r2 = c.filters.make("edt", &json!({"scale": -1.0}), &inputs);
         assert!(r2.is_err(), "scale < 0 should be rejected");
+    }
+
+    #[test]
+    fn curves_factory_accepts_natural_cubic_mode_aliases() {
+        // r215: the JSON factory parser recognises three spellings for
+        // the natural-cubic mode in addition to the three pre-existing
+        // `linear` / `catmull-rom` / monotone-cubic-by-default values.
+        let c = ctx();
+        let inputs = [yuv_in_port()];
+        for mode in ["natural-cubic", "natural_cubic", "natural"] {
+            let r = c.filters.make(
+                "curves",
+                &json!({
+                    "master": [[0, 0], [128, 200], [255, 255]],
+                    "interpolation": mode,
+                }),
+                &inputs,
+            );
+            assert!(r.is_ok(), "curves mode={mode} failed: {:?}", r.err());
+        }
     }
 
     #[test]

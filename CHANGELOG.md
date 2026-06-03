@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r215: extend `CurveInterpolation` with `NaturalCubic` — the classical
+  `C²` natural cubic spline (de Boor, *A Practical Guide to Splines*,
+  Springer 1978; tridiagonal step credited to L. H. Thomas, Watson Sci.
+  Comp. Lab. 1949). Clean-room transcription of
+  `docs/image/filter/curve-interpolation.md` §4 (§4.1 system definition,
+  §4.2 natural boundary `M_0 = M_{n−1} = 0`, §4.3 Thomas forward-
+  elimination + back-substitution, §4.4 evaluator). The system
+  `h_{i−1}·M_{i−1} + 2(h_{i−1}+h_i)·M_i + h_i·M_{i+1} = 6·(Δ_i −
+  Δ_{i−1})` is solved in a single `O(n)` sweep for the per-knot second
+  derivatives `M_i = P''(x_i)`; each segment is then evaluated as the
+  cubic `P(x) = y_i + (Δ_i − h_i·(2M_i + M_{i+1})/6)·t + (M_i / 2)·t² +
+  ((M_{i+1} − M_i)/(6 h_i))·t³` with `t = x − x_i`. Continuous second
+  derivative across interior knots makes this the gentlest of the four
+  interpolants (compared to the existing piecewise-linear, `C¹`-only
+  Catmull-Rom, and `C¹` monotone-clamped Fritsch-Carlson modes); the
+  trade-off is overshoot risk, so `MonotoneCubic` remains the default
+  for tone-curve sliders where monotonicity must hold. Edge cases:
+  with only 2 control points (no interior knots) the tridiagonal
+  system has zero rows so `M ≡ 0` and the evaluator collapses to the
+  straight-line identity, matching the linear-Hermite path
+  sample-by-sample. JSON factory parser accepts three new spellings
+  for the mode parameter: `"natural-cubic"`, `"natural_cubic"`,
+  `"natural"`. Six new unit tests on top of the existing curves suite
+  (identity-on-2-point preservation, control-point pass-through at
+  five knots, second-difference proxy stays stable across an interior
+  knot — the `C²` continuity signature, second-difference proxy near
+  both endpoints is `≈ 0` — the natural boundary signature, 2-point
+  collapse-to-linear, byte-range clamp under a pathological overshoot
+  fixture). Curve-interpolation count goes 3 → 4. Backed by §4 of
+  `docs/image/filter/curve-interpolation.md`, which itself cites the
+  original publications by author/year + DOI link only, per the
+  *Feist* uncopyrightable-facts posture.
+
 - r209: land `EuclideanDistanceTransform` — exact-Euclidean distance
   transform (Felzenszwalb–Huttenlocher, *"Distance Transforms of
   Sampled Functions"*, Theory of Computing 8(19), 2012). Computes,

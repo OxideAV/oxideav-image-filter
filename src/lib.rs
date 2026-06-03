@@ -451,7 +451,10 @@
 //! - [`Curves`](curves::Curves) + [`Curve`](curves::Curve) +
 //!   [`CurveInterpolation`](curves::CurveInterpolation) — per-channel
 //!   tonal curves with Linear / Catmull-Rom / Fritsch-Carlson
-//!   monotone-cubic interpolation through user control points.
+//!   monotone-cubic / natural cubic spline interpolation through user
+//!   control points. r215 adds the `NaturalCubic` mode (de Boor 1978
+//!   `C²` interpolant with the Thomas tridiagonal solver per
+//!   `docs/image/filter/curve-interpolation.md` §4).
 //! - [`DistanceTransform`](distance_transform::DistanceTransform) —
 //!   3-4 chamfer (Borgefors 1986) two-pass binary-mask distance
 //!   transform; emits `Gray8`.
