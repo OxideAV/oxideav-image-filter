@@ -214,20 +214,31 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `ArcTan`. documented CLI: `-function <kind> args`.
 - **`Curves`** + **`Curve`** + **`CurveInterpolation`** — per-channel
   tonal curves through user-supplied `(x, y)` control points.
-  Four interpolants: `Linear` (segment-wise), `CatmullRom` (1974
-  Catmull-Rom cubic), `MonotoneCubic` (1980 Fritsch-Carlson
-  monotonicity-preserving Hermite — default; never overshoots), and
-  `NaturalCubic` (de Boor 1978 `C²` interpolant — single global
-  tridiagonal solve for per-knot second derivatives via the Thomas
-  1949 algorithm, with the "natural" boundary `P''(x_0) = P''(x_{n−1})
-  = 0`). The natural spline is the smoothest of the four (continuous
-  second derivative across knots), at the cost of overshoot risk —
-  pick `MonotoneCubic` when slider monotonicity must hold. JSON
-  factory aliases for the new mode: `"natural-cubic"`,
-  `"natural_cubic"`, `"natural"`. Master curve runs on every tone
-  channel; optional `red` / `green` / `blue` overrides on RGB / RGBA.
-  Gray8 / RGB / RGBA + planar YUV (master curve on luma only). Cost
-  is `O(W·H)` (per-channel 256-LUT).
+  Five interpolants: `Linear` (segment-wise), `CatmullRom` (1974
+  Catmull-Rom cubic, uniform `α = 0` parameterisation),
+  `MonotoneCubic` (1980 Fritsch-Carlson monotonicity-preserving
+  Hermite — default; never overshoots), `NaturalCubic` (de Boor 1978
+  `C²` interpolant — single global tridiagonal solve for per-knot
+  second derivatives via the Thomas 1949 algorithm, with the
+  "natural" boundary `P''(x_0) = P''(x_{n−1}) = 0`), and
+  `CentripetalCatmullRom` (Yuksel, Schaefer & Keyser 2011, `α = 0.5`
+  non-uniform Catmull-Rom — Barry-Goldman three-term tangent
+  `m_i = (p_{i+1} − p_i)/(t_{i+1} − t_i) − (p_{i+1} − p_{i−1})/
+  (t_{i+1} − t_{i−1}) + (p_i − p_{i−1})/(t_i − t_{i−1})` with
+  inter-knot spacing `t_{i+1} − t_i = |p_{i+1} − p_i|^0.5`,
+  provably cusp / self-loop free). The natural spline is the
+  smoothest of the five (continuous second derivative across knots),
+  at the cost of overshoot risk; the centripetal variant gives the
+  cusp-free property in the same `C¹` Hermite family as the uniform
+  Catmull-Rom — pick `MonotoneCubic` when slider monotonicity must
+  hold. JSON factory aliases for the new mode: `"centripetal"`,
+  `"centripetal-catmull-rom"`, `"centripetal_catmull_rom"`,
+  `"centripetalcatmullrom"`, `"catmull-rom-centripetal"` (the
+  existing `"natural-cubic"` / `"natural_cubic"` / `"natural"`
+  aliases for `NaturalCubic` are unchanged). Master curve runs on
+  every tone channel; optional `red` / `green` / `blue` overrides on
+  RGB / RGBA. Gray8 / RGB / RGBA + planar YUV (master curve on luma
+  only). Cost is `O(W·H)` (per-channel 256-LUT).
 
 ### Tone mapping (HDR-style)
 

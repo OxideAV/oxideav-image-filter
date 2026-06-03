@@ -3,7 +3,7 @@
 //! "Curves" is the per-channel tonal-mapping primitive in every classical
 //! photo-editor. The user specifies a small set of control points
 //! `(x, y)` on `[0, 255]² → [0, 255]²` and the editor fits a smooth
-//! monotone curve through them. Four classic interpolants apply:
+//! monotone curve through them. Five classic interpolants apply:
 //!
 //! 1. **Linear** — straight segments between control points. Cheapest;
 //!    visible kinks at every knot.
@@ -11,7 +11,10 @@
 //!    tangents inferred from neighbours (Catmull, Rom — "A class of
 //!    local interpolating splines", Computer-Aided Geometric Design,
 //!    1974). Smooth but **not** monotone-safe (can overshoot below `0`
-//!    or above `1`).
+//!    or above `1`). Uniform parameterisation (`α = 0` of the
+//!    Yuksel et al. §3.3 family — every neighbour spacing is `1` so
+//!    the tangent collapses to half the chord between the surrounding
+//!    points).
 //! 3. **Monotone-cubic (Fritsch-Carlson)** — Fritsch, Carlson —
 //!    "Monotone Piecewise Cubic Interpolation", SIAM J. Numer. Anal.
 //!    17 (1980), §3 algorithm. Cubic Hermite with tangents adjusted so
@@ -33,8 +36,27 @@
 //!    cost of being **not** monotone-safe — it can overshoot just like
 //!    Catmull-Rom and should not be the default for tone-curve UIs
 //!    where slider monotonicity must hold.
+//! 5. **Centripetal Catmull-Rom** — the non-uniform Catmull-Rom variant
+//!    parameterised by `t_{i+1} − t_i = |p_{i+1} − p_i|^α` with
+//!    `α = 0.5` (Yuksel, Schaefer, Keyser — "Parameterization and
+//!    applications of Catmull-Rom curves", Computer-Aided Design 43(7),
+//!    2011 — provably free of cusps and self-intersections vs. uniform).
+//!    The Barry-Goldman per-knot tangent
+//!    `m_i = (p_{i+1} − p_i)/(t_{i+1} − t_i)
+//!           − (p_{i+1} − p_{i−1})/(t_{i+1} − t_{i−1})
+//!           + (p_i − p_{i−1})/(t_i − t_{i−1})`
+//!    is then fed into the cubic-Hermite evaluator scaled by the local
+//!    `x`-axis spacing `h_i = x_{i+1} − x_i`. Distinct from §3.1
+//!    uniform Catmull-Rom (`α = 0`) because the tangent denominators
+//!    track the inter-knot distance instead of dropping to plain
+//!    `1`, so knots that are tightly clustered along `x` no longer
+//!    induce the overshoot ripples uniform Catmull-Rom exhibits in
+//!    that regime; still not `C²` (the second derivative is only
+//!    continuous across the same knot when the spacing pattern
+//!    matches, so the §4 natural spline remains the gentlest of the
+//!    family on that axis).
 //!
-//! We implement all four under [`CurveInterpolation`] and apply the
+//! We implement all five under [`CurveInterpolation`] and apply the
 //! curve as a per-channel 256-entry LUT.
 //!
 //! Channels supported: a single `master` curve always runs on every
@@ -67,6 +89,20 @@ pub enum CurveInterpolation {
     /// gentle-curve work where C² visual smoothness matters more than
     /// strict monotone safety.
     NaturalCubic,
+    /// Centripetal Catmull-Rom — the `α = 0.5` non-uniform
+    /// Catmull-Rom parameterisation (Yuksel, Schaefer, Keyser —
+    /// "Parameterization and applications of Catmull-Rom curves",
+    /// Computer-Aided Design 43(7), 2011). Per-knot tangents are
+    /// the Barry-Goldman three-term form
+    /// `m_i = (p_{i+1} − p_i)/(t_{i+1} − t_i)
+    ///        − (p_{i+1} − p_{i−1})/(t_{i+1} − t_{i−1})
+    ///        + (p_i − p_{i−1})/(t_i − t_{i−1})`
+    /// with the inter-knot spacing `t_{i+1} − t_i =
+    /// |p_{i+1} − p_i|^0.5`. Provably free of cusps / self-loops
+    /// (the property that motivates centripetal in 2-D path work),
+    /// but still `C¹`-only and not monotone-safe (the §3 chord-style
+    /// tangents still allow overshoot below `y_min` / above `y_max`).
+    CentripetalCatmullRom,
 }
 
 /// A single tonal curve: an ordered list of `(input, output)` control
@@ -146,6 +182,96 @@ impl Curve {
                         0.0
                     } else {
                         (yr - yl) / dx
+                    };
+                }
+            }
+            CurveInterpolation::CentripetalCatmullRom => {
+                // §3.3 of `docs/image/filter/curve-interpolation.md`:
+                // non-uniform knot parameterisation with α = 0.5 plus
+                // the Barry-Goldman three-term tangent. The knot
+                // spacing `Δt_i = |p_{i+1} − p_i|^α` uses 2-D point
+                // distance (x and y both contribute) — the chord
+                // length, not the x-spacing — which is what makes the
+                // centripetal form provably cusp-free per Yuksel et
+                // al. 2011. One-sided / phantom-knot tangents at the
+                // two boundaries (i = 0 and i = n − 1) follow the
+                // §3.1 convention of duplicating the endpoint
+                // (`p_{−1} = p_0`, `p_n = p_{n−1}`), which makes the
+                // missing knot-spacing `0` and degenerates the
+                // boundary tangent to the secant slope of the
+                // adjacent interior segment in `x` (matching the
+                // linear-Hermite identity on a 2-point ramp).
+                const ALPHA: f32 = 0.5;
+                let knot_spacing = |a: (f32, f32), b: (f32, f32)| -> f32 {
+                    let dx = b.0 - a.0;
+                    let dy = b.1 - a.1;
+                    let chord = (dx * dx + dy * dy).sqrt();
+                    chord.powf(ALPHA)
+                };
+                // Numerator vector and divisor — operating on the y
+                // coordinate alone since the LUT only stores y(x);
+                // dividing by the x-axis interval reconverts the
+                // Barry-Goldman per-knot derivative `dp / dt` into a
+                // tangent `dy / dx` consumable by the Hermite basis
+                // of §1, which already scales by `h_i = x_{i+1} −
+                // x_i`. Defensive guards on the divisors keep
+                // duplicate / coincident knots (`Δt = 0`) from
+                // producing NaNs.
+                for i in 0..n {
+                    let (xl, yl) = if i == 0 { pts[0] } else { pts[i - 1] };
+                    let (xc, yc) = pts[i];
+                    let (xr, yr) = if i + 1 == n { pts[n - 1] } else { pts[i + 1] };
+                    let dt_left = knot_spacing((xl, yl), (xc, yc));
+                    let dt_right = knot_spacing((xc, yc), (xr, yr));
+                    let dt_span = dt_left + dt_right;
+                    // Boundary one-sided collapse: at i = 0 the left
+                    // span is 0 so the first and third Barry-Goldman
+                    // terms drop out and the tangent is the right
+                    // secant slope; symmetric collapse at i = n − 1.
+                    let dy_dt = if i == 0 {
+                        if dt_right < 1.0e-9 {
+                            0.0
+                        } else {
+                            (yr - yc) / dt_right
+                        }
+                    } else if i == n - 1 {
+                        if dt_left < 1.0e-9 {
+                            0.0
+                        } else {
+                            (yc - yl) / dt_left
+                        }
+                    } else if dt_left < 1.0e-9 || dt_right < 1.0e-9 || dt_span < 1.0e-9 {
+                        0.0
+                    } else {
+                        (yr - yc) / dt_right - (yr - yl) / dt_span + (yc - yl) / dt_left
+                    };
+                    // Hermite basis in §1 expects `m_i = dy/dx` and
+                    // multiplies by `h_i = x_{i+1} − x_i`. Convert
+                    // `dy/dt` to `dy/dx` by scaling by `dx/dt`, with
+                    // `dx/dt = (x_right − x_left) / (Δt_left +
+                    // Δt_right)` — the chain rule. Endpoint cases
+                    // fold to the one-sided ratio.
+                    let dx_dt = if i == 0 {
+                        if dt_right < 1.0e-9 {
+                            0.0
+                        } else {
+                            (xr - xc) / dt_right
+                        }
+                    } else if i == n - 1 {
+                        if dt_left < 1.0e-9 {
+                            0.0
+                        } else {
+                            (xc - xl) / dt_left
+                        }
+                    } else if dt_span < 1.0e-9 {
+                        0.0
+                    } else {
+                        (xr - xl) / dt_span
+                    };
+                    tangents[i] = if dx_dt.abs() < 1.0e-9 {
+                        0.0
+                    } else {
+                        dy_dt / dx_dt
                     };
                 }
             }
@@ -797,5 +923,158 @@ mod tests {
         assert!((out.planes[0].data[0] as i32 - 50).abs() <= 1);
         assert_eq!(out.planes[1].data, u_data);
         assert_eq!(out.planes[2].data, v_data);
+    }
+
+    // ---------- r226: Centripetal Catmull-Rom (§3.3 of
+    // docs/image/filter/curve-interpolation.md) ----------
+
+    #[test]
+    fn centripetal_passes_through_control_points() {
+        // Interpolation property: every interpolant in §1–§4 of the
+        // reference doc passes through the supplied control points
+        // exactly (within u8 round-off). Five-knot fixture exercising
+        // both interior and boundary knots.
+        let pts = [(0u8, 0u8), (50, 30), (120, 210), (200, 90), (255, 255)];
+        let curve = Curve::new(pts);
+        let lut = curve.build_lut(CurveInterpolation::CentripetalCatmullRom);
+        for (x, y) in pts {
+            let got = lut[x as usize];
+            assert!(
+                (got as i16 - y as i16).abs() <= 1,
+                "centripetal at x={x}: got {got}, expected {y}",
+            );
+        }
+    }
+
+    #[test]
+    fn centripetal_two_points_is_straight_line() {
+        // Two endpoints only ⇒ no interior knots ⇒ the Barry-Goldman
+        // boundary tangents collapse to the right / left secant of the
+        // single segment so the cubic-Hermite path coincides with the
+        // straight-line linear identity. Verify against the linear LUT
+        // sample-by-sample.
+        let curve = Curve::new([(0, 0), (255, 200)]);
+        let lin = curve.build_lut(CurveInterpolation::Linear);
+        let cen = curve.build_lut(CurveInterpolation::CentripetalCatmullRom);
+        for (i, (a, b)) in lin.iter().zip(cen.iter()).enumerate() {
+            assert!(
+                (*a as i16 - *b as i16).abs() <= 1,
+                "centripetal ≠ linear on 2-point ramp at x={i}: linear={a} centripetal={b}",
+            );
+        }
+    }
+
+    #[test]
+    fn centripetal_clamps_to_byte_range() {
+        // Like the natural-cubic / Catmull-Rom variants, centripetal
+        // is not monotone-safe and can overshoot below 0 or above 255
+        // on pathological control sets; verify the byte-quantised LUT
+        // stays in range (no NaN cast, no panic) under such a fixture.
+        let curve = Curve::new([(0, 0), (50, 5), (60, 250), (200, 5), (255, 255)]);
+        let lut = curve.build_lut(CurveInterpolation::CentripetalCatmullRom);
+        // u8 cannot represent out-of-range — the bound is implicit;
+        // touch every entry to make sure the LUT was actually built.
+        let mut acc: u32 = 0;
+        for &v in lut.iter() {
+            acc += v as u32;
+        }
+        // Some positive coverage; the s-curve fixture should not all-zero.
+        assert!(acc > 0);
+    }
+
+    #[test]
+    fn centripetal_identity_under_collinear_control_points() {
+        // §3.3 (Yuksel et al. 2011) cusp-free property degenerates to
+        // a straight line on perfectly collinear control points (every
+        // tangent is along the same direction so the cubic Hermite
+        // segments collapse to chord-following lines). Three points
+        // on `y = x` should reproduce the linear LUT to within u8.
+        let curve = Curve::new([(0, 0), (127, 127), (255, 255)]);
+        let lin = curve.build_lut(CurveInterpolation::Linear);
+        let cen = curve.build_lut(CurveInterpolation::CentripetalCatmullRom);
+        for (i, (a, b)) in lin.iter().zip(cen.iter()).enumerate() {
+            assert!(
+                (*a as i16 - *b as i16).abs() <= 1,
+                "centripetal ≠ identity on collinear knots at x={i}: linear={a} centripetal={b}",
+            );
+        }
+    }
+
+    #[test]
+    fn centripetal_differs_from_uniform_catmull_rom_on_uneven_knots() {
+        // The motivating contrast in §3.3 is exactly this: with
+        // unevenly-spaced knots the uniform Catmull-Rom (α = 0) and
+        // centripetal (α = 0.5) interpolants disagree somewhere in
+        // the interior. A fixture with a single tightly-clustered
+        // (60, 230) knot between widely-spaced neighbours must
+        // produce at least one LUT entry where uniform and
+        // centripetal differ by more than the trivial 1-LSB
+        // round-off (otherwise the new mode is silently identical to
+        // the old one and the test would not exercise it).
+        let curve = Curve::new([(0, 0), (10, 5), (60, 230), (180, 60), (255, 255)]);
+        let uni = curve.build_lut(CurveInterpolation::CatmullRom);
+        let cen = curve.build_lut(CurveInterpolation::CentripetalCatmullRom);
+        let mut max_delta: i16 = 0;
+        for (a, b) in uni.iter().zip(cen.iter()) {
+            let delta = (*a as i16 - *b as i16).abs();
+            if delta > max_delta {
+                max_delta = delta;
+            }
+        }
+        assert!(
+            max_delta > 1,
+            "centripetal must differ from uniform Catmull-Rom on uneven knots; \
+             max |delta| = {max_delta}",
+        );
+    }
+
+    #[test]
+    fn centripetal_uniform_knots_match_uniform_catmull_rom() {
+        // Symmetric reverse of the preceding case: with evenly-spaced
+        // knots (`Δx` constant) the centripetal parameterisation
+        // `t_{i+1} − t_i = |Δp|^0.5` is the same scalar at every
+        // interval (since |Δp| differs only by the constant `y`
+        // component → still the same constant in x ↔ x cases) and
+        // the per-knot tangent collapses to the same Barry-Goldman
+        // three-term expression evaluated at unit spacing — which is
+        // the §3.1 uniform tangent. Verify the two LUTs agree on a
+        // four-uniform-knot fixture (|delta| ≤ 1 LSB).
+        let curve = Curve::new([(0, 0), (85, 85), (170, 170), (255, 255)]);
+        let uni = curve.build_lut(CurveInterpolation::CatmullRom);
+        let cen = curve.build_lut(CurveInterpolation::CentripetalCatmullRom);
+        for (i, (a, b)) in uni.iter().zip(cen.iter()).enumerate() {
+            assert!(
+                (*a as i16 - *b as i16).abs() <= 1,
+                "uniform = centripetal expected on uniform fixture at x={i}: uni={a} cen={b}",
+            );
+        }
+    }
+
+    #[test]
+    fn centripetal_handles_clustered_knot_without_panic() {
+        // §3.3 cusp-free property motivates the chord-length-based
+        // knot spacing, which keeps every divisor strictly positive
+        // even when the x-axis spacing collapses toward zero (the
+        // pathology that makes the uniform Catmull-Rom tangent blow
+        // up). We do not assert the centripetal LUT is "smoother"
+        // than uniform on every fixture — byte quantisation and the
+        // 1-D-along-x degeneracy can leave both close numerically —
+        // but a tightly-clustered knot fixture must build a valid
+        // [0, 255]-clamped LUT in both modes with no panic and no
+        // NaN cast. Touch every entry to confirm the LUT is fully
+        // populated.
+        let curve = Curve::new([(0, 0), (58, 50), (60, 230), (62, 60), (255, 255)]);
+        let cen = curve.build_lut(CurveInterpolation::CentripetalCatmullRom);
+        let uni = curve.build_lut(CurveInterpolation::CatmullRom);
+        let mut acc_cen: u32 = 0;
+        let mut acc_uni: u32 = 0;
+        for i in 0..=255usize {
+            acc_cen += cen[i] as u32;
+            acc_uni += uni[i] as u32;
+        }
+        // Some positive coverage in both LUTs (255 control points
+        // ensure non-zero tail).
+        assert!(acc_cen > 0);
+        assert!(acc_uni > 0);
     }
 }

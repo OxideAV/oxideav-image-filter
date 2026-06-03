@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r226: extend `CurveInterpolation` with `CentripetalCatmullRom` — the
+  `α = 0.5` non-uniform Catmull-Rom variant per §3.3 of
+  `docs/image/filter/curve-interpolation.md` (Yuksel, Schaefer, Keyser,
+  *"Parameterization and applications of Catmull-Rom curves,"*
+  Computer-Aided Design 43(7):747–755, 2011 — the centripetal analysis
+  on top of the classical 1974 Catmull-Rom construction). Per-knot
+  spacing is the chord-length raised to `0.5`,
+  `t_{i+1} − t_i = |p_{i+1} − p_i|^0.5`; the per-knot derivative comes
+  from the Barry-Goldman three-term form
+  `dy/dt = (y_{i+1} − y_i)/(t_{i+1} − t_i)
+         − (y_{i+1} − y_{i−1})/(t_{i+1} − t_{i−1})
+         + (y_i − y_{i−1})/(t_i − t_{i−1})`, then chain-rule-converted
+  to the `dy/dx` tangent the cubic Hermite basis expects via the
+  matching `dx/dt = (x_{i+1} − x_{i−1})/(t_{i+1} − t_{i−1})` ratio.
+  Boundary tangents collapse to the one-sided secant of the adjacent
+  segment (one-sided phantom-knot duplication as in §3.1 of the
+  reference doc), so a 2-point fixture reproduces the linear identity
+  byte-for-byte. Distinct from the existing uniform `CatmullRom` mode
+  (`α = 0` in the same §3.3 family) because the tangent denominators
+  track inter-knot distance rather than dropping to plain `1`, so the
+  characteristic overshoot ripples of uniform Catmull-Rom around
+  tightly-clustered control points are bounded — the cusp / self-loop
+  property motivating Yuksel et al. — while keeping the same `C¹`
+  continuity. Still not monotone-safe (the cusp-free property does not
+  forbid `y`-axis overshoot below `y_min` or above `y_max`); the
+  textbook tone-curve default remains `MonotoneCubic`. JSON factory
+  parser accepts five new spellings for the mode parameter:
+  `"centripetal"`, `"centripetal-catmull-rom"`,
+  `"centripetal_catmull_rom"`, `"centripetalcatmullrom"`,
+  `"catmull-rom-centripetal"`; unknown spellings continue to fall back
+  to the default `MonotoneCubic` so existing JSON jobs are unaffected.
+  Seven new unit tests on top of the existing curves suite
+  (`centripetal_passes_through_control_points` — interpolation property,
+  `centripetal_two_points_is_straight_line` — 2-point collapse to the
+  linear identity, `centripetal_clamps_to_byte_range` — pathological
+  overshoot fixture stays inside `[0, 255]` byte quantisation,
+  `centripetal_identity_under_collinear_control_points` — collinear
+  knots reproduce the linear identity inside the cusp-free family,
+  `centripetal_differs_from_uniform_catmull_rom_on_uneven_knots` — the
+  new mode is not silently identical to the uniform default,
+  `centripetal_uniform_knots_match_uniform_catmull_rom` — symmetric
+  reverse: evenly-spaced knots have `Δt` constant so the centripetal
+  tangent collapses to the §3.1 uniform form, and
+  `centripetal_handles_clustered_knot_without_panic` — chord-based
+  divisor never collapses to zero even at tightly-clustered x knots).
+  One new registry test (`curves_factory_accepts_centripetal_mode_aliases`
+  walks all five spellings). Curve-interpolation count goes 4 → 5.
+  Backed by §3.3 of `docs/image/filter/curve-interpolation.md`, which
+  itself cites the original publication (Yuksel et al. 2011 with DOI
+  link only), per the *Feist* uncopyrightable-facts posture.
+
 - r220: extend `DistanceTransform` with a runtime-selectable chamfer
   kernel via the new `ChamferKind` enum + `with_kind` builder. Clean-
   room transcription of `docs/image/filter/distance-transform.md` §3.2,

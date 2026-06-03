@@ -4850,6 +4850,13 @@ fn make_curves(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
             "linear" => CurveInterpolation::Linear,
             "catmull-rom" | "catmull_rom" | "catmullrom" => CurveInterpolation::CatmullRom,
             "natural-cubic" | "natural_cubic" | "natural" => CurveInterpolation::NaturalCubic,
+            // r226: centripetal Catmull-Rom (Yuksel et al. 2011, α = 0.5)
+            // — §3.3 of `docs/image/filter/curve-interpolation.md`.
+            "centripetal"
+            | "centripetal-catmull-rom"
+            | "centripetal_catmull_rom"
+            | "centripetalcatmullrom"
+            | "catmull-rom-centripetal" => CurveInterpolation::CentripetalCatmullRom,
             _ => CurveInterpolation::MonotoneCubic,
         })
         .unwrap_or(CurveInterpolation::MonotoneCubic);
@@ -6018,6 +6025,34 @@ mod tests {
         let c = ctx();
         let inputs = [yuv_in_port()];
         for mode in ["natural-cubic", "natural_cubic", "natural"] {
+            let r = c.filters.make(
+                "curves",
+                &json!({
+                    "master": [[0, 0], [128, 200], [255, 255]],
+                    "interpolation": mode,
+                }),
+                &inputs,
+            );
+            assert!(r.is_ok(), "curves mode={mode} failed: {:?}", r.err());
+        }
+    }
+
+    #[test]
+    fn curves_factory_accepts_centripetal_mode_aliases() {
+        // r226: the JSON factory parser gains five spelling aliases for
+        // the centripetal Catmull-Rom mode (Yuksel et al. 2011, α = 0.5)
+        // — §3.3 of `docs/image/filter/curve-interpolation.md`. All
+        // spellings must build a valid filter (each alias is the same
+        // CurveInterpolation::CentripetalCatmullRom value internally).
+        let c = ctx();
+        let inputs = [yuv_in_port()];
+        for mode in [
+            "centripetal",
+            "centripetal-catmull-rom",
+            "centripetal_catmull_rom",
+            "centripetalcatmullrom",
+            "catmull-rom-centripetal",
+        ] {
             let r = c.filters.make(
                 "curves",
                 &json!({
