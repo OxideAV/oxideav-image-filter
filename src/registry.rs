@@ -4864,11 +4864,12 @@ fn make_curves(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
 }
 
 fn make_distance_transform(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
-    use crate::DistanceTransform;
+    use crate::{ChamferKind, DistanceTransform};
     let p = params.as_object();
     let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
     let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
     let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
     let threshold = get_u64("threshold").unwrap_or(128).min(255) as u8;
     let mut f = DistanceTransform::new(threshold);
     if let Some(inv) = get_bool("invert") {
@@ -4876,6 +4877,28 @@ fn make_distance_transform(params: &Value, inputs: &[PortSpec]) -> Result<Box<dy
     }
     if let Some(s) = get_f64("scale") {
         f = f.with_scale(s as f32);
+    }
+    // r220: pick a chamfer kernel from
+    // `docs/image/filter/distance-transform.md` §3.2. Accepts a `kind`
+    // or `kernel` key for spelling preference; both fall back to the
+    // historical 3-4 default.
+    let kind_str = get_str("kind").or_else(|| get_str("kernel"));
+    if let Some(s) = kind_str {
+        let kind = match s.to_ascii_lowercase().as_str() {
+            "chamfer-3-4" | "chamfer34" | "3-4" | "34" => ChamferKind::Chamfer34,
+            "chamfer-5-7-11" | "chamfer5711" | "5-7-11" | "5711" => ChamferKind::Chamfer5711,
+            "city-block" | "cityblock" | "manhattan" | "l1" => ChamferKind::CityBlock,
+            "chessboard" | "chebyshev" | "l-infinity" | "linfinity" | "linf" => {
+                ChamferKind::Chessboard
+            }
+            other => {
+                return Err(Error::invalid(format!(
+                    "distance-transform: unknown kind {other:?} (expected \
+                     chamfer-3-4 / chamfer-5-7-11 / city-block / chessboard)"
+                )));
+            }
+        };
+        f = f.with_kind(kind);
     }
     let in_port = video_in_port(inputs);
     // Force the output port to Gray8 — DistanceTransform always emits
@@ -6021,6 +6044,66 @@ mod tests {
             .expect("sharpen factory");
         assert_eq!(f.input_ports().len(), 1);
         assert_eq!(f.output_ports().len(), 1);
+    }
+
+    #[test]
+    fn distance_transform_factory_accepts_kind_aliases() {
+        // r220: the `kind` (or `kernel`) parameter accepts every
+        // chamfer variant transcribed in
+        // `docs/image/filter/distance-transform.md` §3.2.
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        for kind in [
+            "chamfer-3-4",
+            "chamfer34",
+            "3-4",
+            "34",
+            "chamfer-5-7-11",
+            "chamfer5711",
+            "5-7-11",
+            "5711",
+            "city-block",
+            "cityblock",
+            "manhattan",
+            "l1",
+            "chessboard",
+            "chebyshev",
+            "l-infinity",
+            "linfinity",
+            "linf",
+        ] {
+            let r = c
+                .filters
+                .make("distance-transform", &json!({"kind": kind}), &inputs);
+            assert!(r.is_ok(), "kind={kind} should parse: {:?}", r.err());
+            // Verify the `kernel` spelling works too — registry should
+            // accept either key.
+            let r2 = c
+                .filters
+                .make("distance-transform", &json!({"kernel": kind}), &inputs);
+            assert!(r2.is_ok(), "kernel={kind} should parse: {:?}", r2.err());
+        }
+    }
+
+    #[test]
+    fn distance_transform_factory_rejects_unknown_kind() {
+        // Unknown kernel strings must surface as a factory-level error
+        // rather than silently falling back to the default.
+        let c = ctx();
+        let inputs = [gray_in_port(8, 8)];
+        let r = c.filters.make(
+            "distance-transform",
+            &json!({"kind": "not-a-kernel"}),
+            &inputs,
+        );
+        let err = match r {
+            Ok(_) => panic!("unknown kind should be rejected"),
+            Err(e) => format!("{e}"),
+        };
+        assert!(
+            err.contains("not-a-kernel"),
+            "error message should mention the offending value, got: {err}"
+        );
     }
 
     #[test]

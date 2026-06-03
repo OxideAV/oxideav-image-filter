@@ -455,9 +455,15 @@
 //!   control points. r215 adds the `NaturalCubic` mode (de Boor 1978
 //!   `C²` interpolant with the Thomas tridiagonal solver per
 //!   `docs/image/filter/curve-interpolation.md` §4).
-//! - [`DistanceTransform`](distance_transform::DistanceTransform) —
-//!   3-4 chamfer (Borgefors 1986) two-pass binary-mask distance
-//!   transform; emits `Gray8`.
+//! - [`DistanceTransform`](distance_transform::DistanceTransform) +
+//!   [`ChamferKind`](distance_transform::ChamferKind) — two-pass
+//!   integer chamfer (Borgefors 1986) binary-mask distance transform
+//!   with a runtime-selectable kernel: 3-4 (default), 5-7-11
+//!   (knight-move-augmented, closer Euclidean), city-block
+//!   (L1 / Manhattan; Rosenfeld & Pfaltz 1966), and chessboard
+//!   (L∞ / Chebyshev). r220 generalises the original hard-coded 3-4
+//!   path per `docs/image/filter/distance-transform.md` §3.2.
+//!   Emits `Gray8`.
 //! - [`Cyanotype`](cyanotype::Cyanotype) — vintage blueprint colour
 //!   remap between configurable shadow / highlight endpoints
 //!   (defaults to Prussian blue → paper white).
@@ -685,7 +691,7 @@ pub use deskew::Deskew;
 pub use despeckle::Despeckle;
 pub use difference::Difference;
 pub use displacement_map::DisplacementMap;
-pub use distance_transform::DistanceTransform;
+pub use distance_transform::{ChamferKind, DistanceTransform};
 pub use distort::Distort;
 pub use dither::{BayerMatrix, DiffusionKernel, Dither, DitherMode};
 pub use drago::Drago;

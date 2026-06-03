@@ -260,14 +260,29 @@ physically-meaningful luminance.
 
 ### Distance / signed-distance
 
-- **`DistanceTransform`** — Borgefors 1986 3-4 chamfer distance
-  transform. Two sequential passes (forward top-left → bottom-right,
-  backward bottom-right → top-left) compute the chamfer-3-4 metric
-  on a binary mask thresholded from the input intensity. Output is
-  `Gray8` whose value is the (scaled, clamped) distance from each
-  pixel to the nearest foreground pixel; useful for stroke
+- **`DistanceTransform`** + **`ChamferKind`** — Borgefors 1986 two-pass
+  chamfer distance transform with a runtime-selectable kernel. Two
+  sequential passes (forward top-left → bottom-right, backward
+  bottom-right → top-left) propagate one of four integer chamfer
+  metrics on a binary mask thresholded from the input intensity:
+  - `Chamfer34` (default) — 3-4 mask (orthogonal=3, diagonal=4,
+    divisor=3); ~8% Euclidean error.
+  - `Chamfer5711` — 5-7-11 mask with knight-move (±1,±2)/(±2,±1)
+    neighbours weighted 11 (orthogonal=5, diagonal=7, divisor=5);
+    ~2% Euclidean error, the closer integer approximation in the
+    reference table.
+  - `CityBlock` — orthogonal-only mask weighted 1 (L1 / Manhattan
+    metric; Rosenfeld & Pfaltz 1966).
+  - `Chessboard` — orthogonal + diagonal both weighted 1 (L∞ /
+    Chebyshev metric).
+
+  Output is `Gray8` whose value is the (scaled, clamped) distance from
+  each pixel to the nearest foreground pixel; useful for stroke
   thickening, signed-distance fields, contour render. Gray8 input
-  only. Factory aliases: `distance-transform`, `distance`.
+  only. Factory aliases: `distance-transform`, `distance` (JSON
+  `kind` / `kernel` keys accept `chamfer-3-4`, `chamfer-5-7-11`,
+  `city-block`, `chessboard` — and the metric-name spellings
+  `manhattan` / `l1` / `chebyshev` / `l-infinity`).
 - **`EuclideanDistanceTransform`** — exact-Euclidean distance
   transform (Felzenszwalb–Huttenlocher 2012). Squared distance is
   the lower envelope of upward parabolas `(p − q)² + f(q)`, one per

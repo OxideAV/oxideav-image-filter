@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r220: extend `DistanceTransform` with a runtime-selectable chamfer
+  kernel via the new `ChamferKind` enum + `with_kind` builder. Clean-
+  room transcription of `docs/image/filter/distance-transform.md` §3.2,
+  generalising the original hard-coded 3-4 mask (Borgefors,
+  *Distance transformations in digital images*, CVGIP 34, 1986) to
+  every kernel in the reference table:
+  - `Chamfer34` (existing default, divisor `a = 3`).
+  - `Chamfer5711` — 5-7-11 mask: orthogonal = 5, diagonal = 7,
+    knight-move (±1, ±2) / (±2, ±1) = 11 (`a = 5`). The doc's "better
+    than 3-4" entry; per-step diagonal ratio `7 / 5 = 1.4` vs the true
+    `√2 ≈ 1.414` (3-4 reports `4 / 3 ≈ 1.333`).
+  - `CityBlock` — exact L1 / Manhattan metric (orthogonal-only mask
+    weighted `1`; `a = 1`); trace ultimately to A. Rosenfeld &
+    J. L. Pfaltz, *Sequential operations in digital picture processing*,
+    J. ACM 13(4), 1966.
+  - `Chessboard` — exact L∞ / Chebyshev metric (orthogonal +
+    diagonal weight `1`; `a = 1`).
+  The propagation loop is refactored around a per-kernel `Offset =
+  (dx, dy, weight)` table (separate forward / backward halves keep
+  the two-pass raster invariant from doc §3.1), and the final divide
+  uses `ChamferKind::divisor()` so the rescale path stays branch-
+  free. The JSON factory (`distance-transform` / `distance`) gains a
+  `kind` (or `kernel`) parameter accepting `chamfer-3-4`,
+  `chamfer-5-7-11`, `city-block`, `chessboard`, plus the metric-name
+  spellings `manhattan` / `l1` / `chebyshev` / `l-infinity` / `linf`;
+  unknown values surface as an `Error::invalid` rather than silently
+  falling back. Backwards-compatible: the historical builder API
+  (`DistanceTransform::new(threshold)` + `with_invert` / `with_scale`)
+  and the factory default both still pick `Chamfer34`, so existing
+  callers and JSON jobs are unaffected. Seven new unit tests on top
+  of the existing distance-transform suite (`city_block_is_l1_metric`
+  checks L1 = `|dx| + |dy|`, `chessboard_is_linf_metric` checks
+  L∞ = `max(|dx|, |dy|)`, `chamfer_5_7_11_diagonal_is_closer_to_euclid`
+  bounds the 5-7-11 estimate above the 3-4 estimate and below `√2`,
+  `chamfer_5_7_11_knight_move_uses_weight_11` verifies the
+  `11 / 5 → 2 px` rescale on a (±1, ±2) neighbour, `divisor_table`
+  pins the published `a` weights, `foreground_pixel_zero_under_every_kernel`
+  enforces the seed-pixel invariant across all four kernels, and
+  `city_block_distance_is_separable_sum` checks a non-axial L1
+  sample). Two new registry tests
+  (`distance_transform_factory_accepts_kind_aliases` walks all 17
+  spellings under both the `kind` and `kernel` keys;
+  `distance_transform_factory_rejects_unknown_kind` asserts the
+  unknown-kernel error path). Kernel count goes 1 → 4. Backed by §3
+  of `docs/image/filter/distance-transform.md`.
+
 - r215: extend `CurveInterpolation` with `NaturalCubic` — the classical
   `C²` natural cubic spline (de Boor, *A Practical Guide to Splines*,
   Springer 1978; tridiagonal step credited to L. H. Thomas, Watson Sci.
