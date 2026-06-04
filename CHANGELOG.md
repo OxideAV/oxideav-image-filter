@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r231: extend `CurveInterpolation` with `ChordalCatmullRom` — the
+  `α = 1` non-uniform Catmull-Rom variant per §3.3 of
+  `docs/image/filter/curve-interpolation.md` (Yuksel, Schaefer, Keyser,
+  *"Parameterization and applications of Catmull-Rom curves,"*
+  Computer-Aided Design 43(7):747–755, 2011 — the third and final member
+  of the alpha-parameterised family after the existing uniform
+  (`CatmullRom`, `α = 0`) and centripetal (`CentripetalCatmullRom`,
+  `α = 0.5`) modes). Per-knot spacing is the raw chord length
+  `t_{i+1} − t_i = |p_{i+1} − p_i|` (the centripetal case's
+  fractional `^0.5` exponent dropped to plain `1`); the
+  Barry-Goldman three-term tangent shape is unchanged. To avoid
+  duplicating the centripetal implementation the r231 patch refactors
+  the centripetal arm into a shared `Curve::alpha_catmull_rom_tangents`
+  helper parameterised by the `α` exponent — the new chordal arm
+  calls into the same helper with `α = 1`, while the centripetal arm
+  still calls it with `α = 0.5`. Boundary tangents collapse to the
+  one-sided secant of the adjacent segment (one-sided phantom-knot
+  duplication as in §3.1 of the reference doc), so a 2-point fixture
+  reproduces the linear identity byte-for-byte. Distinct from both
+  existing siblings: the chord-length-based spacing is non-trivial
+  vs uniform (`Δt` = `1`) on uneven knots, and the raw-length
+  spacing is non-trivial vs centripetal (`Δt = √chord`) on the same
+  fixture; unlike centripetal the chordal mode does *not* inherit
+  the Yuksel et al. cusp-free property (that property holds for
+  `α ∈ (0, 1)`, with `α = 0.5` being the only scale-invariant
+  choice), so the centripetal variant remains the recommended
+  default for path work. Still `C¹` only and not monotone-safe; the
+  textbook tone-curve default stays `MonotoneCubic`. JSON factory
+  parser accepts five new spellings for the mode parameter:
+  `"chordal"`, `"chordal-catmull-rom"`, `"chordal_catmull_rom"`,
+  `"chordalcatmullrom"`, `"catmull-rom-chordal"`; unknown spellings
+  continue to fall back to the default `MonotoneCubic` so existing
+  JSON jobs are unaffected. Seven new unit tests on top of the
+  existing curves suite (`chordal_passes_through_control_points` —
+  interpolation property at five knots, `chordal_two_points_is_straight_line`
+  — 2-point collapse to the linear identity,
+  `chordal_clamps_to_byte_range` — pathological overshoot fixture
+  stays inside `[0, 255]` byte quantisation,
+  `chordal_identity_under_collinear_control_points` — collinear
+  knots reproduce the linear identity inside the §3.3 family,
+  `chordal_differs_from_uniform_catmull_rom_on_uneven_knots` — the
+  new mode is not silently identical to the uniform `α = 0` default
+  on uneven knots, `chordal_differs_from_centripetal_on_uneven_knots`
+  — the new mode is not silently identical to the centripetal
+  `α = 0.5` mode on the same fixture, and
+  `chordal_handles_clustered_knot_without_panic` — chord-based
+  divisor never collapses to zero even at tightly-clustered x knots
+  for `α = 1` either). One new registry test
+  (`curves_factory_accepts_chordal_mode_aliases` walks all five
+  spellings). Curve-interpolation count goes 5 → 6. Backed by §3.3
+  of `docs/image/filter/curve-interpolation.md`, which itself cites
+  the original publication (Yuksel et al. 2011 with DOI link only),
+  per the *Feist* uncopyrightable-facts posture.
+
 - r226: extend `CurveInterpolation` with `CentripetalCatmullRom` — the
   `α = 0.5` non-uniform Catmull-Rom variant per §3.3 of
   `docs/image/filter/curve-interpolation.md` (Yuksel, Schaefer, Keyser,

@@ -454,7 +454,11 @@
 //!   monotone-cubic / natural cubic spline interpolation through user
 //!   control points. r215 adds the `NaturalCubic` mode (de Boor 1978
 //!   `C²` interpolant with the Thomas tridiagonal solver per
-//!   `docs/image/filter/curve-interpolation.md` §4).
+//!   `docs/image/filter/curve-interpolation.md` §4); r226 adds the
+//!   `CentripetalCatmullRom` mode (Yuksel et al. 2011, α = 0.5 of the
+//!   §3.3 alpha-Catmull-Rom family); r231 adds the
+//!   `ChordalCatmullRom` mode (α = 1 of the same family — the third
+//!   and final §3.3 member after uniform `CatmullRom` and centripetal).
 //! - [`DistanceTransform`](distance_transform::DistanceTransform) +
 //!   [`ChamferKind`](distance_transform::ChamferKind) — two-pass
 //!   integer chamfer (Borgefors 1986) binary-mask distance transform

@@ -4857,6 +4857,13 @@ fn make_curves(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
             | "centripetal_catmull_rom"
             | "centripetalcatmullrom"
             | "catmull-rom-centripetal" => CurveInterpolation::CentripetalCatmullRom,
+            // r231: chordal Catmull-Rom (Yuksel et al. 2011, α = 1) —
+            // §3.3 of `docs/image/filter/curve-interpolation.md`.
+            "chordal"
+            | "chordal-catmull-rom"
+            | "chordal_catmull_rom"
+            | "chordalcatmullrom"
+            | "catmull-rom-chordal" => CurveInterpolation::ChordalCatmullRom,
             _ => CurveInterpolation::MonotoneCubic,
         })
         .unwrap_or(CurveInterpolation::MonotoneCubic);
@@ -6052,6 +6059,34 @@ mod tests {
             "centripetal_catmull_rom",
             "centripetalcatmullrom",
             "catmull-rom-centripetal",
+        ] {
+            let r = c.filters.make(
+                "curves",
+                &json!({
+                    "master": [[0, 0], [128, 200], [255, 255]],
+                    "interpolation": mode,
+                }),
+                &inputs,
+            );
+            assert!(r.is_ok(), "curves mode={mode} failed: {:?}", r.err());
+        }
+    }
+
+    #[test]
+    fn curves_factory_accepts_chordal_mode_aliases() {
+        // r231: the JSON factory parser gains five spelling aliases for
+        // the chordal Catmull-Rom mode (Yuksel et al. 2011, α = 1) —
+        // §3.3 of `docs/image/filter/curve-interpolation.md`. All
+        // spellings must build a valid filter (each alias is the same
+        // CurveInterpolation::ChordalCatmullRom value internally).
+        let c = ctx();
+        let inputs = [yuv_in_port()];
+        for mode in [
+            "chordal",
+            "chordal-catmull-rom",
+            "chordal_catmull_rom",
+            "chordalcatmullrom",
+            "catmull-rom-chordal",
         ] {
             let r = c.filters.make(
                 "curves",
