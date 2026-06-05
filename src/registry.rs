@@ -307,6 +307,14 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("reinhard", Box::new(make_reinhard));
     ctx.filters
         .register("tonemap-reinhard", Box::new(make_reinhard));
+    // r237: unkeyed white-clamping variant of the Reinhard operator
+    // (docs/image/filter/tone-mapping-operators.md §5.1).
+    ctx.filters
+        .register("reinhard-extended", Box::new(make_reinhard_extended));
+    ctx.filters.register(
+        "tonemap-reinhard-extended",
+        Box::new(make_reinhard_extended),
+    );
     ctx.filters.register("hable", Box::new(make_hable));
     ctx.filters.register("tonemap-hable", Box::new(make_hable));
     ctx.filters.register("uncharted2", Box::new(make_hable));
@@ -4771,6 +4779,26 @@ fn make_reinhard(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFi
     )))
 }
 
+fn make_reinhard_extended(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::ReinhardExtended;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    // Accept several spellings of the single parameter; absence or a
+    // non-positive value triggers the auto-L_max mode per §5.1.
+    let l_white = get_f64("l_white")
+        .or_else(|| get_f64("white"))
+        .or_else(|| get_f64("white_point"))
+        .unwrap_or(0.0) as f32;
+    let f = ReinhardExtended::new(l_white);
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 fn make_hable(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::Hable;
     let p = params.as_object();
@@ -5918,6 +5946,9 @@ mod tests {
             // cyanotype + alias).
             "reinhard",
             "tonemap-reinhard",
+            // r237 — unkeyed white-clamping Reinhard variant.
+            "reinhard-extended",
+            "tonemap-reinhard-extended",
             "hable",
             "tonemap-hable",
             "uncharted2",

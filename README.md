@@ -278,6 +278,20 @@ physically-meaningful luminance.
   maximum to the display maximum, adapting per frame. Chroma-
   preserving sRGB round-trip. Gray8 / RGB / RGBA. Factory aliases:
   `drago`, `tonemap-drago`.
+- **`ReinhardExtended`** — the unkeyed white-clamping form of the
+  Reinhard 2002 operator per
+  `docs/image/filter/tone-mapping-operators.md` §5.1: the same
+  `L · (1 + L/L_white²) / (1 + L)` curve as `Reinhard`'s extended
+  branch, but applied **without** the log-average key-scaling
+  pre-step. Single `l_white` parameter (linear luminance mapped to
+  pure white); when `l_white <= 0` the operator auto-picks
+  `L_white = L_max(frame)` so the brightest input pixel maps
+  exactly to `1`, matching the §5.1 default. Distinct from `Reinhard`
+  in that the curve is applied in a single pass without an
+  `L_avg`-accumulation pre-pass — useful when the caller already has
+  exposure-correct linear luminance. Chroma-preserving sRGB
+  round-trip; Gray8 / RGB / RGBA (YUV → `Unsupported`). Factory
+  aliases: `reinhard-extended`, `tonemap-reinhard-extended`.
 
 ### Distance / signed-distance
 

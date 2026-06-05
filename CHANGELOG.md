@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r237: add `ReinhardExtended` — the unkeyed white-clamping form of
+  the Reinhard 2002 tone-mapping operator per
+  `docs/image/filter/tone-mapping-operators.md` §5.1
+  (E. Reinhard, M. Stark, P. Shirley, J. Ferwerda, *"Photographic
+  Tone Reproduction for Digital Images,"* ACM TOG / SIGGRAPH 2002,
+  21(3):267–276 — §3.1 "Burn-out" curve, applied without the §3
+  log-average key-scaling pre-step). Implements
+  `L_d = L · (1 + L / L_white²) / (1 + L)` chroma-preservingly on
+  the de-gamma'd linear-light luminance and re-encodes through the
+  sRGB OETF. Single `l_white` parameter; `l_white <= 0` (the
+  default — also the result of constructing with `f32::NAN` or any
+  non-positive value) auto-picks the per-frame `L_max` so the
+  brightest input pixel maps exactly to `1`, matching the §5.1
+  recommendation. Distinct from the existing keyed `Reinhard`: no
+  log-average accumulation across the frame (single pass vs.
+  two-pass), no `key` knob — useful when the caller already has
+  exposure-correct linear luminance and just wants a soft highlight
+  clamp. Operates on `Rgb24`/`Rgba`/`Gray8`; YUV returns
+  `Unsupported` (same constraint as `Reinhard`). Registry exposes
+  two factory IDs `"reinhard-extended"` + `"tonemap-reinhard-extended"`
+  accepting `l_white`/`white`/`white_point` spellings of the
+  parameter. Eight new unit tests in `src/reinhard_extended.rs`
+  (`output_in_range` — RGB shape preservation,
+  `auto_white_brightest_pixel_reaches_white` — auto-`L_max` maps
+  the single brightest pixel exactly to encoded sRGB 255,
+  `black_input_stays_black` — zero-luminance frame stays zero,
+  `small_explicit_white_saturates_highlights_faster` — a small
+  explicit `l_white` lifts the dark stripe more than the auto
+  mode while not dimming highlights,
+  `explicit_white_equals_lmax_matches_auto_mode` — passing the
+  re-derived `L_max` explicitly is byte-equivalent to the auto
+  default, `non_positive_white_falls_back_to_auto` — `NaN` /
+  negative / zero all normalise to the auto sentinel including
+  through `with_white`, `alpha_preserved_on_rgba` — RGBA alpha
+  pass-through, `rejects_yuv` — YUV returns `Unsupported`).
 - r231: extend `CurveInterpolation` with `ChordalCatmullRom` — the
   `α = 1` non-uniform Catmull-Rom variant per §3.3 of
   `docs/image/filter/curve-interpolation.md` (Yuksel, Schaefer, Keyser,

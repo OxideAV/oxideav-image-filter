@@ -448,6 +448,15 @@
 //!   and `white` knobs.
 //! - [`Drago`](drago::Drago) — 2003 Drago et al. adaptive logarithmic
 //!   compression with `bias` parameter; chroma-preserving.
+//! - [`ReinhardExtended`](reinhard_extended::ReinhardExtended) — r237:
+//!   the unkeyed white-clamping form of the Reinhard 2002 operator
+//!   (`Ld = L · (1 + L / L_white²) / (1 + L)` per
+//!   `docs/image/filter/tone-mapping-operators.md` §5.1). Single
+//!   parameter `l_white` (linear luminance mapped to pure white);
+//!   `l_white <= 0` auto-picks the per-frame `L_max` so the brightest
+//!   input pixel maps exactly to 1. Distinct from the keyed `Reinhard`
+//!   in that it skips the log-average scaling pass — useful when the
+//!   caller already has exposure-correct linear luminance.
 //! - [`Curves`](curves::Curves) + [`Curve`](curves::Curve) +
 //!   [`CurveInterpolation`](curves::CurveInterpolation) — per-channel
 //!   tonal curves with Linear / Catmull-Rom / Fritsch-Carlson
@@ -619,6 +628,7 @@ pub mod quantize;
 pub mod radial_blur;
 pub mod registry;
 pub mod reinhard;
+pub mod reinhard_extended;
 pub mod resize;
 pub mod roberts;
 pub mod roll;
@@ -758,6 +768,7 @@ pub use quantize::Quantize;
 pub use radial_blur::RadialBlur;
 pub use registry::{__oxideav_entry, register};
 pub use reinhard::Reinhard;
+pub use reinhard_extended::ReinhardExtended;
 pub use resize::{Interpolation, Resize};
 pub use roberts::{Roberts, RobertsMagnitude};
 pub use roll::Roll;
