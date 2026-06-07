@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r248: add `ReinhardLocal` — the local "dodging-and-burning" variant
+  of the Reinhard 2002 tone-mapping operator per
+  `docs/image/filter/tone-mapping-operators.md` §3 (E. Reinhard,
+  M. Stark, P. Shirley, J. Ferwerda, *"Photographic Tone Reproduction
+  for Digital Images,"* ACM TOG / SIGGRAPH 2002, 21(3):267–276). The
+  global form's `1 + L` denominator is replaced with a
+  spatially-varying local average chosen per-pixel from a geometric
+  Gaussian centre / surround scale pyramid: at each scale `s_k = s_0
+  · 1.6^k` two Gaussian-blurred copies of the key-scaled luminance
+  are built — centre `V1` with `α_1 = 1/(2√2)`, surround `V2` with
+  `α_2 = 1.6·α_1` — and the §3.2 normalised difference
+  `V = (V1 − V2) / (2^φ · a / s² + V1)` is formed (`φ = 8`). §3.3
+  selects the largest scale for which `|V| < ε` (default `0.05`); a
+  high-contrast edge truncates the search to the finest scale so
+  local detail is preserved. §3.4 evaluates `Ld = L_s / (1 + V1(·,
+  s_m))` and chroma-preservingly re-modulates the original linear RGB
+  by `Ld / L_w` before re-encoding through the sRGB OETF.
+  Parameters: `key` (§2.1 `a`, default `0.18`), `phi` (§3.2,
+  default `8`), `epsilon` (§3.3, default `0.05`), `scales` (pyramid
+  depth, default `8`), `initial_scale` (`s_0`, default `1.0`). Builder
+  helpers normalise non-finite / non-positive values back to the paper
+  defaults. Operates on `Gray8` / `Rgb24` / `Rgba`; YUV returns
+  `Unsupported` (same constraint as `Reinhard` / `ReinhardExtended`).
+  Registry exposes three factory IDs `"reinhard-local"`,
+  `"tonemap-reinhard-local"`, and `"dodge-and-burn"` accepting `key`
+  (or `a`), `phi` (or `sharpening`), `epsilon` (or `eps` /
+  `threshold`), `scales` (or `levels`), and `initial_scale` (or `s0`).
+  Eight new unit tests in `src/reinhard_local.rs`
+  (`output_in_range_rgb` — shape preservation on an RGB gradient,
+  `black_input_stays_black` — zero-luminance frame stays zero,
+  `alpha_preserved_on_rgba` — RGBA alpha pass-through,
+  `rejects_yuv` — YUV → `Unsupported`,
+  `local_differs_from_global_on_edge` — local form must diverge from
+  the global form on a step edge (the textbook differentiating case),
+  `single_scale_reduces_to_simple_blur_division` — `scales = 1` still
+  produces a valid output,
+  `epsilon_zero_picks_smallest_scale` — vanishing ε forces the finest
+  scale and must not panic,
+  `constructor_normalises_nonfinite_key` — `NaN` / negative / zero `key`
+  fall back to the §2.1 `0.18` default,
+  `with_scales_zero_clamps_to_one` — pyramid depth `0` clamps to `1`,
+  `gray8_path_runs` — single-plane Gray8 falls back to the scalar form
+  cleanly).
 - r237: add `ReinhardExtended` — the unkeyed white-clamping form of
   the Reinhard 2002 tone-mapping operator per
   `docs/image/filter/tone-mapping-operators.md` §5.1

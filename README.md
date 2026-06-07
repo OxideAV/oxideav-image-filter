@@ -252,8 +252,8 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 
 ### Tone mapping (HDR-style)
 
-Global tone-mapping operators for high-contrast scenes; all do the
-sRGB ↔ linear-light round-trip internally so the curve runs on
+Global and local tone-mapping operators for high-contrast scenes; all
+do the sRGB ↔ linear-light round-trip internally so the curve runs on
 physically-meaningful luminance.
 
 - **`Reinhard`** — Reinhard, Stark, Shirley, Ferwerda 2002 SIGGRAPH
@@ -292,6 +292,28 @@ physically-meaningful luminance.
   exposure-correct linear luminance. Chroma-preserving sRGB
   round-trip; Gray8 / RGB / RGBA (YUV → `Unsupported`). Factory
   aliases: `reinhard-extended`, `tonemap-reinhard-extended`.
+- **`ReinhardLocal`** — the local "dodging-and-burning" variant of
+  the Reinhard 2002 operator per
+  `docs/image/filter/tone-mapping-operators.md` §3. The global form's
+  `1 + L` denominator is replaced with a spatially-varying local
+  average chosen per-pixel from a geometric Gaussian centre / surround
+  scale pyramid: at each scale `s_k = s_0 · 1.6^k` two Gaussian-
+  blurred versions of the key-scaled luminance are built (centre `V1`
+  with `α_1 = 1/(2√2)`, surround `V2` with `α_2 = 1.6 · α_1`), the
+  normalised difference `V(·, s) = (V1 − V2) / (2^φ · a / s² + V1)`
+  (§3.2; sharpening `φ = 8`) is formed, and for each pixel the
+  **largest** scale for which `|V| < ε` (§3.3; uniformity threshold
+  `ε ≈ 0.05`) is selected. The local tone curve is then `Ld = L_s /
+  (1 + V1(·, s_m))` (§3.4). A high-contrast edge inside the
+  neighbourhood drives `|V|` above ε so the scale search truncates to
+  the finest scale, preserving local detail the way a photographer's
+  dodge-and-burn does. Knobs: `key` (§2.1 `a`, default `0.18`),
+  `phi` (sharpening, default `8`), `epsilon` (threshold, default
+  `0.05`), `scales` (pyramid depth, default `8`),
+  `initial_scale` (`s_0`, default `1.0`). Chroma-preserving sRGB
+  round-trip; Gray8 / RGB / RGBA (YUV → `Unsupported`). Cost is
+  `O(W·H·K)` with `K` scales. Factory aliases: `reinhard-local`,
+  `tonemap-reinhard-local`, `dodge-and-burn`.
 
 ### Distance / signed-distance
 

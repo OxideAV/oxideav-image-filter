@@ -457,6 +457,21 @@
 //!   input pixel maps exactly to 1. Distinct from the keyed `Reinhard`
 //!   in that it skips the log-average scaling pass — useful when the
 //!   caller already has exposure-correct linear luminance.
+//! - [`ReinhardLocal`](reinhard_local::ReinhardLocal) — r248: the
+//!   local "dodging-and-burning" variant of the Reinhard 2002
+//!   operator (`docs/image/filter/tone-mapping-operators.md` §3).
+//!   Replaces the global form's `1 + L` denominator with a
+//!   spatially-varying local average chosen per-pixel from a
+//!   geometric Gaussian centre / surround pyramid. The largest scale
+//!   at which the centre / surround difference `V(·, s)` is still
+//!   below the §3.3 uniformity threshold `ε` (default `0.05`) is
+//!   selected, so high-contrast edges truncate the search to the
+//!   smallest scale and preserve local detail. Knobs: `key` (§2.1
+//!   middle-grey `a`, default `0.18`), `phi` (§3.2 sharpening, default
+//!   `8`), `epsilon` (§3.3 threshold, default `0.05`), `scales`
+//!   (pyramid depth, default `8`), `initial_scale` (`s_0`, default
+//!   `1.0`). Chroma-preserving sRGB round-trip on `Gray8`/`Rgb24`/
+//!   `Rgba`; YUV returns `Unsupported`.
 //! - [`Curves`](curves::Curves) + [`Curve`](curves::Curve) +
 //!   [`CurveInterpolation`](curves::CurveInterpolation) — per-channel
 //!   tonal curves with Linear / Catmull-Rom / Fritsch-Carlson
@@ -629,6 +644,7 @@ pub mod radial_blur;
 pub mod registry;
 pub mod reinhard;
 pub mod reinhard_extended;
+pub mod reinhard_local;
 pub mod resize;
 pub mod roberts;
 pub mod roll;
@@ -769,6 +785,7 @@ pub use radial_blur::RadialBlur;
 pub use registry::{__oxideav_entry, register};
 pub use reinhard::Reinhard;
 pub use reinhard_extended::ReinhardExtended;
+pub use reinhard_local::ReinhardLocal;
 pub use resize::{Interpolation, Resize};
 pub use roberts::{Roberts, RobertsMagnitude};
 pub use roll::Roll;

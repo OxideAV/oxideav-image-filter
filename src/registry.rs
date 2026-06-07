@@ -315,6 +315,14 @@ pub fn register(ctx: &mut RuntimeContext) {
         "tonemap-reinhard-extended",
         Box::new(make_reinhard_extended),
     );
+    // r248: local "dodging-and-burning" variant of the Reinhard
+    // operator (docs/image/filter/tone-mapping-operators.md §3).
+    ctx.filters
+        .register("reinhard-local", Box::new(make_reinhard_local));
+    ctx.filters
+        .register("tonemap-reinhard-local", Box::new(make_reinhard_local));
+    ctx.filters
+        .register("dodge-and-burn", Box::new(make_reinhard_local));
     ctx.filters.register("hable", Box::new(make_hable));
     ctx.filters.register("tonemap-hable", Box::new(make_hable));
     ctx.filters.register("uncharted2", Box::new(make_hable));
@@ -4799,6 +4807,38 @@ fn make_reinhard_extended(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn
     )))
 }
 
+fn make_reinhard_local(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::ReinhardLocal;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    // §2.1 key — accept `key` or the paper's `a` spelling.
+    let key = get_f64("key").or_else(|| get_f64("a")).unwrap_or(0.18) as f32;
+    let mut f = ReinhardLocal::new(key);
+    if let Some(phi) = get_f64("phi").or_else(|| get_f64("sharpening")) {
+        f = f.with_phi(phi as f32);
+    }
+    if let Some(eps) = get_f64("epsilon")
+        .or_else(|| get_f64("eps"))
+        .or_else(|| get_f64("threshold"))
+    {
+        f = f.with_epsilon(eps as f32);
+    }
+    if let Some(n) = get_u64("scales").or_else(|| get_u64("levels")) {
+        f = f.with_scales(n as u32);
+    }
+    if let Some(s0) = get_f64("initial_scale").or_else(|| get_f64("s0")) {
+        f = f.with_initial_scale(s0 as f32);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 fn make_hable(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::Hable;
     let p = params.as_object();
@@ -5949,6 +5989,10 @@ mod tests {
             // r237 — unkeyed white-clamping Reinhard variant.
             "reinhard-extended",
             "tonemap-reinhard-extended",
+            // r248 — local "dodging-and-burning" Reinhard variant.
+            "reinhard-local",
+            "tonemap-reinhard-local",
+            "dodge-and-burn",
             "hable",
             "tonemap-hable",
             "uncharted2",
