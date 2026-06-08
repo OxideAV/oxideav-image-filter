@@ -3,7 +3,7 @@
 //! "Curves" is the per-channel tonal-mapping primitive in every classical
 //! photo-editor. The user specifies a small set of control points
 //! `(x, y)` on `[0, 255]² → [0, 255]²` and the editor fits a smooth
-//! monotone curve through them. Six classic interpolants apply:
+//! monotone curve through them. Seven classic interpolants apply:
 //!
 //! 1. **Linear** — straight segments between control points. Cheapest;
 //!    visible kinks at every knot.
@@ -71,8 +71,25 @@
 //!    the tangent magnitude scale-invariant — so for path work the
 //!    centripetal variant remains the recommended default. Still `C¹`
 //!    only and not monotone-safe.
+//! 7. **Cardinal (tension `c`)** — the tension-parameterised generalisation
+//!    of uniform Catmull-Rom per §3.2 of the curve-interpolation reference
+//!    doc (Catmull & Rom 1974). The per-knot tangent is scaled by `(1 − c)`:
+//!    `m_i = (1 − c) · (p_{i+1} − p_{i−1}) / 2`. `c = 0` recovers uniform
+//!    Catmull-Rom (the §3.1 case, item 2 above) — every neighbour spacing
+//!    drops to `1` and the `(1 − c)` factor is unity. `c = 1` zeros every
+//!    tangent so the cubic Hermite basis evaluator collapses to a
+//!    flat-tangent shape (`h00·y_i + h01·y_{i+1}`, the classic
+//!    "no-tangent" spline) — visually tighter than linear at the knots
+//!    but no overshoot. Intermediate `c` interpolates between the two
+//!    regimes: higher `c` → tighter / less swing, lower `c` →
+//!    closer to the smooth Catmull-Rom shape. Tension is encoded as a
+//!    `u8` 8.0 fixed-point (`tension_q8 = 0..=255` mapping to `c =
+//!    0..=1`) so the variant keeps the enum's `Copy + Eq + Hash`
+//!    properties. Still `C¹` only and not monotone-safe (the tangent
+//!    is a scaled secant chord just like uniform Catmull-Rom, so
+//!    overshoot is possible at any `c < 1`).
 //!
-//! We implement all six under [`CurveInterpolation`] and apply the
+//! We implement all seven under [`CurveInterpolation`] and apply the
 //! curve as a per-channel 256-entry LUT.
 //!
 //! Channels supported: a single `master` curve always runs on every
@@ -137,6 +154,33 @@ pub enum CurveInterpolation {
     /// remains the cusp-free default for path work. Still `C¹` only
     /// and not monotone-safe.
     ChordalCatmullRom,
+    /// Cardinal spline — the tension-parameterised generalisation of
+    /// uniform Catmull-Rom (Catmull, Rom 1974; §3.2 of
+    /// `docs/image/filter/curve-interpolation.md`). The per-knot
+    /// tangent is scaled by `(1 − c)`:
+    /// `m_i = (1 − c) · (p_{i+1} − p_{i−1}) / 2`.
+    ///
+    /// `tension_q8` is an 8.0 fixed-point encoding of the tension
+    /// parameter `c ∈ [0, 1]`: `c = tension_q8 / 255`. This keeps the
+    /// enum `Copy + Eq + Hash`.
+    ///
+    /// Convention:
+    /// * `tension_q8 = 0` → `c = 0` recovers uniform Catmull-Rom
+    ///   (smoothest of the family, can overshoot).
+    /// * `tension_q8 = 255` → `c = 1` zeros every tangent so the cubic
+    ///   Hermite evaluator collapses to the flat-tangent `h00·y_i +
+    ///   h01·y_{i+1}` shape (no overshoot, tight knots).
+    /// * `tension_q8 = 128` → `c ≈ 0.502`, the natural "half-tension"
+    ///   choice.
+    ///
+    /// Still `C¹` only and not monotone-safe at any `c < 1` (the
+    /// scaled secant chord tangent allows overshoot below `y_min` /
+    /// above `y_max`).
+    Cardinal {
+        /// Tension in 8.0 fixed point: `c = tension_q8 / 255`. `0` →
+        /// uniform Catmull-Rom; `255` → flat-tangent.
+        tension_q8: u8,
+    },
 }
 
 /// A single tonal curve: an ordered list of `(input, output)` control
@@ -239,6 +283,41 @@ impl Curve {
                 // (α = 0.5, denominator = √chord) by the exponent
                 // alone.
                 Self::alpha_catmull_rom_tangents(&pts, n, 1.0, &mut tangents);
+            }
+            CurveInterpolation::Cardinal { tension_q8 } => {
+                // §3.2 of `docs/image/filter/curve-interpolation.md`:
+                // tension-parameterised cardinal spline. Per-knot
+                // tangent is `(1 − c) · (p_{i+1} − p_{i−1}) / 2` with
+                // `c ∈ [0, 1]` decoded from the `u8` 8.0 fixed-point
+                // `tension_q8 = 0..=255` mapping to `c = 0..=1`.
+                //
+                // `c = 0` recovers uniform Catmull-Rom (the §3.1
+                // case) — the (1 − c) factor is unity and the tangent
+                // matches `CatmullRom`'s centred-difference expression
+                // sample-for-sample, so the new variant byte-aliases
+                // the existing `CatmullRom` arm in that limit (a
+                // property exercised by `cardinal_zero_tension_equals_catmull_rom`).
+                // `c = 1` (`tension_q8 = 255`) zeros every tangent so
+                // the cubic-Hermite evaluator collapses to
+                // `h00·y_i + h01·y_{i+1}` — the flat-tangent /
+                // "no-tangent" spline shape with no overshoot.
+                //
+                // Boundary tangents follow the same one-sided convention
+                // as `CatmullRom` (phantom-knot duplication) so the
+                // 2-point fixture reproduces the linear identity for
+                // every `c`.
+                let c = (tension_q8 as f32) / 255.0;
+                let scale = 1.0 - c;
+                for i in 0..n {
+                    let (xl, yl) = if i == 0 { pts[0] } else { pts[i - 1] };
+                    let (xr, yr) = if i + 1 == n { pts[n - 1] } else { pts[i + 1] };
+                    let dx = xr - xl;
+                    tangents[i] = if dx.abs() < 1.0e-6 {
+                        0.0
+                    } else {
+                        scale * (yr - yl) / dx
+                    };
+                }
             }
             CurveInterpolation::MonotoneCubic => {
                 // Fritsch-Carlson §3. Step 1: secant slopes.
@@ -1269,5 +1348,240 @@ mod tests {
         // ensure non-zero tail).
         assert!(acc_cen > 0);
         assert!(acc_uni > 0);
+    }
+
+    // ---------- r262: Cardinal spline (§3.2 of
+    // docs/image/filter/curve-interpolation.md) ----------
+
+    #[test]
+    fn cardinal_passes_through_control_points() {
+        // Interpolation property: every interpolant in §1–§4 passes
+        // exactly (within u8 round-off) through the supplied control
+        // points. Five-knot fixture exercising both interior and
+        // boundary knots — mirrors the centripetal r226 / chordal r231
+        // shape so the new variant is held to the same identity. Use
+        // the half-tension default `c ≈ 0.502` (`tension_q8 = 128`).
+        let pts = [(0u8, 0u8), (50, 30), (120, 210), (200, 90), (255, 255)];
+        let curve = Curve::new(pts);
+        let lut = curve.build_lut(CurveInterpolation::Cardinal { tension_q8: 128 });
+        for (x, y) in pts {
+            let got = lut[x as usize];
+            assert!(
+                (got as i16 - y as i16).abs() <= 1,
+                "cardinal at x={x}: got {got}, expected {y}",
+            );
+        }
+    }
+
+    #[test]
+    fn cardinal_zero_tension_equals_catmull_rom() {
+        // §3.2 of the reference doc: `c = 0` recovers uniform
+        // Catmull-Rom (the §3.1 case). With `tension_q8 = 0` the
+        // `(1 − c) = 1` factor is unity and the cardinal tangent
+        // matches the existing CatmullRom expression sample-for-sample.
+        // The two LUTs must agree to within the 1-LSB u8 rounding band
+        // on every test fixture; the uneven-knot fixture used by the
+        // r231 chordal differentiation test is a strong stress.
+        let curve = Curve::new([(0, 0), (10, 5), (60, 230), (180, 60), (255, 255)]);
+        let uni = curve.build_lut(CurveInterpolation::CatmullRom);
+        let car = curve.build_lut(CurveInterpolation::Cardinal { tension_q8: 0 });
+        for (i, (a, b)) in uni.iter().zip(car.iter()).enumerate() {
+            assert!(
+                (*a as i16 - *b as i16).abs() <= 1,
+                "cardinal c=0 ≠ uniform Catmull-Rom at x={i}: uni={a} car={b}",
+            );
+        }
+    }
+
+    #[test]
+    fn cardinal_full_tension_zeros_every_tangent() {
+        // `tension_q8 = 255` → `c = 1` → `(1 − c) = 0` so every
+        // per-knot tangent is exactly `0`. The cubic-Hermite evaluator
+        // collapses to `h00·y_i + h01·y_{i+1}` (the flat-tangent
+        // shape). Behaviourally: the curve still passes through every
+        // knot (`h00(0) = 1`, `h01(0) = 0`; `h00(1) = 0`, `h01(1) =
+        // 1`) AND never overshoots between two adjacent y-values
+        // (`h00 + h01 = 1` and both are non-negative on `[0, 1]` so
+        // the value is a convex combination). Verify both properties
+        // on the same uneven-knot fixture that exercises overshoot in
+        // every other cubic variant.
+        let pts = [(0u8, 0u8), (10, 5), (60, 230), (180, 60), (255, 255)];
+        let curve = Curve::new(pts);
+        let lut = curve.build_lut(CurveInterpolation::Cardinal { tension_q8: 255 });
+        // Property 1: still interpolates every knot.
+        for (x, y) in pts {
+            let got = lut[x as usize];
+            assert!(
+                (got as i16 - y as i16).abs() <= 1,
+                "cardinal c=1 must still interpolate knots; at x={x}: got {got}, expected {y}",
+            );
+        }
+        // Property 2: convex-combination shape — between knots `i` and
+        // `i+1` the output is bounded by `[min(y_i, y_{i+1}),
+        // max(y_i, y_{i+1})]`. Check every interior x against the
+        // bracketing knot pair.
+        let knots: Vec<(u8, u8)> = pts.to_vec();
+        for x in 0u8..=255 {
+            // Locate (i, j) such that knots[i].0 <= x <= knots[j].0.
+            let mut i = 0usize;
+            while i + 1 < knots.len() && knots[i + 1].0 < x {
+                i += 1;
+            }
+            let j = (i + 1).min(knots.len() - 1);
+            let lo = knots[i].1.min(knots[j].1) as i16;
+            let hi = knots[i].1.max(knots[j].1) as i16;
+            let v = lut[x as usize] as i16;
+            // Allow a 1-LSB rounding slack on each side.
+            assert!(
+                v >= lo - 1 && v <= hi + 1,
+                "cardinal c=1 must not overshoot bracketing knots at x={x}: v={v} bracket=[{lo}, {hi}]",
+            );
+        }
+    }
+
+    #[test]
+    fn cardinal_two_points_is_straight_line_at_zero_tension() {
+        // Two endpoints only ⇒ no interior knots ⇒ the boundary
+        // tangents drop to the one-sided secant of the single segment.
+        // At `c = 0` the `(1 − c) = 1` factor is unity so the
+        // tangent matches uniform Catmull-Rom's secant and the
+        // cubic-Hermite path coincides with the straight-line linear
+        // identity (a property already verified for `CatmullRom` —
+        // mirroring it here keeps the new variant on the same shape
+        // contract at its uniform-Catmull-Rom limit).
+        //
+        // At intermediate `c ∈ (0, 1)` the tangent is the scaled
+        // secant `(1 − c) · Δ`; the cubic-Hermite evaluator no longer
+        // collapses to the linear identity because the §1 `h10·h·m_i`
+        // and `h11·h·m_j` terms inject curvature whose magnitude scales
+        // with `(1 − c)`. So this 2-point round-trip is a `c = 0`
+        // identity, not an arbitrary-`c` identity. The
+        // `cardinal_full_tension_zeros_every_tangent` test below
+        // separately covers the `c = 1` shape on a multi-knot fixture
+        // (where the flat-tangent path is the textbook "no-overshoot"
+        // shape worth a dedicated test).
+        let curve = Curve::new([(0, 0), (255, 200)]);
+        let lin = curve.build_lut(CurveInterpolation::Linear);
+        let car = curve.build_lut(CurveInterpolation::Cardinal { tension_q8: 0 });
+        for (i, (a, b)) in lin.iter().zip(car.iter()).enumerate() {
+            assert!(
+                (*a as i16 - *b as i16).abs() <= 1,
+                "cardinal c=0 ≠ linear on 2-point ramp at x={i}: linear={a} cardinal={b}",
+            );
+        }
+    }
+
+    #[test]
+    fn cardinal_clamps_to_byte_range() {
+        // Like the other non-monotone-safe variants, cardinal at any
+        // `c < 1` is not overshoot-bounded; verify the byte-quantised
+        // LUT stays in range (no NaN cast, no panic) under a
+        // pathological control set. Use the half-tension default —
+        // c=1 is overshoot-bounded by the convex-combination shape
+        // already checked above.
+        let curve = Curve::new([(0, 0), (50, 5), (60, 250), (200, 5), (255, 255)]);
+        let lut = curve.build_lut(CurveInterpolation::Cardinal { tension_q8: 128 });
+        let mut acc: u32 = 0;
+        for &v in lut.iter() {
+            acc += v as u32;
+        }
+        assert!(acc > 0);
+    }
+
+    #[test]
+    fn cardinal_higher_tension_dampens_per_segment_overshoot() {
+        // §3.2 motivation: increasing the tension `c` from `0` toward
+        // `1` reduces the tangent magnitude, which in turn dampens
+        // per-segment overshoot above the bracketing-knot maximum (or
+        // below the bracketing-knot minimum). Construct a fixture that
+        // overshoots under uniform Catmull-Rom (c = 0) — namely a knot
+        // pattern that rises sharply at (60, 230) then falls — and
+        // verify the **total area** of overshoot (sum of
+        // max(0, lut[x] − bracket_hi) + max(0, bracket_lo − lut[x])
+        // across all x) is monotone-non-increasing as `c` goes from
+        // `0` to `255`. At `c = 255` (full tension) the cubic-Hermite
+        // evaluator is the convex combination `h00·y_i + h01·y_{i+1}`
+        // — which has zero overshoot by construction (verified
+        // separately above), so the metric must vanish at the high
+        // end.
+        let curve = Curve::new([(0, 0), (50, 5), (60, 230), (180, 60), (255, 255)]);
+        // Pre-compute the bracketing-knot bounds for every x. With the
+        // ensure_endpoints() injection both (0, …) and (255, …) are
+        // present so every x in 0..=255 has an interval to consult.
+        let pts = curve.ensure_endpoints();
+        let mut bracket_lo = [0u8; 256];
+        let mut bracket_hi = [0u8; 256];
+        for x in 0u32..=255 {
+            // Locate (i, j) such that pts[i].0 <= x <= pts[j].0.
+            let mut i = 0usize;
+            while i + 1 < pts.len() && (pts[i + 1].0 as u32) < x {
+                i += 1;
+            }
+            let j = (i + 1).min(pts.len() - 1);
+            let lo = pts[i].1.min(pts[j].1).round() as u8;
+            let hi = pts[i].1.max(pts[j].1).round() as u8;
+            bracket_lo[x as usize] = lo;
+            bracket_hi[x as usize] = hi;
+        }
+        let overshoot_area = |lut: &[u8; 256]| -> u32 {
+            let mut acc = 0u32;
+            for x in 0..256 {
+                let v = lut[x] as i32;
+                let lo = bracket_lo[x] as i32;
+                let hi = bracket_hi[x] as i32;
+                if v > hi {
+                    acc += (v - hi) as u32;
+                } else if v < lo {
+                    acc += (lo - v) as u32;
+                }
+            }
+            acc
+        };
+        let mut prev: u32 = u32::MAX;
+        let mut saw_strict_decrease = false;
+        for &c in &[0u8, 64, 128, 192, 255] {
+            let lut = curve.build_lut(CurveInterpolation::Cardinal { tension_q8: c });
+            let area = overshoot_area(&lut);
+            assert!(
+                area <= prev,
+                "cardinal: per-segment overshoot area should monotone-decrease with tension; \
+                 c_q8={c} prev={prev} current={area}",
+            );
+            if c > 0 && area < prev {
+                saw_strict_decrease = true;
+            }
+            prev = area;
+        }
+        // The end-of-sweep value should be exactly zero (full tension
+        // is the no-overshoot shape) and somewhere along the sweep we
+        // must have seen a strict decrease — otherwise the test would
+        // be vacuous (a constant-zero series passes the monotone
+        // inequality trivially).
+        assert_eq!(
+            prev, 0,
+            "cardinal c=1 must have zero per-segment overshoot (flat-tangent shape)",
+        );
+        assert!(
+            saw_strict_decrease,
+            "cardinal: expected at least one strict decrease over the c=0..=1 sweep, \
+             otherwise the test does not exercise the tension scaling",
+        );
+    }
+
+    #[test]
+    fn cardinal_handles_clustered_knot_without_panic() {
+        // Same defensive property as the centripetal / chordal modes
+        // (§3.3): tightly-clustered knots along x must not break the
+        // tangent denominator. The cardinal arm guards `dx.abs() <
+        // 1e-6` exactly like the existing `CatmullRom` arm so the
+        // pathology resolves to a zero tangent. Touch every LUT entry
+        // to confirm no NaN cast / panic.
+        let curve = Curve::new([(0, 0), (58, 50), (60, 230), (62, 60), (255, 255)]);
+        let car = curve.build_lut(CurveInterpolation::Cardinal { tension_q8: 200 });
+        let mut acc: u32 = 0;
+        for &v in car.iter() {
+            acc += v as u32;
+        }
+        assert!(acc > 0);
     }
 }

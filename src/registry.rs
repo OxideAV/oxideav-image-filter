@@ -4911,6 +4911,17 @@ fn make_curves(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
     if let Some(c) = p.and_then(|m| m.get("blue")).and_then(parse_curve) {
         f = f.with_blue(c);
     }
+    // r262: read tension first so the Cardinal alias arm below can use it.
+    // Tension `c ∈ [0, 1]` per §3.2 of
+    // `docs/image/filter/curve-interpolation.md`; accept `tension` or `c`
+    // as the JSON spelling; out-of-range values clamp to [0, 1]; missing
+    // values default to `0.5` (the "half-tension" knob, midway between
+    // uniform Catmull-Rom at c=0 and flat-tangent at c=1).
+    let tension_q8 = p
+        .and_then(|m| m.get("tension").or_else(|| m.get("c")))
+        .and_then(|v| v.as_f64())
+        .map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8)
+        .unwrap_or(128);
     let mode = p
         .and_then(|m| m.get("interpolation").or_else(|| m.get("mode")))
         .and_then(|v| v.as_str())
@@ -4932,6 +4943,12 @@ fn make_curves(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
             | "chordal_catmull_rom"
             | "chordalcatmullrom"
             | "catmull-rom-chordal" => CurveInterpolation::ChordalCatmullRom,
+            // r262: cardinal spline with tension parameter (Catmull & Rom
+            // 1974) — §3.2 of `docs/image/filter/curve-interpolation.md`.
+            // Tension is read from the `tension` (or `c`) JSON field above.
+            "cardinal" | "cardinal-spline" | "cardinal_spline" | "cardinalspline" => {
+                CurveInterpolation::Cardinal { tension_q8 }
+            }
             _ => CurveInterpolation::MonotoneCubic,
         })
         .unwrap_or(CurveInterpolation::MonotoneCubic);
@@ -6172,6 +6189,78 @@ mod tests {
                 &inputs,
             );
             assert!(r.is_ok(), "curves mode={mode} failed: {:?}", r.err());
+        }
+    }
+
+    #[test]
+    fn curves_factory_accepts_cardinal_mode_aliases() {
+        // r262: the JSON factory parser gains four spelling aliases for
+        // the cardinal-spline mode (Catmull & Rom 1974) — §3.2 of
+        // `docs/image/filter/curve-interpolation.md`. All spellings
+        // must build a valid filter (each alias is the same
+        // CurveInterpolation::Cardinal { tension_q8 } value
+        // internally; tension is read from the `tension` / `c` JSON
+        // field, defaulting to `0.5` if omitted).
+        let c = ctx();
+        let inputs = [yuv_in_port()];
+        for mode in [
+            "cardinal",
+            "cardinal-spline",
+            "cardinal_spline",
+            "cardinalspline",
+        ] {
+            let r = c.filters.make(
+                "curves",
+                &json!({
+                    "master": [[0, 0], [128, 200], [255, 255]],
+                    "interpolation": mode,
+                    "tension": 0.3,
+                }),
+                &inputs,
+            );
+            assert!(r.is_ok(), "curves mode={mode} failed: {:?}", r.err());
+        }
+        // Also accept the `c` short spelling and verify omitting
+        // tension still builds (default `0.5`).
+        let r = c.filters.make(
+            "curves",
+            &json!({
+                "master": [[0, 0], [128, 200], [255, 255]],
+                "interpolation": "cardinal",
+                "c": 0.0,
+            }),
+            &inputs,
+        );
+        assert!(r.is_ok(), "curves cardinal c=0.0 failed: {:?}", r.err());
+        let r = c.filters.make(
+            "curves",
+            &json!({
+                "master": [[0, 0], [128, 200], [255, 255]],
+                "interpolation": "cardinal",
+            }),
+            &inputs,
+        );
+        assert!(
+            r.is_ok(),
+            "curves cardinal missing-tension default failed: {:?}",
+            r.err()
+        );
+        // Out-of-range tension clamps to [0, 1] rather than erroring.
+        for c_val in [-1.0, 1.5, f64::INFINITY] {
+            let r = c.filters.make(
+                "curves",
+                &json!({
+                    "master": [[0, 0], [128, 200], [255, 255]],
+                    "interpolation": "cardinal",
+                    "tension": c_val,
+                }),
+                &inputs,
+            );
+            assert!(
+                r.is_ok(),
+                "curves cardinal tension={c_val} should clamp not error: {:?}",
+                r.err()
+            );
         }
     }
 

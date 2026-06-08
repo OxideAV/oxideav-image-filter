@@ -9,6 +9,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r262: extend `CurveInterpolation` with `Cardinal { tension_q8: u8 }`
+  — the tension-parameterised generalisation of uniform Catmull-Rom
+  per §3.2 of `docs/image/filter/curve-interpolation.md` (E. Catmull,
+  R. Rom, *"A class of local interpolating splines,"* Computer Aided
+  Geometric Design, Academic Press, 1974). The per-knot tangent
+  scales the §3.1 uniform-Catmull-Rom expression by `(1 − c)`:
+  `m_i = (1 − c) · (p_{i+1} − p_{i−1}) / 2`. Tension `c ∈ [0, 1]` is
+  encoded as `u8` 8.0 fixed-point (`tension_q8 = 0..=255` mapping to
+  `c = 0..=1`) so the enum keeps `Copy + Eq + Hash`. Endpoints fall
+  through `Catmull-Rom`'s standard centred-difference + one-sided
+  collapse with the same `(1 − c)` scaling, so the §1 cubic-Hermite
+  evaluator reduces to: the existing `CatmullRom` arm sample-for-sample
+  at `c = 0` (the `(1 − c) = 1` factor leaves the secant slope
+  unchanged); the flat-tangent convex-combination shape
+  `h00·y_i + h01·y_{i+1}` at `c = 1` (every tangent is exactly `0`).
+  Intermediate `c` blends between the two regimes, with higher `c`
+  monotonically dampening per-segment overshoot above the bracketing
+  knot maximum / below the bracketing knot minimum. Distinct from the
+  six existing siblings: only `Cardinal` carries a runtime knob (the
+  other six are fixed-parameter modes), and only `Cardinal` can be
+  driven to a no-overshoot shape without forfeiting the cubic-Hermite
+  visual smoothness of the underlying basis. Still `C¹` only and not
+  monotone-safe at any `c < 1` (the scaled secant chord tangent allows
+  overshoot just like uniform Catmull-Rom — for tone-curve UIs the
+  `MonotoneCubic` default remains the safe choice). JSON factory
+  parser accepts four new spellings for the mode parameter
+  (`"cardinal"`, `"cardinal-spline"`, `"cardinal_spline"`,
+  `"cardinalspline"`) plus a `tension` (or `c`) field carrying the
+  tension parameter as a JSON number; out-of-range values clamp to
+  `[0, 1]` and a missing tension defaults to `0.5`. Eight new unit
+  tests in `src/curves.rs`
+  (`cardinal_passes_through_control_points` — every knot is hit to
+  within u8 round-off on the five-knot reference fixture used by the
+  centripetal / chordal siblings,
+  `cardinal_zero_tension_equals_catmull_rom` — `tension_q8 = 0` is
+  byte-equivalent to `CatmullRom` on the uneven-knot stress fixture,
+  `cardinal_full_tension_zeros_every_tangent` — `tension_q8 = 255`
+  still interpolates every knot AND is per-segment overshoot-free
+  (every LUT entry lies inside the bracketing-knot interval),
+  `cardinal_two_points_is_straight_line_at_zero_tension` — 2-point
+  ramp at `c = 0` reproduces the linear identity (the
+  arbitrary-`c` round-trip does NOT — documented in the test),
+  `cardinal_clamps_to_byte_range` — pathological control set at the
+  half-tension default still produces a valid `[0, 255]`-clamped LUT
+  with no NaN cast / panic,
+  `cardinal_higher_tension_dampens_per_segment_overshoot` — sweep
+  `c ∈ {0, 0.25, 0.5, 0.75, 1}` and verify the **total per-segment
+  overshoot area** (sum of `max(0, lut[x] − bracket_hi[x]) +
+  max(0, bracket_lo[x] − lut[x])`) is monotone-non-increasing AND
+  vanishes at the high end AND strictly decreases at least once over
+  the sweep — the test would be vacuous if cardinal silently aliased
+  to a fixed-tangent mode,
+  `cardinal_handles_clustered_knot_without_panic` — defensive guard
+  against zero `dx` on tightly-clustered knots, mirroring the
+  centripetal / chordal stress fixture),
+  and one registry test `curves_factory_accepts_cardinal_mode_aliases`
+  covering all four mode-name spellings + the `tension` and `c` JSON
+  field spellings + the default-when-omitted contract + the
+  out-of-range clamp contract.
 - r248: add `ReinhardLocal` — the local "dodging-and-burning" variant
   of the Reinhard 2002 tone-mapping operator per
   `docs/image/filter/tone-mapping-operators.md` §3 (E. Reinhard,

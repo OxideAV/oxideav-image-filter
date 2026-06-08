@@ -214,7 +214,7 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `ArcTan`. documented CLI: `-function <kind> args`.
 - **`Curves`** + **`Curve`** + **`CurveInterpolation`** — per-channel
   tonal curves through user-supplied `(x, y)` control points.
-  Six interpolants: `Linear` (segment-wise), `CatmullRom` (1974
+  Seven interpolants: `Linear` (segment-wise), `CatmullRom` (1974
   Catmull-Rom cubic, uniform `α = 0` parameterisation),
   `MonotoneCubic` (1980 Fritsch-Carlson monotonicity-preserving
   Hermite — default; never overshoots), `NaturalCubic` (de Boor 1978
@@ -226,28 +226,46 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `m_i = (p_{i+1} − p_i)/(t_{i+1} − t_i) − (p_{i+1} − p_{i−1})/
   (t_{i+1} − t_{i−1}) + (p_i − p_{i−1})/(t_i − t_{i−1})` with
   inter-knot spacing `t_{i+1} − t_i = |p_{i+1} − p_i|^0.5`,
-  provably cusp / self-loop free), and `ChordalCatmullRom`
+  provably cusp / self-loop free), `ChordalCatmullRom`
   (Yuksel, Schaefer & Keyser 2011, `α = 1` — the third and final
   member of the same §3.3 alpha-family, same Barry-Goldman tangent
   shape with the chord-length spacing `t_{i+1} − t_i = |p_{i+1} −
   p_i|`; tames the wide-knot overshoot of uniform Catmull-Rom but
   is *not* cusp-free in the Yuksel et al. sense — only `α ∈ (0, 1)`
   is, so the centripetal variant remains the recommended default
-  for path work). The natural spline is the smoothest of the six
-  (continuous second derivative across knots), at the cost of
-  overshoot risk; the centripetal variant gives the cusp-free
-  property in the same `C¹` Hermite family as the uniform
-  Catmull-Rom — pick `MonotoneCubic` when slider monotonicity must
-  hold. JSON factory aliases for the `ChordalCatmullRom` mode:
-  `"chordal"`, `"chordal-catmull-rom"`, `"chordal_catmull_rom"`,
-  `"chordalcatmullrom"`, `"catmull-rom-chordal"` (the existing
-  `"centripetal"` / `"centripetal-catmull-rom"` /
-  `"centripetal_catmull_rom"` / `"centripetalcatmullrom"` /
-  `"catmull-rom-centripetal"` aliases for `CentripetalCatmullRom`,
-  and the `"natural-cubic"` / `"natural_cubic"` / `"natural"`
-  aliases for `NaturalCubic`, are unchanged). Master curve runs on
-  every tone channel; optional `red` / `green` / `blue` overrides on
-  RGB / RGBA. Gray8 / RGB / RGBA + planar YUV (master curve on luma
+  for path work), and `Cardinal { tension_q8: u8 }` (Catmull & Rom
+  1974, §3.2 of the reference doc — the tension-parameterised
+  generalisation of uniform Catmull-Rom whose per-knot tangent is
+  the §3.1 secant slope scaled by `(1 − c)`. Tension `c ∈ [0, 1]`
+  is encoded as 8.0 fixed-point `tension_q8 = 0..=255` so the enum
+  keeps `Copy + Eq + Hash`. `c = 0` is byte-equivalent to
+  `CatmullRom`; `c = 1` zeros every tangent so the cubic-Hermite
+  evaluator collapses to the convex-combination shape
+  `h00·y_i + h01·y_{i+1}` with provable per-segment
+  no-overshoot — the only `CurveInterpolation` variant that can be
+  driven to an overshoot-free shape while keeping the cubic-Hermite
+  smoothness of the underlying basis). The natural spline is the
+  smoothest of the seven (continuous second derivative across
+  knots), at the cost of overshoot risk; the centripetal variant
+  gives the cusp-free property in the same `C¹` Hermite family as
+  the uniform Catmull-Rom; the cardinal variant is the only one
+  with a runtime knob — pick `MonotoneCubic` when slider
+  monotonicity must hold across any input, or `Cardinal { c = 1 }`
+  when the no-overshoot guarantee is the only constraint. JSON
+  factory aliases for the `Cardinal` mode: `"cardinal"`,
+  `"cardinal-spline"`, `"cardinal_spline"`, `"cardinalspline"`,
+  with the tension carried by a `"tension"` (or `"c"`) JSON field
+  — out-of-range values clamp to `[0, 1]` and a missing tension
+  defaults to `0.5`. Pre-existing aliases for `ChordalCatmullRom`
+  (`"chordal"` / `"chordal-catmull-rom"` / `"chordal_catmull_rom"` /
+  `"chordalcatmullrom"` / `"catmull-rom-chordal"`),
+  `CentripetalCatmullRom` (`"centripetal"` /
+  `"centripetal-catmull-rom"` / `"centripetal_catmull_rom"` /
+  `"centripetalcatmullrom"` / `"catmull-rom-centripetal"`), and
+  `NaturalCubic` (`"natural-cubic"` / `"natural_cubic"` /
+  `"natural"`) are unchanged. Master curve runs on every tone
+  channel; optional `red` / `green` / `blue` overrides on RGB /
+  RGBA. Gray8 / RGB / RGBA + planar YUV (master curve on luma
   only). Cost is `O(W·H)` (per-channel 256-LUT).
 
 ### Tone mapping (HDR-style)
