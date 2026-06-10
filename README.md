@@ -214,10 +214,17 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `ArcTan`. documented CLI: `-function <kind> args`.
 - **`Curves`** + **`Curve`** + **`CurveInterpolation`** — per-channel
   tonal curves through user-supplied `(x, y)` control points.
-  Seven interpolants: `Linear` (segment-wise), `CatmullRom` (1974
+  Eight interpolants: `Linear` (segment-wise), `CatmullRom` (1974
   Catmull-Rom cubic, uniform `α = 0` parameterisation),
   `MonotoneCubic` (1980 Fritsch-Carlson monotonicity-preserving
-  Hermite — default; never overshoots), `NaturalCubic` (de Boor 1978
+  Hermite — default; never overshoots; pulls the §2.2 normalised
+  tangents back to the circle of radius 3), `MonotoneCubicBox`
+  (same Fritsch-Carlson interpolant but using the §2.2 *box* sufficient
+  region — `0 ≤ α ≤ 3` and `0 ≤ β ≤ 3` clamped independently — the
+  doc-flagged independent-axis alternative to the radius-3 circle;
+  also overshoot-free on monotone data, just a slightly different
+  monotone shape near steep knots; JSON aliases `monotone-box` /
+  `monotone-cubic-box`), `NaturalCubic` (de Boor 1978
   `C²` interpolant — single global tridiagonal solve for per-knot
   second derivatives via the Thomas 1949 algorithm, with the
   "natural" boundary `P''(x_0) = P''(x_{n−1}) = 0`),

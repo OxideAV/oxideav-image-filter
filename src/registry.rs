@@ -4949,6 +4949,13 @@ fn make_curves(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
             "cardinal" | "cardinal-spline" | "cardinal_spline" | "cardinalspline" => {
                 CurveInterpolation::Cardinal { tension_q8 }
             }
+            // r270: the §2.2 box-region Fritsch-Carlson monotone-cubic
+            // variant (`0 ≤ α ≤ 3` and `0 ≤ β ≤ 3` applied
+            // independently) per `docs/image/filter/curve-interpolation.md`
+            // §2.2 — the doc-flagged alternative to the radius-3 circle
+            // used by the plain `MonotoneCubic` default.
+            "monotone-box" | "monotone_box" | "monotonebox" | "monotone-cubic-box"
+            | "monotone_cubic_box" | "monotonecubicbox" => CurveInterpolation::MonotoneCubicBox,
             _ => CurveInterpolation::MonotoneCubic,
         })
         .unwrap_or(CurveInterpolation::MonotoneCubic);
@@ -6261,6 +6268,36 @@ mod tests {
                 "curves cardinal tension={c_val} should clamp not error: {:?}",
                 r.err()
             );
+        }
+    }
+
+    #[test]
+    fn curves_factory_accepts_monotone_box_mode_aliases() {
+        // r270: the JSON factory parser gains six spelling aliases for
+        // the §2.2 box-region Fritsch-Carlson monotone-cubic variant
+        // (`0 ≤ α ≤ 3` and `0 ≤ β ≤ 3` applied independently) —
+        // `docs/image/filter/curve-interpolation.md` §2.2. All spellings
+        // must build a valid filter (each alias resolves to the same
+        // CurveInterpolation::MonotoneCubicBox value internally).
+        let c = ctx();
+        let inputs = [yuv_in_port()];
+        for mode in [
+            "monotone-box",
+            "monotone_box",
+            "monotonebox",
+            "monotone-cubic-box",
+            "monotone_cubic_box",
+            "monotonecubicbox",
+        ] {
+            let r = c.filters.make(
+                "curves",
+                &json!({
+                    "master": [[0, 0], [128, 200], [255, 255]],
+                    "interpolation": mode,
+                }),
+                &inputs,
+            );
+            assert!(r.is_ok(), "curves mode={mode} failed: {:?}", r.err());
         }
     }
 

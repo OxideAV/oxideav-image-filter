@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r270: extend `CurveInterpolation` with `MonotoneCubicBox` — the
+  Fritsch-Carlson monotone-cubic interpolant using the **box** form of
+  the §2.2 sufficient monotonicity region per
+  `docs/image/filter/curve-interpolation.md` §2.2 (F. N. Fritsch,
+  R. E. Carlson, *"Monotone Piecewise Cubic Interpolation,"* SIAM J.
+  Numer. Anal. 17(2):238–246, 1980). The reference doc flags two
+  documented sufficient overshoot-free sub-regions: the circle of
+  radius 3 (`α² + β² ≤ 9`, used by the existing `MonotoneCubic`
+  default) and the independent-axis box (`0 ≤ α ≤ 3` and `0 ≤ β ≤ 3`
+  "applied independently"). The new variant shares every step of the
+  existing Fritsch-Carlson tangent computation — §2.1 secant slopes,
+  §2.1 three-point central-difference initial tangents, the §2.2
+  `Δ_i == 0 ⇒ flat segment` rule and `α, β ≥ 0` sign precondition —
+  and differs **only** in the final clamp: instead of projecting the
+  normalised tangent pair `(α, β)` onto the radius-3 circle, each
+  component is clamped to `[0, 3]` separately. Both forms are provably
+  overshoot-free on monotone data; they produce slightly different
+  (but still monotone) curve shapes near steep knots because they pull
+  escaping tangents back to different boundaries of the Fritsch-Carlson
+  admissible set. The plain `MonotoneCubic` default is unchanged, so
+  existing callers and JSON jobs are unaffected. JSON factory parser
+  accepts six new spellings for the mode parameter (`"monotone-box"`,
+  `"monotone_box"`, `"monotonebox"`, `"monotone-cubic-box"`,
+  `"monotone_cubic_box"`, `"monotonecubicbox"`); unknown spellings
+  continue to fall back to `MonotoneCubic`. Five new unit tests in
+  `src/curves.rs` (`monotone_cubic_box_passes_through_control_points` —
+  every knot is hit to within byte round-off on a five-knot fixture,
+  `monotone_cubic_box_does_not_overshoot` — the LUT is non-decreasing
+  and the flat endpoint tails stay flat on a steep-rise fixture,
+  `monotone_cubic_box_differs_from_circle_on_steep_knots` — the box
+  region produces a distinct LUT from the circle region on a steep
+  asymmetric rise so the variant is not a silent alias,
+  `monotone_cubic_box_two_points_is_straight_line` — a 2-point ramp
+  reproduces the linear identity byte-for-byte, and
+  `monotone_cubic_box_flat_segment_stays_flat` — a flat control span
+  produces a flat LUT region per the §2.2 `Δ_i == 0` rule). One new
+  registry test `curves_factory_accepts_monotone_box_mode_aliases`
+  walks all six mode-name spellings. Curve-interpolation count goes
+  7 → 8. Backed by §2.2 of
+  `docs/image/filter/curve-interpolation.md`, which itself cites the
+  original Fritsch-Carlson publication by author/year + DOI link only,
+  per the *Feist* uncopyrightable-facts posture.
 - r262: extend `CurveInterpolation` with `Cardinal { tension_q8: u8 }`
   — the tension-parameterised generalisation of uniform Catmull-Rom
   per §3.2 of `docs/image/filter/curve-interpolation.md` (E. Catmull,

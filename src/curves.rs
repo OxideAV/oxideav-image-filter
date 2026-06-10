@@ -115,6 +115,23 @@ pub enum CurveInterpolation {
     /// monotonicity-preserving.
     #[default]
     MonotoneCubic,
+    /// Fritsch-Carlson monotone-cubic Hermite using the **box** form of
+    /// the §2.2 sufficient monotonicity region instead of the
+    /// circle-of-radius-3 used by [`Self::MonotoneCubic`]. Per §2.2 of
+    /// `docs/image/filter/curve-interpolation.md` (Fritsch & Carlson
+    /// 1980): "An alternative sufficient region is `0 ≤ α ≤ 3` and
+    /// `0 ≤ β ≤ 3` applied independently; both prevent overshoot." The
+    /// normalised tangents `α_i = m_i/Δ_i` and `β_i = m_{i+1}/Δ_i` are
+    /// each clamped to `[0, 3]` per-component rather than projected onto
+    /// the radius-3 circle. Like [`Self::MonotoneCubic`] this is `C¹`
+    /// and provably overshoot-free on monotone data; the two differ only
+    /// in which sufficient sub-region of the Fritsch-Carlson admissible
+    /// set the tangents are pulled back to, so the produced curve is
+    /// generally a slightly different (but still monotone) shape near
+    /// steep knots. The circle form is the more commonly transcribed
+    /// default; this box form is the doc-flagged independent-axis
+    /// alternative.
+    MonotoneCubicBox,
     /// Natural cubic spline (`C²`) via the Thomas tridiagonal solver
     /// (de Boor 1978; tridiagonal step credited to L. H. Thomas, Watson
     /// Sci. Comp. Lab. 1949). Smoothest of the four (continuous second
@@ -319,8 +336,8 @@ impl Curve {
                     };
                 }
             }
-            CurveInterpolation::MonotoneCubic => {
-                // Fritsch-Carlson §3. Step 1: secant slopes.
+            CurveInterpolation::MonotoneCubic | CurveInterpolation::MonotoneCubicBox => {
+                // Fritsch-Carlson §2. Step 1 (§2.1): secant slopes.
                 let mut delta = vec![0f32; n - 1];
                 for i in 0..n - 1 {
                     let dx = pts[i + 1].0 - pts[i].0;
@@ -330,14 +347,28 @@ impl Curve {
                         (pts[i + 1].1 - pts[i].1) / dx
                     };
                 }
-                // Step 2: initial tangents = average of neighbouring
-                // secants (Hermite default), one-sided at boundary.
+                // Step 2 (§2.1): initial tangents = average of
+                // neighbouring secants (the three-point central-
+                // difference estimate), one-sided at the boundaries.
                 tangents[0] = delta[0];
                 tangents[n - 1] = delta[n - 2];
                 for i in 1..n - 1 {
                     tangents[i] = 0.5 * (delta[i - 1] + delta[i]);
                 }
-                // Step 3: enforce monotonicity (Fritsch-Carlson eq. 4).
+                // Step 3 (§2.2): enforce monotonicity by pulling the
+                // normalised tangents `(α, β)` back into a sufficient
+                // overshoot-free sub-region. Two sub-regions are
+                // documented; the active one depends on `mode`:
+                //   * `MonotoneCubic` → the circle of radius 3
+                //     (`α² + β² ≤ 9`); the more commonly transcribed
+                //     form.
+                //   * `MonotoneCubicBox` → the independent-axis box
+                //     `0 ≤ α ≤ 3` and `0 ≤ β ≤ 3` (each component
+                //     clamped to `[0, 3]` separately) — the doc-flagged
+                //     alternative sufficient region.
+                // Both share the `Δ_i == 0 ⇒ flat segment` rule and the
+                // `α, β ≥ 0` sign precondition from §2.2.
+                let box_region = matches!(mode, CurveInterpolation::MonotoneCubicBox);
                 for i in 0..n - 1 {
                     if delta[i].abs() < 1.0e-9 {
                         tangents[i] = 0.0;
@@ -352,11 +383,28 @@ impl Curve {
                     if b < 0.0 {
                         tangents[i + 1] = 0.0;
                     }
-                    let s = a * a + b * b;
-                    if s > 9.0 {
-                        let t = 3.0 / s.sqrt();
-                        tangents[i] = t * a * delta[i];
-                        tangents[i + 1] = t * b * delta[i];
+                    if box_region {
+                        // §2.2 alternative: clamp each normalised tangent
+                        // to `[0, 3]` independently (negatives already
+                        // zeroed above; only the upper `3` bound bites
+                        // here).
+                        let a = a.max(0.0);
+                        let b = b.max(0.0);
+                        if a > 3.0 {
+                            tangents[i] = 3.0 * delta[i];
+                        }
+                        if b > 3.0 {
+                            tangents[i + 1] = 3.0 * delta[i];
+                        }
+                    } else {
+                        // §2.2 circle: project `(α, β)` onto the
+                        // radius-3 circle when it escapes it.
+                        let s = a * a + b * b;
+                        if s > 9.0 {
+                            let t = 3.0 / s.sqrt();
+                            tangents[i] = t * a * delta[i];
+                            tangents[i + 1] = t * b * delta[i];
+                        }
                     }
                 }
             }
@@ -849,6 +897,89 @@ mod tests {
             let v = out.planes[0].data[x * 3];
             assert!(v >= prev, "non-monotone at x={x}: {prev} → {v}");
             prev = v;
+        }
+    }
+
+    #[test]
+    fn monotone_cubic_box_passes_through_control_points() {
+        // The §2.2 box-region variant still interpolates every knot to
+        // within byte round-off (a clamp on the tangents never moves the
+        // segment endpoint values, only the in-between shape).
+        let curve = Curve::new([(0, 0), (64, 32), (128, 200), (192, 210), (255, 255)]);
+        let lut = curve.build_lut(CurveInterpolation::MonotoneCubicBox);
+        for (x, y) in [(0u8, 0u8), (64, 32), (128, 200), (192, 210), (255, 255)] {
+            assert!(
+                (lut[x as usize] as i16 - y as i16).abs() <= 1,
+                "knot ({x},{y}) -> {}",
+                lut[x as usize]
+            );
+        }
+    }
+
+    #[test]
+    fn monotone_cubic_box_does_not_overshoot() {
+        // §2.2 promises the box region is *also* overshoot-free on
+        // monotone data: every LUT entry must stay inside the bracketing
+        // knot interval AND the LUT must be non-decreasing. The fixture
+        // has a steep central rise that would overshoot under an
+        // unclamped Catmull-Rom.
+        let curve = Curve::new([(0, 0), (10, 0), (245, 255), (255, 255)]);
+        let lut = curve.build_lut(CurveInterpolation::MonotoneCubicBox);
+        // Monotone non-decreasing.
+        let mut prev = 0u8;
+        for &v in lut.iter() {
+            assert!(v >= prev, "non-monotone: {prev} -> {v}");
+            prev = v;
+        }
+        // No value escapes [0, 255] (trivially true for u8) and the flat
+        // tails stay flat at the held endpoint values.
+        assert_eq!(lut[0], 0);
+        assert_eq!(lut[5], 0);
+        assert_eq!(lut[250], 255);
+        assert_eq!(lut[255], 255);
+    }
+
+    #[test]
+    fn monotone_cubic_box_differs_from_circle_on_steep_knots() {
+        // The two sufficient sub-regions (circle of radius 3 vs the
+        // independent-axis box) pull steep tangents back to different
+        // shapes, so the produced LUTs must NOT be byte-identical — the
+        // test would be vacuous if `MonotoneCubicBox` silently aliased
+        // the circle form. A steep asymmetric rise drives at least one
+        // normalised tangent past 3 so the two clamps diverge.
+        let curve = Curve::new([(0, 0), (32, 8), (96, 250), (255, 255)]);
+        let circle = curve.build_lut(CurveInterpolation::MonotoneCubic);
+        let boxed = curve.build_lut(CurveInterpolation::MonotoneCubicBox);
+        assert_ne!(
+            circle.to_vec(),
+            boxed.to_vec(),
+            "box region must produce a distinct LUT from the circle region"
+        );
+    }
+
+    #[test]
+    fn monotone_cubic_box_two_points_is_straight_line() {
+        // No interior knots ⇒ both tangents collapse to the single
+        // secant slope and the clamp is a no-op, so a 2-point ramp
+        // reproduces the linear identity byte-for-byte.
+        let curve = Curve::new([(0, 0), (255, 255)]);
+        let lut = curve.build_lut(CurveInterpolation::MonotoneCubicBox);
+        for (x, slot) in lut.iter().enumerate() {
+            assert_eq!(*slot as usize, x, "non-identity at x={x}");
+        }
+    }
+
+    #[test]
+    fn monotone_cubic_box_flat_segment_stays_flat() {
+        // §2.2 `Δ_i == 0 ⇒ m_i = m_{i+1} = 0`: a flat segment in the
+        // control data must produce a flat LUT region under the box
+        // variant exactly as under the circle variant.
+        let curve = Curve::new([(0, 0), (64, 128), (192, 128), (255, 255)]);
+        let lut = curve.build_lut(CurveInterpolation::MonotoneCubicBox);
+        // The 64..=192 span is flat (both endpoints y = 128); every
+        // interior sample must sit at 128.
+        for x in 64u8..=192 {
+            assert_eq!(lut[x as usize], 128, "flat span dipped at x={x}");
         }
     }
 
