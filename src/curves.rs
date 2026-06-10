@@ -3,7 +3,7 @@
 //! "Curves" is the per-channel tonal-mapping primitive in every classical
 //! photo-editor. The user specifies a small set of control points
 //! `(x, y)` on `[0, 255]² → [0, 255]²` and the editor fits a smooth
-//! monotone curve through them. Seven classic interpolants apply:
+//! monotone curve through them. Nine classic interpolants apply:
 //!
 //! 1. **Linear** — straight segments between control points. Cheapest;
 //!    visible kinks at every knot.
@@ -88,8 +88,36 @@
 //!    properties. Still `C¹` only and not monotone-safe (the tangent
 //!    is a scaled secant chord just like uniform Catmull-Rom, so
 //!    overshoot is possible at any `c < 1`).
+//! 8. **Clamped cubic spline** — the first §4.2-alternative boundary
+//!    choice for the same `C²` tridiagonal spline family as item 4:
+//!    instead of the "natural" zero-second-derivative ends, the **end
+//!    first derivatives** are fixed to caller-supplied slopes
+//!    `s₀ = P'(x_0)` and `s₁ = P'(x_{n−1})`. Differentiating the §4.4
+//!    segment cubic and imposing the two conditions yields two extra
+//!    tridiagonal boundary rows (`2h_0·M_0 + h_0·M_1 = 6(Δ_0 − s₀)` at
+//!    the head, `h_{n−2}·M_{n−2} + 2h_{n−2}·M_{n−1} = 6(s₁ − Δ_{n−2})`
+//!    at the tail) so the full `n × n` system stays tridiagonal +
+//!    diagonally dominant and the same Thomas sweep solves it. Slopes
+//!    are encoded as signed Q8.8 fixed point (`slope = q / 256`) so the
+//!    enum keeps `Copy + Eq`. With both slopes at `1.0` the identity
+//!    curve solves to `M ≡ 0` and stays the exact identity.
+//! 9. **Not-a-knot cubic spline** — the second §4.2-alternative
+//!    boundary: the **third derivative** is forced continuous across
+//!    the first and last *interior* knots, i.e. segments 0/1 (and
+//!    n−3/n−2) each merge into one single cubic. Since `P'''` on
+//!    segment `i` is the constant `(M_{i+1} − M_i)/h_i`, the conditions
+//!    are `(M_1 − M_0)/h_0 = (M_2 − M_1)/h_1` and the mirror at the
+//!    tail. Eliminating `M_0` / `M_{n−1}` into the adjacent §4.1
+//!    interior rows keeps the reduced `(n−2)`-row system tridiagonal
+//!    for the Thomas sweep; the eliminated boundary values are
+//!    recovered afterwards by back-substitution. Degenerate sizes:
+//!    `n = 2` has no interior knot ⇒ straight line; `n = 3` has a
+//!    single interior knot carrying *both* conditions ⇒ the spline is
+//!    one global polynomial with `P''' ≡ 0`, i.e. the parabola through
+//!    the three points (`M_i` all equal to twice the second divided
+//!    difference).
 //!
-//! We implement all seven under [`CurveInterpolation`] and apply the
+//! We implement all nine under [`CurveInterpolation`] and apply the
 //! curve as a per-channel 256-entry LUT.
 //!
 //! Channels supported: a single `master` curve always runs on every
@@ -198,6 +226,69 @@ pub enum CurveInterpolation {
         /// uniform Catmull-Rom; `255` → flat-tangent.
         tension_q8: u8,
     },
+    /// Clamped cubic spline — the same `C²` tridiagonal-solve spline
+    /// family as [`Self::NaturalCubic`] but with the first
+    /// §4.2-alternative boundary of
+    /// `docs/image/filter/curve-interpolation.md`: the **end first
+    /// derivatives** are prescribed (`P'(x_0) = s₀`,
+    /// `P'(x_{n−1}) = s₁`) instead of zeroing the end second
+    /// derivatives. Differentiating the §4.4 segment polynomial gives
+    /// the two boundary rows
+    /// `2h_0·M_0 + h_0·M_1 = 6(Δ_0 − s₀)` and
+    /// `h_{n−2}·M_{n−2} + 2h_{n−2}·M_{n−1} = 6(s₁ − Δ_{n−2})`,
+    /// keeping the full `n × n` system tridiagonal and diagonally
+    /// dominant for the §4.3 Thomas sweep.
+    ///
+    /// Slopes are signed Q8.8 fixed point: `slope = q / 256`
+    /// (`256` → slope `1.0`). This keeps the enum `Copy + Eq`. Useful
+    /// for tone curves whose end behaviour must be pinned — e.g.
+    /// `s₀ = s₁ = 0` produces a smoothstep-style S with flat shoulders,
+    /// while `s₀ = s₁ = 1` on the identity knots reproduces the exact
+    /// identity (the system solves to `M ≡ 0`). Like the natural
+    /// spline this is `C²` but **not** monotone-safe.
+    ClampedCubic {
+        /// Prescribed slope at the first knot, signed Q8.8
+        /// (`s₀ = start_slope_q8 / 256`).
+        start_slope_q8: i16,
+        /// Prescribed slope at the last knot, signed Q8.8
+        /// (`s₁ = end_slope_q8 / 256`).
+        end_slope_q8: i16,
+    },
+    /// Not-a-knot cubic spline — the second §4.2-alternative boundary
+    /// of `docs/image/filter/curve-interpolation.md`: the **third
+    /// derivative is continuous across the first and last interior
+    /// knots**, so segments 0/1 (and n−3/n−2) each merge into a single
+    /// cubic. `P'''` on segment `i` is the constant
+    /// `(M_{i+1} − M_i)/h_i`, so the boundary conditions are
+    /// `(M_1 − M_0)/h_0 = (M_2 − M_1)/h_1` (head) and
+    /// `(M_{n−2} − M_{n−3})/h_{n−3} = (M_{n−1} − M_{n−2})/h_{n−2}`
+    /// (tail). `M_0` / `M_{n−1}` are eliminated into the adjacent §4.1
+    /// interior rows so the reduced `(n−2)`-row system stays
+    /// tridiagonal for the Thomas sweep, then recovered by
+    /// back-substitution. Parameter-free counterpart to
+    /// [`Self::ClampedCubic`] when no end-slope information exists —
+    /// the classical "let the data speak" boundary that avoids the
+    /// natural spline's artificial flattening (`M = 0`) at the ends.
+    /// Degenerate sizes: `n = 2` → straight line; `n = 3` → the
+    /// parabola through the three points (`P''' ≡ 0` globally). `C²`
+    /// but **not** monotone-safe.
+    NotAKnotCubic,
+}
+
+/// §4.2 boundary-condition selector for the `C²` tridiagonal-solve
+/// spline family (natural / clamped / not-a-knot). Internal — the
+/// public surface is the corresponding [`CurveInterpolation`] variants;
+/// this enum just lets the three share one solver + evaluator.
+#[derive(Clone, Copy, Debug)]
+enum SplineBoundary {
+    /// `M_0 = M_{n−1} = 0` (§4.2 "natural").
+    Natural,
+    /// Prescribed end first derivatives `P'(x_0) = s0`,
+    /// `P'(x_{n−1}) = s1` (§4.2 "clamped").
+    Clamped { s0: f32, s1: f32 },
+    /// Third derivative continuous across the first / last interior
+    /// knot (§4.2 "not-a-knot").
+    NotAKnot,
 }
 
 /// A single tonal curve: an ordered list of `(input, output)` control
@@ -255,17 +346,39 @@ impl Curve {
             }
             return lut;
         }
-        // Natural cubic spline takes a different path: a tridiagonal
-        // solve for the per-knot second derivatives `M_i` instead of
-        // per-knot tangents `m_i`.
-        if matches!(mode, CurveInterpolation::NaturalCubic) {
-            return Self::build_natural_cubic_lut(&pts, n);
+        // The §4 spline family (natural / clamped / not-a-knot) takes a
+        // different path: a tridiagonal solve for the per-knot second
+        // derivatives `M_i` instead of per-knot tangents `m_i`. The
+        // three differ only in the §4.2 boundary rows.
+        match mode {
+            CurveInterpolation::NaturalCubic => {
+                return Self::build_spline_lut(&pts, n, SplineBoundary::Natural);
+            }
+            CurveInterpolation::ClampedCubic {
+                start_slope_q8,
+                end_slope_q8,
+            } => {
+                return Self::build_spline_lut(
+                    &pts,
+                    n,
+                    SplineBoundary::Clamped {
+                        s0: start_slope_q8 as f32 / 256.0,
+                        s1: end_slope_q8 as f32 / 256.0,
+                    },
+                );
+            }
+            CurveInterpolation::NotAKnotCubic => {
+                return Self::build_spline_lut(&pts, n, SplineBoundary::NotAKnot);
+            }
+            _ => {}
         }
         // Per-segment tangents for the cubic-Hermite paths.
         let mut tangents = vec![0f32; n];
         match mode {
             CurveInterpolation::Linear => {}
-            CurveInterpolation::NaturalCubic => unreachable!(),
+            CurveInterpolation::NaturalCubic
+            | CurveInterpolation::ClampedCubic { .. }
+            | CurveInterpolation::NotAKnotCubic => unreachable!(),
             CurveInterpolation::CatmullRom => {
                 // Standard Catmull-Rom tangents (centred differences;
                 // one-sided at the boundaries).
@@ -530,31 +643,212 @@ impl Curve {
         }
     }
 
-    /// Build the LUT for the natural cubic spline (§4 of the curve-
-    /// interpolation reference doc). The path is separate from
-    /// [`Self::build_lut`] because the natural spline is a `C²`
-    /// interpolant parameterised by per-knot second-derivatives
-    /// `M_i = P''(x_i)`, not by per-knot tangents `m_i = P'(x_i)` like
-    /// the cubic-Hermite paths.
+    /// §4.3 Thomas forward-elimination + back-substitution on a general
+    /// tridiagonal system. `a` is the sub-diagonal (`a[0]` unused),
+    /// `b` the main diagonal, `c` the super-diagonal (`c[k−1]` unused),
+    /// `d` the right-hand side; all four slices share the system size.
+    /// `c'_i` / `d'_i` are the elimination's modified super-diagonal and
+    /// RHS; `inv` caches `1 / (b_i − a_i·c'_{i−1})` to avoid two
+    /// divisions per step, with the same defensive near-zero-pivot
+    /// collapse-to-0 the pre-existing natural-cubic path used.
+    fn thomas_solve(a: &[f32], b: &[f32], c: &[f32], d: &[f32]) -> Vec<f32> {
+        let size = b.len();
+        let mut c_prime = vec![0f32; size];
+        let mut d_prime = vec![0f32; size];
+        for k in 0..size {
+            let denom = if k == 0 {
+                b[0]
+            } else {
+                b[k] - a[k] * c_prime[k - 1]
+            };
+            let inv = if denom.abs() < 1.0e-12 {
+                0.0
+            } else {
+                1.0 / denom
+            };
+            c_prime[k] = c[k] * inv;
+            d_prime[k] = if k == 0 {
+                d[k] * inv
+            } else {
+                (d[k] - a[k] * d_prime[k - 1]) * inv
+            };
+        }
+        let mut x = vec![0f32; size];
+        let mut next = 0.0f32;
+        for k in (0..size).rev() {
+            x[k] = d_prime[k] - c_prime[k] * next;
+            next = x[k];
+        }
+        x
+    }
+
+    /// Solve for the per-knot second derivatives `M_i = P''(x_i)` of
+    /// the §4 `C²` cubic spline under the selected §4.2 boundary
+    /// condition. Interior rows are always the §4.1 system
+    /// `h_{i−1}·M_{i−1} + 2(h_{i−1}+h_i)·M_i + h_i·M_{i+1}
+    ///    = 6·(Δ_i − Δ_{i−1})` for `i = 1 … n−2`; the boundary choice
+    /// only changes the first / last rows:
+    ///
+    /// * [`SplineBoundary::Natural`] — `M_0 = M_{n−1} = 0`; the
+    ///   interior `(n−2)`-row system is solved with both boundary
+    ///   values closed at zero.
+    /// * [`SplineBoundary::Clamped`] — prescribed end slopes. The §4.4
+    ///   segment polynomial differentiates to
+    ///   `P'(x) = Δ_i − h_i·(2M_i + M_{i+1})/6 + M_i·t +
+    ///   ((M_{i+1} − M_i)/(2h_i))·t²`; imposing `P'(x_0) = s₀` (t = 0
+    ///   on segment 0) and `P'(x_{n−1}) = s₁` (t = h on segment n−2)
+    ///   yields the head row `2h_0·M_0 + h_0·M_1 = 6(Δ_0 − s₀)` and
+    ///   tail row `h_{n−2}·M_{n−2} + 2h_{n−2}·M_{n−1} =
+    ///   6(s₁ − Δ_{n−2})`. The full `n × n` system stays tridiagonal
+    ///   and diagonally dominant (`2h > h`), so one Thomas sweep
+    ///   solves all `n` unknowns.
+    /// * [`SplineBoundary::NotAKnot`] — third-derivative continuity
+    ///   across the first / last interior knot. `P'''` on segment `i`
+    ///   is the constant `(M_{i+1} − M_i)/h_i`, so the head condition
+    ///   is `(M_1 − M_0)/h_0 = (M_2 − M_1)/h_1`, i.e.
+    ///   `M_0 = (1 + h_0/h_1)·M_1 − (h_0/h_1)·M_2`. Substituting that
+    ///   into the `i = 1` interior row (and clearing the `1/h_1`
+    ///   denominator) gives the reduced head row
+    ///   `(h_0+h_1)(h_0+2h_1)·M_1 + (h_1−h_0)(h_1+h_0)·M_2 = h_1·d_1`;
+    ///   the tail is the mirror image. The reduced `(n−2)`-row system
+    ///   is solved by the same Thomas sweep and the two eliminated
+    ///   boundary values are recovered from the substitution formulas.
+    ///   Degenerate sizes: `n = 2` (no interior knot) → `M ≡ 0`
+    ///   (straight line); `n = 3` (one interior knot carrying both
+    ///   conditions) → `P''' ≡ 0` globally, i.e. the parabola through
+    ///   the three points, whose constant second derivative is twice
+    ///   the second divided difference
+    ///   `M_i = 2·(Δ_1 − Δ_0)/(h_0 + h_1)`.
+    fn solve_spline_second_derivatives(
+        h: &[f32],
+        delta: &[f32],
+        n: usize,
+        boundary: SplineBoundary,
+    ) -> Vec<f32> {
+        let mut m = vec![0f32; n];
+        if n < 2 {
+            return m;
+        }
+        match boundary {
+            SplineBoundary::Natural => {
+                if n >= 3 {
+                    let size = n - 2;
+                    let mut a = vec![0f32; size];
+                    let mut b = vec![0f32; size];
+                    let mut c = vec![0f32; size];
+                    let mut d = vec![0f32; size];
+                    for k in 0..size {
+                        let i = k + 1;
+                        a[k] = h[i - 1];
+                        b[k] = 2.0 * (h[i - 1] + h[i]);
+                        c[k] = h[i];
+                        d[k] = 6.0 * (delta[i] - delta[i - 1]);
+                    }
+                    m[1..n - 1].copy_from_slice(&Self::thomas_solve(&a, &b, &c, &d));
+                }
+            }
+            SplineBoundary::Clamped { s0, s1 } => {
+                let mut a = vec![0f32; n];
+                let mut b = vec![0f32; n];
+                let mut c = vec![0f32; n];
+                let mut d = vec![0f32; n];
+                // Head row from P'(x_0) = s₀.
+                b[0] = 2.0 * h[0];
+                c[0] = h[0];
+                d[0] = 6.0 * (delta[0] - s0);
+                for i in 1..n - 1 {
+                    a[i] = h[i - 1];
+                    b[i] = 2.0 * (h[i - 1] + h[i]);
+                    c[i] = h[i];
+                    d[i] = 6.0 * (delta[i] - delta[i - 1]);
+                }
+                // Tail row from P'(x_{n−1}) = s₁.
+                a[n - 1] = h[n - 2];
+                b[n - 1] = 2.0 * h[n - 2];
+                d[n - 1] = 6.0 * (s1 - delta[n - 2]);
+                m = Self::thomas_solve(&a, &b, &c, &d);
+            }
+            SplineBoundary::NotAKnot => {
+                if n == 3 {
+                    // One interior knot carries BOTH not-a-knot
+                    // conditions ⇒ both segments are the same cubic with
+                    // P''' ≡ 0 ⇒ the parabola through the three points.
+                    let span = h[0] + h[1];
+                    let val = if span.abs() < 1.0e-12 {
+                        0.0
+                    } else {
+                        2.0 * (delta[1] - delta[0]) / span
+                    };
+                    m.fill(val);
+                } else if n >= 4 {
+                    let size = n - 2;
+                    let mut a = vec![0f32; size];
+                    let mut b = vec![0f32; size];
+                    let mut c = vec![0f32; size];
+                    let mut d = vec![0f32; size];
+                    for k in 0..size {
+                        let i = k + 1;
+                        a[k] = h[i - 1];
+                        b[k] = 2.0 * (h[i - 1] + h[i]);
+                        c[k] = h[i];
+                        d[k] = 6.0 * (delta[i] - delta[i - 1]);
+                    }
+                    // Head row: substitute the eliminated
+                    // `M_0 = (1 + h_0/h_1)·M_1 − (h_0/h_1)·M_2` into the
+                    // i = 1 interior row, cleared of the 1/h_1 divisor.
+                    let (h0, h1) = (h[0], h[1]);
+                    a[0] = 0.0;
+                    b[0] = (h0 + h1) * (h0 + 2.0 * h1);
+                    c[0] = (h1 - h0) * (h1 + h0);
+                    d[0] = h1 * 6.0 * (delta[1] - delta[0]);
+                    // Tail row: mirror substitution of
+                    // `M_{n−1} = (1 + g_1/g_0)·M_{n−2} − (g_1/g_0)·M_{n−3}`
+                    // into the i = n−2 interior row, cleared of 1/g_0.
+                    let (g0, g1) = (h[n - 3], h[n - 2]);
+                    a[size - 1] = (g0 - g1) * (g0 + g1);
+                    b[size - 1] = (g0 + g1) * (2.0 * g0 + g1);
+                    c[size - 1] = 0.0;
+                    d[size - 1] = g0 * 6.0 * (delta[n - 2] - delta[n - 3]);
+                    m[1..n - 1].copy_from_slice(&Self::thomas_solve(&a, &b, &c, &d));
+                    // Recover the eliminated boundary values.
+                    let r0 = if h1.abs() < 1.0e-12 { 0.0 } else { h0 / h1 };
+                    m[0] = m[1] + r0 * (m[1] - m[2]);
+                    let r1 = if g0.abs() < 1.0e-12 { 0.0 } else { g1 / g0 };
+                    m[n - 1] = m[n - 2] + r1 * (m[n - 2] - m[n - 3]);
+                }
+                // n == 2: no interior knot — straight line, M ≡ 0.
+            }
+        }
+        m
+    }
+
+    /// Build the LUT for the §4 `C²` cubic-spline family (natural /
+    /// clamped / not-a-knot — the three §4.2 boundary choices of the
+    /// curve-interpolation reference doc). The path is separate from
+    /// [`Self::build_lut`] because these splines are parameterised by
+    /// per-knot second-derivatives `M_i = P''(x_i)`, not by per-knot
+    /// tangents `m_i = P'(x_i)` like the cubic-Hermite paths.
     ///
     /// Steps (cited from `docs/image/filter/curve-interpolation.md`
     /// §4.1–4.4, originally de Boor 1978 / Thomas 1949):
     ///
     /// 1. Build the tridiagonal system
     ///    `h_{i−1}·M_{i−1} + 2(h_{i−1}+h_i)·M_i + h_i·M_{i+1}
-    ///       = 6·(Δ_i − Δ_{i−1})` for `i = 1 … n−2`, with the
-    ///    natural boundary `M_0 = M_{n−1} = 0`.
+    ///       = 6·(Δ_i − Δ_{i−1})` for `i = 1 … n−2`, with the §4.2
+    ///    boundary rows selected by `boundary` (see
+    ///    [`Self::solve_spline_second_derivatives`]).
     /// 2. Solve the system in `O(n)` with the Thomas forward-
     ///    elimination + back-substitution sweep.
     /// 3. Evaluate each segment as
     ///    `P(x) = y_i + (Δ_i − h_i·(2M_i + M_{i+1})/6)·t
     ///          + (M_i / 2)·t² + ((M_{i+1} − M_i)/(6 h_i))·t³`
     ///    with `t = x − x_i`.
-    fn build_natural_cubic_lut(pts: &[(f32, f32)], n: usize) -> [u8; 256] {
+    fn build_spline_lut(pts: &[(f32, f32)], n: usize, boundary: SplineBoundary) -> [u8; 256] {
         // n ≥ 2 is guaranteed by `build_lut`'s early-return. With
-        // exactly 2 points there are no interior knots so M ≡ 0 and the
-        // spline is a straight line — fall through to the same
-        // evaluator with empty M vector.
+        // exactly 2 points there are no interior knots so the natural /
+        // not-a-knot forms have M ≡ 0 (straight line) and the clamped
+        // form solves a 2×2 system — fall through to the same
+        // evaluator either way.
         let mut h = vec![0f32; n.saturating_sub(1)];
         let mut delta = vec![0f32; n.saturating_sub(1)];
         for i in 0..n - 1 {
@@ -567,56 +861,7 @@ impl Curve {
             };
         }
 
-        // Per-knot second derivatives. Boundary M_0 = M_{n−1} = 0 by
-        // construction; only the interior `i = 1 … n−2` slots are
-        // touched by the Thomas sweep.
-        let mut m = vec![0f32; n];
-
-        if n >= 3 {
-            // Thomas algorithm on the interior system of size n − 2.
-            // Coefficients per §4.3:
-            //   a_i = h_{i−1},  b_i = 2(h_{i−1} + h_i),  c_i = h_i,
-            //   d_i = 6 (Δ_i − Δ_{i−1}).
-            // c'_i and d'_i are the elimination's modified
-            // super-diagonal and RHS; `inv` caches `1 / (b_i −
-            // a_i·c'_{i−1})` to avoid two divisions per step.
-            let interior = n - 2;
-            let mut c_prime = vec![0f32; interior];
-            let mut d_prime = vec![0f32; interior];
-
-            // Forward elimination.
-            for k in 0..interior {
-                // i is the global knot index (1-based interior).
-                let i = k + 1;
-                let a = h[i - 1];
-                let b = 2.0 * (h[i - 1] + h[i]);
-                let c = h[i];
-                let d = 6.0 * (delta[i] - delta[i - 1]);
-                if k == 0 {
-                    let inv = if b.abs() < 1.0e-12 { 0.0 } else { 1.0 / b };
-                    c_prime[k] = c * inv;
-                    d_prime[k] = d * inv;
-                } else {
-                    let denom = b - a * c_prime[k - 1];
-                    let inv = if denom.abs() < 1.0e-12 {
-                        0.0
-                    } else {
-                        1.0 / denom
-                    };
-                    c_prime[k] = c * inv;
-                    d_prime[k] = (d - a * d_prime[k - 1]) * inv;
-                }
-            }
-
-            // Back substitution: M_i = d'_i − c'_i · M_{i+1}. The
-            // "next" knot starts as the closed boundary M_{n−1} = 0.
-            let mut next = 0.0f32;
-            for k in (0..interior).rev() {
-                let i = k + 1;
-                m[i] = d_prime[k] - c_prime[k] * next;
-                next = m[i];
-            }
-        }
+        let m = Self::solve_spline_second_derivatives(&h, &delta, n, boundary);
 
         // §4.4 evaluation: walk x = 0..=255 and pick segment `i` such
         // that `pts[i].0 ≤ x < pts[i+1].0`.
@@ -1712,6 +1957,333 @@ mod tests {
         let mut acc: u32 = 0;
         for &v in car.iter() {
             acc += v as u32;
+        }
+        assert!(acc > 0);
+    }
+
+    // ---------- r277: Clamped + not-a-knot cubic splines (§4.2
+    // alternative boundary conditions of
+    // docs/image/filter/curve-interpolation.md) ----------
+
+    /// Shared helper: build `h` / `Δ` for a knot list and run the §4
+    /// second-derivative solver under the given boundary.
+    fn solve_m(pts: &[(f32, f32)], boundary: SplineBoundary) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        let n = pts.len();
+        let mut h = vec![0f32; n - 1];
+        let mut delta = vec![0f32; n - 1];
+        for i in 0..n - 1 {
+            let dx = pts[i + 1].0 - pts[i].0;
+            h[i] = dx;
+            delta[i] = if dx.abs() < 1.0e-6 {
+                0.0
+            } else {
+                (pts[i + 1].1 - pts[i].1) / dx
+            };
+        }
+        let m = Curve::solve_spline_second_derivatives(&h, &delta, n, boundary);
+        (h, delta, m)
+    }
+
+    #[test]
+    fn clamped_passes_through_control_points() {
+        // Interpolation property: every interpolant in §1–§4 of the
+        // reference doc passes through the supplied control points
+        // exactly (within u8 round-off), independent of the boundary
+        // choice. Five-knot fixture, asymmetric prescribed slopes.
+        let pts = [(0u8, 0u8), (50, 30), (120, 210), (200, 90), (255, 255)];
+        let curve = Curve::new(pts);
+        let lut = curve.build_lut(CurveInterpolation::ClampedCubic {
+            start_slope_q8: 128, // s₀ = 0.5
+            end_slope_q8: 512,   // s₁ = 2.0
+        });
+        for (x, y) in pts {
+            let got = lut[x as usize];
+            assert!(
+                (got as i16 - y as i16).abs() <= 1,
+                "clamped at x={x}: got {got}, expected {y}",
+            );
+        }
+    }
+
+    #[test]
+    fn clamped_identity_slopes_on_identity_knots_is_identity() {
+        // With s₀ = s₁ = 1 on the 2-point identity knots, the line
+        // `y = x` satisfies both clamped conditions with M ≡ 0, so the
+        // system solves to zero and the evaluator reproduces the exact
+        // identity (head row: 2h·M_0 + h·M_1 = 6(Δ − 1) = 0; tail row
+        // mirrors — the unique solution of the dominant system is 0).
+        let curve = Curve::identity();
+        let lut = curve.build_lut(CurveInterpolation::ClampedCubic {
+            start_slope_q8: 256,
+            end_slope_q8: 256,
+        });
+        for (x, slot) in lut.iter().enumerate() {
+            assert_eq!(*slot as usize, x, "non-identity at x={x}");
+        }
+    }
+
+    #[test]
+    fn clamped_zero_end_slopes_flatten_the_ends() {
+        // s₀ = s₁ = 0 on the identity knots pins both end derivatives
+        // flat, producing a smoothstep-style S: the LUT must be ~flat
+        // near both endpoints (the natural spline keeps slope ≈ 1
+        // there) while still spanning 0 → 255 and hitting ~midpoint at
+        // x = 128 by symmetry.
+        let curve = Curve::identity();
+        let lut = curve.build_lut(CurveInterpolation::ClampedCubic {
+            start_slope_q8: 0,
+            end_slope_q8: 0,
+        });
+        assert_eq!(lut[0], 0);
+        assert_eq!(lut[255], 255);
+        // Flat shoulders: over the first / last 4 samples the curve
+        // moves at most 1 LSB (slope 0 + tiny quadratic term), whereas
+        // the natural spline moves ≈ 4.
+        assert!(
+            lut[4] <= 1,
+            "clamped s₀=0 head should be flat, lut[4] = {}",
+            lut[4]
+        );
+        assert!(
+            lut[251] >= 254,
+            "clamped s₁=0 tail should be flat, lut[251] = {}",
+            lut[251]
+        );
+        // Midpoint symmetry of the s-shape.
+        assert!(
+            (lut[128] as i16 - 128).abs() <= 2,
+            "clamped s-curve midpoint drifted: lut[128] = {}",
+            lut[128]
+        );
+        // And it must differ from the natural spline (which is the
+        // straight line on these knots).
+        let nat = curve.build_lut(CurveInterpolation::NaturalCubic);
+        let max_delta = lut
+            .iter()
+            .zip(nat.iter())
+            .map(|(a, b)| (*a as i16 - *b as i16).abs())
+            .max()
+            .unwrap();
+        assert!(
+            max_delta > 1,
+            "clamped s=0 must differ from natural on identity knots; max |delta| = {max_delta}",
+        );
+    }
+
+    #[test]
+    fn clamped_solver_honours_prescribed_end_slopes() {
+        // Solver-level check of the §4.2 clamped conditions: rebuild
+        // the end first derivatives from the solved M via the
+        // differentiated §4.4 polynomial and compare against the
+        // prescribed s₀ / s₁.
+        //   P'(x_0)    = Δ_0 − h_0·(2M_0 + M_1)/6
+        //   P'(x_{n−1}) = Δ_{n−2} + h_{n−2}·(M_{n−2} + 2M_{n−1})/6
+        let pts = [
+            (0.0f32, 0.0f32),
+            (50.0, 30.0),
+            (120.0, 210.0),
+            (200.0, 90.0),
+            (255.0, 255.0),
+        ];
+        let (s0, s1) = (0.25f32, 3.0f32);
+        let (h, delta, m) = solve_m(&pts, SplineBoundary::Clamped { s0, s1 });
+        let n = pts.len();
+        let head = delta[0] - h[0] * (2.0 * m[0] + m[1]) / 6.0;
+        let tail = delta[n - 2] + h[n - 2] * (m[n - 2] + 2.0 * m[n - 1]) / 6.0;
+        assert!(
+            (head - s0).abs() < 1.0e-3,
+            "clamped head slope: got {head}, prescribed {s0}",
+        );
+        assert!(
+            (tail - s1).abs() < 1.0e-3,
+            "clamped tail slope: got {tail}, prescribed {s1}",
+        );
+        // Interior §4.1 rows must still hold (the boundary rows did not
+        // corrupt the system).
+        for i in 1..n - 1 {
+            let lhs = h[i - 1] * m[i - 1] + 2.0 * (h[i - 1] + h[i]) * m[i] + h[i] * m[i + 1];
+            let rhs = 6.0 * (delta[i] - delta[i - 1]);
+            assert!(
+                (lhs - rhs).abs() < 1.0e-2,
+                "clamped interior row {i}: lhs={lhs} rhs={rhs}",
+            );
+        }
+    }
+
+    #[test]
+    fn clamped_differs_from_natural_on_shared_knots() {
+        // The natural boundary zeroes the end second derivatives; the
+        // clamped boundary pins the end first derivatives. On the same
+        // multi-knot fixture with a non-secant prescribed slope the two
+        // LUTs must diverge by more than the 1-LSB rounding band —
+        // otherwise the new variant silently aliases the old one.
+        let curve = Curve::new([(0, 0), (64, 32), (128, 200), (192, 96), (255, 255)]);
+        let nat = curve.build_lut(CurveInterpolation::NaturalCubic);
+        let cla = curve.build_lut(CurveInterpolation::ClampedCubic {
+            start_slope_q8: 768, // s₀ = 3.0 — far from the head secant 0.5
+            end_slope_q8: 0,     // s₁ = 0.0
+        });
+        let max_delta = nat
+            .iter()
+            .zip(cla.iter())
+            .map(|(a, b)| (*a as i16 - *b as i16).abs())
+            .max()
+            .unwrap();
+        assert!(
+            max_delta > 1,
+            "clamped must differ from natural; max |delta| = {max_delta}",
+        );
+    }
+
+    #[test]
+    fn not_a_knot_passes_through_control_points() {
+        // Interpolation property under the second §4.2 boundary.
+        let pts = [(0u8, 0u8), (50, 30), (120, 210), (200, 90), (255, 255)];
+        let curve = Curve::new(pts);
+        let lut = curve.build_lut(CurveInterpolation::NotAKnotCubic);
+        for (x, y) in pts {
+            let got = lut[x as usize];
+            assert!(
+                (got as i16 - y as i16).abs() <= 1,
+                "not-a-knot at x={x}: got {got}, expected {y}",
+            );
+        }
+    }
+
+    #[test]
+    fn not_a_knot_two_points_is_straight_line() {
+        // No interior knots ⇒ the not-a-knot conditions have no knot to
+        // act on and the spline degenerates to the straight line
+        // (M ≡ 0), matching the linear path sample-by-sample.
+        let curve = Curve::new([(0, 0), (255, 200)]);
+        let lin = curve.build_lut(CurveInterpolation::Linear);
+        let nak = curve.build_lut(CurveInterpolation::NotAKnotCubic);
+        for (i, (a, b)) in lin.iter().zip(nak.iter()).enumerate() {
+            assert!(
+                (*a as i16 - *b as i16).abs() <= 1,
+                "not-a-knot ≠ linear on 2-point ramp at x={i}: linear={a} not-a-knot={b}",
+            );
+        }
+    }
+
+    #[test]
+    fn not_a_knot_three_points_is_the_parabola() {
+        // n = 3: the single interior knot carries both not-a-knot
+        // conditions, so P''' ≡ 0 and the spline is the unique parabola
+        // through the three points. Compare the LUT against a direct
+        // quadratic (Lagrange) evaluation at every sample.
+        let pts = [(0.0f32, 0.0f32), (64.0, 32.0), (255.0, 255.0)];
+        let curve = Curve::new([(0u8, 0u8), (64, 32), (255, 255)]);
+        let lut = curve.build_lut(CurveInterpolation::NotAKnotCubic);
+        let quad = |x: f32| -> f32 {
+            let (x0, y0) = pts[0];
+            let (x1, y1) = pts[1];
+            let (x2, y2) = pts[2];
+            y0 * ((x - x1) * (x - x2)) / ((x0 - x1) * (x0 - x2))
+                + y1 * ((x - x0) * (x - x2)) / ((x1 - x0) * (x1 - x2))
+                + y2 * ((x - x0) * (x - x1)) / ((x2 - x0) * (x2 - x1))
+        };
+        for x in 0u32..=255 {
+            let expect = quad(x as f32).clamp(0.0, 255.0).round() as i16;
+            let got = lut[x as usize] as i16;
+            assert!(
+                (got - expect).abs() <= 1,
+                "not-a-knot n=3 must be the parabola: x={x} got={got} expected={expect}",
+            );
+        }
+    }
+
+    #[test]
+    fn not_a_knot_solver_third_derivative_is_continuous_at_boundary_knots() {
+        // The defining §4.2 property: P''' (the per-segment constant
+        // `(M_{i+1} − M_i)/h_i`) matches across the first and last
+        // interior knots. Also re-verify the §4.1 interior rows so the
+        // reduced-system elimination provably reconstructed a solution
+        // of the original system.
+        let pts = [
+            (0.0f32, 0.0f32),
+            (40.0, 120.0),
+            (128.0, 140.0),
+            (200.0, 60.0),
+            (255.0, 255.0),
+        ];
+        let (h, delta, m) = solve_m(&pts, SplineBoundary::NotAKnot);
+        let n = pts.len();
+        let head_l = (m[1] - m[0]) / h[0];
+        let head_r = (m[2] - m[1]) / h[1];
+        assert!(
+            (head_l - head_r).abs() < 1.0e-3,
+            "not-a-knot head P''' mismatch: {head_l} vs {head_r}",
+        );
+        let tail_l = (m[n - 2] - m[n - 3]) / h[n - 3];
+        let tail_r = (m[n - 1] - m[n - 2]) / h[n - 2];
+        assert!(
+            (tail_l - tail_r).abs() < 1.0e-3,
+            "not-a-knot tail P''' mismatch: {tail_l} vs {tail_r}",
+        );
+        for i in 1..n - 1 {
+            let lhs = h[i - 1] * m[i - 1] + 2.0 * (h[i - 1] + h[i]) * m[i] + h[i] * m[i + 1];
+            let rhs = 6.0 * (delta[i] - delta[i - 1]);
+            assert!(
+                (lhs - rhs).abs() < 1.0e-2,
+                "not-a-knot interior row {i}: lhs={lhs} rhs={rhs}",
+            );
+        }
+    }
+
+    #[test]
+    fn not_a_knot_differs_from_natural_on_curved_ends() {
+        // Natural artificially flattens the ends (M_0 = M_{n−1} = 0);
+        // not-a-knot extrapolates the interior curvature instead. On a
+        // fixture with strong curvature near the boundary the two LUTs
+        // must diverge by more than the rounding band.
+        let curve = Curve::new([(0, 0), (40, 120), (128, 140), (200, 60), (255, 255)]);
+        let nat = curve.build_lut(CurveInterpolation::NaturalCubic);
+        let nak = curve.build_lut(CurveInterpolation::NotAKnotCubic);
+        let max_delta = nat
+            .iter()
+            .zip(nak.iter())
+            .map(|(a, b)| (*a as i16 - *b as i16).abs())
+            .max()
+            .unwrap();
+        assert!(
+            max_delta > 1,
+            "not-a-knot must differ from natural; max |delta| = {max_delta}",
+        );
+    }
+
+    #[test]
+    fn not_a_knot_is_c2_smooth() {
+        // Same second-difference `C²` proxy as the natural-spline test:
+        // the spline family shares the §4.1 interior continuity rows,
+        // so the proxy must not spike across an interior knot under the
+        // not-a-knot boundary either.
+        let curve = Curve::new([(0, 0), (64, 32), (128, 200), (192, 96), (255, 255)]);
+        let lut = curve.build_lut(CurveInterpolation::NotAKnotCubic);
+        let left = lut[127] as i32 - 2 * lut[126] as i32 + lut[125] as i32;
+        let right = lut[130] as i32 - 2 * lut[129] as i32 + lut[128] as i32;
+        assert!(
+            (left - right).abs() <= 8,
+            "not-a-knot `C²` continuity proxy: left={left} right={right} delta={}",
+            (left - right).abs(),
+        );
+    }
+
+    #[test]
+    fn clamped_and_not_a_knot_clamp_to_byte_range() {
+        // Like the natural spline, neither §4.2 alternative is
+        // monotone-safe; a pathological control set must still build a
+        // valid [0, 255] LUT with no NaN cast / panic. Touch every
+        // entry of both LUTs.
+        let curve = Curve::new([(0, 0), (50, 5), (60, 250), (200, 5), (255, 255)]);
+        let cla = curve.build_lut(CurveInterpolation::ClampedCubic {
+            start_slope_q8: -512, // negative prescribed slope is legal
+            end_slope_q8: 1024,
+        });
+        let nak = curve.build_lut(CurveInterpolation::NotAKnotCubic);
+        let mut acc: u32 = 0;
+        for i in 0..256usize {
+            acc += cla[i] as u32 + nak[i] as u32;
         }
         assert!(acc > 0);
     }

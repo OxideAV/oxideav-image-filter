@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r277: extend `CurveInterpolation` with the two §4.2-alternative
+  boundary conditions of the `C²` tridiagonal cubic-spline family per
+  `docs/image/filter/curve-interpolation.md` §4.2 (the natural spline's
+  doc-flagged alternatives; de Boor 1978, Thomas 1949):
+  `ClampedCubic { start_slope_q8, end_slope_q8 }` prescribes the **end
+  first derivatives** — differentiating the §4.4 segment polynomial and
+  imposing `P'(x_0) = s₀` / `P'(x_{n−1}) = s₁` yields the boundary rows
+  `2h_0·M_0 + h_0·M_1 = 6(Δ_0 − s₀)` and `h_{n−2}·M_{n−2} +
+  2h_{n−2}·M_{n−1} = 6(s₁ − Δ_{n−2})`, keeping the full `n × n` system
+  tridiagonal + diagonally dominant for the §4.3 Thomas sweep (slopes
+  are signed Q8.8 fixed point, `slope = q / 256`, so the enum stays
+  `Copy + Eq`; identity knots with both slopes at `1.0` solve to
+  `M ≡ 0`, the exact identity). `NotAKnotCubic` forces the **third
+  derivative continuous** across the first / last interior knot —
+  `P'''` on segment `i` is the constant `(M_{i+1} − M_i)/h_i`, so
+  `M_0` / `M_{n−1}` are eliminated into the adjacent §4.1 interior rows
+  (head row `(h_0+h_1)(h_0+2h_1)·M_1 + (h_1−h_0)(h_1+h_0)·M_2 =
+  h_1·d_1`, tail mirrored), the reduced `(n−2)`-row system is solved by
+  the same Thomas sweep and the eliminated boundary values are
+  recovered by back-substitution; degenerate `n = 3` (one interior knot
+  carrying both conditions) resolves to `P''' ≡ 0`, the parabola
+  through the three points, and `n = 2` to the straight line. The
+  natural-cubic solver + §4.4 evaluator were refactored into a shared
+  `SplineBoundary`-parameterised path (`thomas_solve` +
+  `solve_spline_second_derivatives` + `build_spline_lut`); the
+  `NaturalCubic` output is unchanged. JSON factory parser accepts
+  `"clamped"` / `"clamped-cubic"` / `"clamped_cubic"` /
+  `"clampedcubic"` (slopes via `start_slope`/`slope0`/`s0` and
+  `end_slope`/`slope1`/`s1`, default `1.0`, out-of-range clamped to
+  `[-127, 127]`) and `"not-a-knot"` / `"not_a_knot"` / `"notaknot"` /
+  `"not-a-knot-cubic"` / `"not_a_knot_cubic"`. Ten new unit tests
+  (`clamped_passes_through_control_points`,
+  `clamped_identity_slopes_on_identity_knots_is_identity`,
+  `clamped_zero_end_slopes_flatten_the_ends`,
+  `clamped_solver_honours_prescribed_end_slopes` — the solved `M`
+  reconstruct the prescribed end slopes AND satisfy every §4.1 interior
+  row, `clamped_differs_from_natural_on_shared_knots`,
+  `not_a_knot_passes_through_control_points`,
+  `not_a_knot_two_points_is_straight_line`,
+  `not_a_knot_three_points_is_the_parabola` — LUT matches the direct
+  Lagrange quadratic at all 256 samples,
+  `not_a_knot_solver_third_derivative_is_continuous_at_boundary_knots`,
+  `not_a_knot_differs_from_natural_on_curved_ends`,
+  `not_a_knot_is_c2_smooth`, `clamped_and_not_a_knot_clamp_to_byte_range`)
+  plus two JSON-factory alias tests in `src/registry.rs`.
+
 - r270: extend `CurveInterpolation` with `MonotoneCubicBox` — the
   Fritsch-Carlson monotone-cubic interpolant using the **box** form of
   the §2.2 sufficient monotonicity region per

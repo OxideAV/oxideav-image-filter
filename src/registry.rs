@@ -4922,43 +4922,73 @@ fn make_curves(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
         .and_then(|v| v.as_f64())
         .map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8)
         .unwrap_or(128);
-    let mode = p
-        .and_then(|m| m.get("interpolation").or_else(|| m.get("mode")))
-        .and_then(|v| v.as_str())
-        .map(|s| match s {
-            "linear" => CurveInterpolation::Linear,
-            "catmull-rom" | "catmull_rom" | "catmullrom" => CurveInterpolation::CatmullRom,
-            "natural-cubic" | "natural_cubic" | "natural" => CurveInterpolation::NaturalCubic,
-            // r226: centripetal Catmull-Rom (Yuksel et al. 2011, α = 0.5)
-            // — §3.3 of `docs/image/filter/curve-interpolation.md`.
-            "centripetal"
-            | "centripetal-catmull-rom"
-            | "centripetal_catmull_rom"
-            | "centripetalcatmullrom"
-            | "catmull-rom-centripetal" => CurveInterpolation::CentripetalCatmullRom,
-            // r231: chordal Catmull-Rom (Yuksel et al. 2011, α = 1) —
-            // §3.3 of `docs/image/filter/curve-interpolation.md`.
-            "chordal"
-            | "chordal-catmull-rom"
-            | "chordal_catmull_rom"
-            | "chordalcatmullrom"
-            | "catmull-rom-chordal" => CurveInterpolation::ChordalCatmullRom,
-            // r262: cardinal spline with tension parameter (Catmull & Rom
-            // 1974) — §3.2 of `docs/image/filter/curve-interpolation.md`.
-            // Tension is read from the `tension` (or `c`) JSON field above.
-            "cardinal" | "cardinal-spline" | "cardinal_spline" | "cardinalspline" => {
-                CurveInterpolation::Cardinal { tension_q8 }
-            }
-            // r270: the §2.2 box-region Fritsch-Carlson monotone-cubic
-            // variant (`0 ≤ α ≤ 3` and `0 ≤ β ≤ 3` applied
-            // independently) per `docs/image/filter/curve-interpolation.md`
-            // §2.2 — the doc-flagged alternative to the radius-3 circle
-            // used by the plain `MonotoneCubic` default.
-            "monotone-box" | "monotone_box" | "monotonebox" | "monotone-cubic-box"
-            | "monotone_cubic_box" | "monotonecubicbox" => CurveInterpolation::MonotoneCubicBox,
-            _ => CurveInterpolation::MonotoneCubic,
-        })
-        .unwrap_or(CurveInterpolation::MonotoneCubic);
+    // r277: prescribed end slopes for the clamped-cubic boundary (§4.2
+    // of `docs/image/filter/curve-interpolation.md`). Signed Q8.8 fixed
+    // point (`slope = q / 256`); accept `start_slope` / `slope0` / `s0`
+    // and `end_slope` / `slope1` / `s1` spellings; out-of-range values
+    // clamp to `[-127, 127]`; missing values default to slope `1.0`
+    // (the identity-preserving choice — the identity knot pair with
+    // both slopes at 1 solves to the exact identity LUT).
+    let slope_q8 = |keys: [&str; 3]| -> i16 {
+        p.and_then(|m| keys.iter().find_map(|k| m.get(*k)).and_then(|v| v.as_f64()))
+            .map(|s| (s.clamp(-127.0, 127.0) * 256.0).round() as i16)
+            .unwrap_or(256)
+    };
+    let start_slope_q8 = slope_q8(["start_slope", "slope0", "s0"]);
+    let end_slope_q8 = slope_q8(["end_slope", "slope1", "s1"]);
+    let mode =
+        p.and_then(|m| m.get("interpolation").or_else(|| m.get("mode")))
+            .and_then(|v| v.as_str())
+            .map(|s| match s {
+                "linear" => CurveInterpolation::Linear,
+                "catmull-rom" | "catmull_rom" | "catmullrom" => CurveInterpolation::CatmullRom,
+                "natural-cubic" | "natural_cubic" | "natural" => CurveInterpolation::NaturalCubic,
+                // r226: centripetal Catmull-Rom (Yuksel et al. 2011, α = 0.5)
+                // — §3.3 of `docs/image/filter/curve-interpolation.md`.
+                "centripetal"
+                | "centripetal-catmull-rom"
+                | "centripetal_catmull_rom"
+                | "centripetalcatmullrom"
+                | "catmull-rom-centripetal" => CurveInterpolation::CentripetalCatmullRom,
+                // r231: chordal Catmull-Rom (Yuksel et al. 2011, α = 1) —
+                // §3.3 of `docs/image/filter/curve-interpolation.md`.
+                "chordal"
+                | "chordal-catmull-rom"
+                | "chordal_catmull_rom"
+                | "chordalcatmullrom"
+                | "catmull-rom-chordal" => CurveInterpolation::ChordalCatmullRom,
+                // r262: cardinal spline with tension parameter (Catmull & Rom
+                // 1974) — §3.2 of `docs/image/filter/curve-interpolation.md`.
+                // Tension is read from the `tension` (or `c`) JSON field above.
+                "cardinal" | "cardinal-spline" | "cardinal_spline" | "cardinalspline" => {
+                    CurveInterpolation::Cardinal { tension_q8 }
+                }
+                // r277: clamped-cubic boundary — the first §4.2-alternative
+                // boundary of `docs/image/filter/curve-interpolation.md`
+                // (prescribed end first derivatives). Slopes are read from
+                // the `start_slope` / `end_slope` (or `slope0`/`s0`,
+                // `slope1`/`s1`) JSON fields above.
+                "clamped" | "clamped-cubic" | "clamped_cubic" | "clampedcubic" => {
+                    CurveInterpolation::ClampedCubic {
+                        start_slope_q8,
+                        end_slope_q8,
+                    }
+                }
+                // r277: not-a-knot boundary — the second §4.2-alternative
+                // boundary (third derivative continuous across the first /
+                // last interior knot). Parameter-free.
+                "not-a-knot" | "not_a_knot" | "notaknot" | "not-a-knot-cubic"
+                | "not_a_knot_cubic" => CurveInterpolation::NotAKnotCubic,
+                // r270: the §2.2 box-region Fritsch-Carlson monotone-cubic
+                // variant (`0 ≤ α ≤ 3` and `0 ≤ β ≤ 3` applied
+                // independently) per `docs/image/filter/curve-interpolation.md`
+                // §2.2 — the doc-flagged alternative to the radius-3 circle
+                // used by the plain `MonotoneCubic` default.
+                "monotone-box" | "monotone_box" | "monotonebox" | "monotone-cubic-box"
+                | "monotone_cubic_box" | "monotonecubicbox" => CurveInterpolation::MonotoneCubicBox,
+                _ => CurveInterpolation::MonotoneCubic,
+            })
+            .unwrap_or(CurveInterpolation::MonotoneCubic);
     f = f.with_interpolation(mode);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
@@ -6288,6 +6318,87 @@ mod tests {
             "monotone-cubic-box",
             "monotone_cubic_box",
             "monotonecubicbox",
+        ] {
+            let r = c.filters.make(
+                "curves",
+                &json!({
+                    "master": [[0, 0], [128, 200], [255, 255]],
+                    "interpolation": mode,
+                }),
+                &inputs,
+            );
+            assert!(r.is_ok(), "curves mode={mode} failed: {:?}", r.err());
+        }
+    }
+
+    #[test]
+    fn curves_factory_accepts_clamped_mode_aliases() {
+        // r277: the JSON factory parser gains four spelling aliases for
+        // the clamped-cubic boundary — the first §4.2-alternative
+        // boundary of `docs/image/filter/curve-interpolation.md`
+        // (prescribed end first derivatives). Slopes ride in the
+        // `start_slope` / `end_slope` (or `slope0`/`s0`, `slope1`/`s1`)
+        // JSON fields, defaulting to `1.0` when omitted.
+        let c = ctx();
+        let inputs = [yuv_in_port()];
+        for mode in ["clamped", "clamped-cubic", "clamped_cubic", "clampedcubic"] {
+            let r = c.filters.make(
+                "curves",
+                &json!({
+                    "master": [[0, 0], [128, 200], [255, 255]],
+                    "interpolation": mode,
+                    "start_slope": 0.0,
+                    "end_slope": 2.5,
+                }),
+                &inputs,
+            );
+            assert!(r.is_ok(), "curves mode={mode} failed: {:?}", r.err());
+        }
+        // Short spellings + missing-slope default (1.0) + out-of-range
+        // clamp rather than error.
+        for params in [
+            json!({
+                "master": [[0, 0], [128, 200], [255, 255]],
+                "interpolation": "clamped",
+                "s0": -2.0,
+                "s1": 0.5,
+            }),
+            json!({
+                "master": [[0, 0], [128, 200], [255, 255]],
+                "interpolation": "clamped",
+            }),
+            json!({
+                "master": [[0, 0], [128, 200], [255, 255]],
+                "interpolation": "clamped",
+                "slope0": 1.0e9,
+                "slope1": f64::NEG_INFINITY,
+            }),
+        ] {
+            let r = c.filters.make("curves", &params, &inputs);
+            assert!(
+                r.is_ok(),
+                "curves clamped params={params} failed: {:?}",
+                r.err()
+            );
+        }
+    }
+
+    #[test]
+    fn curves_factory_accepts_not_a_knot_mode_aliases() {
+        // r277: the JSON factory parser gains five spelling aliases for
+        // the not-a-knot boundary — the second §4.2-alternative
+        // boundary of `docs/image/filter/curve-interpolation.md`
+        // (third derivative continuous across the first / last interior
+        // knot). Parameter-free; all spellings resolve to the same
+        // CurveInterpolation::NotAKnotCubic value internally.
+        let c = ctx();
+        let inputs = [yuv_in_port()];
+        for mode in [
+            "not-a-knot",
+            "not_a_knot",
+            "notaknot",
+            "not-a-knot-cubic",
+            "not_a_knot_cubic",
         ] {
             let r = c.filters.make(
                 "curves",

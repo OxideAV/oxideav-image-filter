@@ -214,7 +214,7 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `ArcTan`. documented CLI: `-function <kind> args`.
 - **`Curves`** + **`Curve`** + **`CurveInterpolation`** — per-channel
   tonal curves through user-supplied `(x, y)` control points.
-  Eight interpolants: `Linear` (segment-wise), `CatmullRom` (1974
+  Ten interpolants: `Linear` (segment-wise), `CatmullRom` (1974
   Catmull-Rom cubic, uniform `α = 0` parameterisation),
   `MonotoneCubic` (1980 Fritsch-Carlson monotonicity-preserving
   Hermite — default; never overshoots; pulls the §2.2 normalised
@@ -240,7 +240,7 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   p_i|`; tames the wide-knot overshoot of uniform Catmull-Rom but
   is *not* cusp-free in the Yuksel et al. sense — only `α ∈ (0, 1)`
   is, so the centripetal variant remains the recommended default
-  for path work), and `Cardinal { tension_q8: u8 }` (Catmull & Rom
+  for path work), `Cardinal { tension_q8: u8 }` (Catmull & Rom
   1974, §3.2 of the reference doc — the tension-parameterised
   generalisation of uniform Catmull-Rom whose per-knot tangent is
   the §3.1 secant slope scaled by `(1 − c)`. Tension `c ∈ [0, 1]`
@@ -251,8 +251,30 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `h00·y_i + h01·y_{i+1}` with provable per-segment
   no-overshoot — the only `CurveInterpolation` variant that can be
   driven to an overshoot-free shape while keeping the cubic-Hermite
-  smoothness of the underlying basis). The natural spline is the
-  smoothest of the seven (continuous second derivative across
+  smoothness of the underlying basis),
+  `ClampedCubic { start_slope_q8, end_slope_q8 }` (the first §4.2
+  alternative boundary for the `C²` tridiagonal spline family —
+  the **end first derivatives** are prescribed instead of zeroing
+  the end second derivatives; differentiating the §4.4 segment
+  cubic yields the head/tail rows `2h_0·M_0 + h_0·M_1 =
+  6(Δ_0 − s₀)` and `h_{n−2}·M_{n−2} + 2h_{n−2}·M_{n−1} =
+  6(s₁ − Δ_{n−2})` so the full `n × n` system stays tridiagonal +
+  diagonally dominant for the same Thomas sweep; slopes are signed
+  Q8.8 fixed point — `slope = q / 256` — keeping the enum
+  `Copy + Eq`; `s₀ = s₁ = 1` on identity knots solves to `M ≡ 0`
+  i.e. the exact identity, `s₀ = s₁ = 0` gives a smoothstep-style
+  S with flat shoulders), and `NotAKnotCubic` (the second §4.2
+  alternative boundary — the **third derivative** is forced
+  continuous across the first/last interior knot so segments 0/1
+  and n−3/n−2 each merge into one cubic; `P'''` on segment `i` is
+  the constant `(M_{i+1} − M_i)/h_i`, and eliminating
+  `M_0`/`M_{n−1}` into the adjacent §4.1 interior rows keeps the
+  reduced system tridiagonal; degenerate `n = 3` resolves to the
+  parabola through the three points, `n = 2` to the straight
+  line — the parameter-free "let the data speak" boundary that
+  avoids the natural spline's artificial end-flattening). The
+  `C²` spline trio (natural / clamped / not-a-knot) is the
+  smoothest of the family (continuous second derivative across
   knots), at the cost of overshoot risk; the centripetal variant
   gives the cusp-free property in the same `C¹` Hermite family as
   the uniform Catmull-Rom; the cardinal variant is the only one
@@ -263,7 +285,13 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `"cardinal-spline"`, `"cardinal_spline"`, `"cardinalspline"`,
   with the tension carried by a `"tension"` (or `"c"`) JSON field
   — out-of-range values clamp to `[0, 1]` and a missing tension
-  defaults to `0.5`. Pre-existing aliases for `ChordalCatmullRom`
+  defaults to `0.5`. `ClampedCubic` aliases: `"clamped"`,
+  `"clamped-cubic"`, `"clamped_cubic"`, `"clampedcubic"`, with
+  slopes carried by `"start_slope"`/`"slope0"`/`"s0"` and
+  `"end_slope"`/`"slope1"`/`"s1"` (default `1.0`, clamped to
+  `[-127, 127]`). `NotAKnotCubic` aliases: `"not-a-knot"`,
+  `"not_a_knot"`, `"notaknot"`, `"not-a-knot-cubic"`,
+  `"not_a_knot_cubic"`. Pre-existing aliases for `ChordalCatmullRom`
   (`"chordal"` / `"chordal-catmull-rom"` / `"chordal_catmull_rom"` /
   `"chordalcatmullrom"` / `"catmull-rom-chordal"`),
   `CentripetalCatmullRom` (`"centripetal"` /
