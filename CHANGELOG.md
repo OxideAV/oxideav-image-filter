@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.2...v0.2.0) - 2026-06-13
+
+### Other
+
+- image-filter r288: SignedDistanceField (exact signed Euclidean DT)
+- r277 — ClampedCubic + NotAKnotCubic (§4.2 alternative spline boundaries) for Curves
+- r270 — MonotoneCubicBox (Fritsch-Carlson §2.2 box-region) for Curves
+- add Cardinal tension-parameterised spline to CurveInterpolation
+- drop release-plz.toml — use release-plz defaults across the workspace
+- r248 — ReinhardLocal (Reinhard 2002 §3 / dodging-and-burning local TMO)
+- r237 — ReinhardExtended (Reinhard 2002 §3.1 / unkeyed white-clamping)
+- r231 — ChordalCatmullRom (Yuksel 2011 / Barry-Goldman, α = 1) for Curves
+- r226 — CentripetalCatmullRom (Yuksel 2011 / Barry-Goldman) for Curves
+- r220 — DistanceTransform gains ChamferKind kernel selector (5-7-11 / L1 / L∞)
+- r215 — NaturalCubic interpolation (de Boor 1978 / Thomas 1949) for Curves
+- r209 — EuclideanDistanceTransform (Felzenszwalb–Huttenlocher exact-Euclidean DT) + parameter-name hygiene scrub
+- r205 — Niblack (1986) adaptive local-statistics threshold
+
 ### Added
 
 - r288: add `SignedDistanceField` — an exact signed distance field
