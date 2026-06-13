@@ -395,6 +395,21 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("edt", Box::new(make_euclidean_distance_transform));
 
+    // Signed distance field: the difference of two exact-Euclidean
+    // transforms (FG-distance minus BG-distance) so foreground pixels
+    // carry negative distance and background pixels positive, biased to
+    // a neutral midpoint on render. Three aliases so `sdf` /
+    // `signed-distance` / `signed-distance-field` resolve to the same
+    // factory.
+    ctx.filters.register(
+        "signed-distance-field",
+        Box::new(make_signed_distance_field),
+    );
+    ctx.filters
+        .register("signed-distance", Box::new(make_signed_distance_field));
+    ctx.filters
+        .register("sdf", Box::new(make_signed_distance_field));
+
     // r186 factory: classic bit-depth-reduction dither (Bayer ordered
     // + the Floyd–Steinberg / Jarvis–Judice–Ninke / Stucki /
     // Sierra-3 / Sierra-2 / Sierra-Lite / Atkinson error-diffusion
@@ -5506,6 +5521,65 @@ fn make_euclidean_distance_transform(
     )))
 }
 
+fn make_signed_distance_field(
+    params: &Value,
+    inputs: &[PortSpec],
+) -> Result<Box<dyn StreamFilter>> {
+    use crate::SignedDistanceField;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+    let threshold = get_u64("threshold").unwrap_or(128).min(255) as u8;
+    let mut f = SignedDistanceField::new(threshold);
+    if let Some(inv) = get_bool("invert") {
+        f = f.with_invert(inv);
+    }
+    if let Some(s) = get_f64("scale") {
+        if !s.is_finite() {
+            return Err(Error::invalid(
+                "signed-distance-field: scale must be finite".to_string(),
+            ));
+        }
+        if s <= 0.0 {
+            return Err(Error::invalid(
+                "signed-distance-field: scale must be > 0".to_string(),
+            ));
+        }
+        f = f.with_scale(s as f32);
+    }
+    if let Some(m) = get_u64("midpoint") {
+        f = f.with_midpoint(m.min(255) as u8);
+    }
+    let in_port = video_in_port(inputs);
+    // SignedDistanceField always emits a single-plane Gray8 intensity
+    // image; the input is Gray8-only too (apply() rejects every other
+    // format).
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec {
+            name: "video".to_string(),
+            params: PortParams::Video {
+                format: PixelFormat::Gray8,
+                width: *width,
+                height: *height,
+                time_base: *time_base,
+            },
+            ..in_port.clone()
+        },
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 fn make_log(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::{LaplacianOfGaussian, LogMode};
     let p = params.as_object();
@@ -6100,6 +6174,11 @@ mod tests {
             "euclidean-distance-transform",
             "euclidean-distance",
             "edt",
+            // r288 additions (Signed Distance Field — difference of two
+            // exact-Euclidean transforms, three aliases).
+            "signed-distance-field",
+            "signed-distance",
+            "sdf",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -6150,6 +6229,49 @@ mod tests {
         let r = c.filters.make("edt", &json!({"scale": 0.0}), &inputs);
         assert!(r.is_err(), "scale = 0 should be rejected");
         let r2 = c.filters.make("edt", &json!({"scale": -1.0}), &inputs);
+        assert!(r2.is_err(), "scale < 0 should be rejected");
+    }
+
+    #[test]
+    fn signed_distance_field_factory_emits_gray8() {
+        // sdf is always single-plane Gray8 → the adapter port must
+        // report Gray8 regardless of upstream shape.
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        let f = c
+            .filters
+            .make(
+                "signed-distance-field",
+                &json!({"threshold": 200, "scale": 2.0, "midpoint": 100}),
+                &inputs,
+            )
+            .expect("sdf factory");
+        let outs = f.output_ports();
+        assert_eq!(outs.len(), 1);
+        if let PortParams::Video { format, .. } = outs[0].params {
+            assert_eq!(format, PixelFormat::Gray8);
+        } else {
+            panic!("expected video output port");
+        }
+    }
+
+    #[test]
+    fn signed_distance_field_factory_aliases() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        for name in ["signed-distance-field", "signed-distance", "sdf"] {
+            let r = c.filters.make(name, &json!({}), &inputs);
+            assert!(r.is_ok(), "alias {name} failed: {:?}", r.err());
+        }
+    }
+
+    #[test]
+    fn signed_distance_field_factory_rejects_bad_scale() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        let r = c.filters.make("sdf", &json!({"scale": 0.0}), &inputs);
+        assert!(r.is_err(), "scale = 0 should be rejected");
+        let r2 = c.filters.make("sdf", &json!({"scale": -1.0}), &inputs);
         assert!(r2.is_err(), "scale < 0 should be rejected");
     }
 

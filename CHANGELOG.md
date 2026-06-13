@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r288: add `SignedDistanceField` — an exact signed distance field
+  built as the difference of two exact-Euclidean distance transforms
+  per `docs/image/filter/distance-transform.md` §1 (the generalised DT
+  `D_f(p) = min_q(‖p − q‖² + f(q))` whose intro names "SDF generation"
+  as a use-case) and §2 (Felzenszwalb–Huttenlocher 2012). The field is
+  `sdf(p) = d_out(p) − d_in(p)`, where `d_out` is the EDT of the mask
+  and `d_in` the EDT of the inverted mask, so foreground pixels carry
+  negative distance, background pixels positive, and the zero level-set
+  traces the shape boundary. Renders as
+  `clamp(midpoint + scale · sdf, 0, 255)` so an on-boundary pixel lands
+  at the neutral `midpoint` (default `128`). Reuses the `dt_1d`
+  lower-envelope driver of `EuclideanDistanceTransform` (now
+  `pub(crate)`), keeping the whole filter `O(d · N)` for an exact
+  result. Knobs: `threshold` / `invert` / `scale` / `midpoint`.
+  Single-plane `Gray8` in / out. Factory aliases:
+  `signed-distance-field`, `signed-distance`, `sdf`. Validated against
+  a brute-force quadratic signed-field oracle on random / solid-block
+  masks, plus sign-convention, midpoint-bias, scale, invert, and
+  degenerate all-FG / all-BG saturation tests.
 - r277: extend `CurveInterpolation` with the two §4.2-alternative
   boundary conditions of the `C²` tridiagonal cubic-spline family per
   `docs/image/filter/curve-interpolation.md` §4.2 (the natural spline's

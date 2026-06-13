@@ -120,7 +120,12 @@ impl EuclideanDistanceTransform {
 /// reasonable image size; `1e18` is well below the `f64::MAX` ceiling
 /// and well above the worst-case squared distance (the diagonal of a
 /// 32-bit image is `< 2^33 < 1e10`).
-const INF: f64 = 1.0e18;
+///
+/// Exposed `pub(crate)` so the signed-distance-field filter can seed
+/// its own `f` arrays with the same sentinel and reuse the [`dt_1d`]
+/// driver (both transforms come straight out of §2 of the same
+/// clean-room doc).
+pub(crate) const INF: f64 = 1.0e18;
 
 /// 1-D distance transform along a single line of `n` samples.
 ///
@@ -132,7 +137,11 @@ const INF: f64 = 1.0e18;
 /// Felzenszwalb–Huttenlocher's two-pass lower-envelope march. Both
 /// passes run in `O(n)`; the inner pop loop amortises because each
 /// parabola is pushed and popped at most once.
-fn dt_1d(f: &[f64], d: &mut [f64], v: &mut [usize], z: &mut [f64]) {
+///
+/// Exposed `pub(crate)` so the signed-distance-field filter can drive
+/// the exact same 1-D transform on its inside / outside masks without
+/// re-transcribing the envelope march.
+pub(crate) fn dt_1d(f: &[f64], d: &mut [f64], v: &mut [usize], z: &mut [f64]) {
     let n = f.len();
     debug_assert_eq!(d.len(), n);
     debug_assert!(v.len() >= n);

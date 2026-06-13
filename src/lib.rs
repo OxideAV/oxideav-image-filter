@@ -194,6 +194,26 @@
 //! - [`Wave`](wave::Wave) — sinusoidal vertical displacement with
 //!   configurable amplitude (px) and wavelength (px). documented CLI: `-wave AxL`.
 //!
+//! r288 additions:
+//!
+//! - [`SignedDistanceField`](signed_distance_field::SignedDistanceField)
+//!   — exact signed distance field built from two exact-Euclidean
+//!   distance transforms (Felzenszwalb–Huttenlocher 2012). Per
+//!   `docs/image/filter/distance-transform.md` §1 (the generalised DT
+//!   `D_f(p) = min_q(‖p−q‖² + f(q))` whose intro names "SDF generation"
+//!   as a use-case) and §2 (the separable lower-envelope transform): the
+//!   signed field is `sdf(p) = d_out(p) − d_in(p)` where `d_out` is the
+//!   EDT of the mask and `d_in` the EDT of the inverted mask, so
+//!   foreground pixels carry negative distance and background pixels
+//!   positive. Renders as `clamp(midpoint + scale·sdf, 0, 255)` so an
+//!   on-boundary pixel lands at the neutral `midpoint` (default `128`);
+//!   `threshold` / `invert` / `scale` / `midpoint` knobs. Reuses the
+//!   `dt_1d` driver of
+//!   [`EuclideanDistanceTransform`](euclidean_distance_transform::EuclideanDistanceTransform)
+//!   so the whole filter is `O(d·N)` for an exact result. Single-plane
+//!   `Gray8` in / out; useful for resolution-independent glyph / shape
+//!   rendering, feathering, outline / glow, and iso-level morphology.
+//!
 //! r14 additions:
 //!
 //! - [`BarrelInverse`](barrel_inverse::BarrelInverse) — polynomial
@@ -657,6 +677,7 @@ pub mod shadow_highlight;
 pub mod sharpen;
 pub mod shave;
 pub mod sigmoidal_contrast;
+pub mod signed_distance_field;
 pub mod sketch;
 pub mod solarize;
 pub mod split_tone;
@@ -798,6 +819,7 @@ pub use shadow_highlight::ShadowHighlight;
 pub use sharpen::Sharpen;
 pub use shave::Shave;
 pub use sigmoidal_contrast::SigmoidalContrast;
+pub use signed_distance_field::SignedDistanceField;
 pub use sketch::Sketch;
 pub use solarize::Solarize;
 pub use split_tone::SplitTone;

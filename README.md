@@ -407,6 +407,27 @@ physically-meaningful luminance.
   `threshold` / `invert` / `scale`. Gray8 input only; Gray8 output
   of the same dimensions. Factory aliases:
   `euclidean-distance-transform`, `euclidean-distance`, `edt`.
+- **`SignedDistanceField`** — exact signed distance field, the
+  difference of two exact-Euclidean transforms per
+  `docs/image/filter/distance-transform.md` §1 (the generalised DT
+  `D_f(p) = min_q(‖p − q‖² + f(q))` whose intro names "SDF generation"
+  as a use-case) and §2 (Felzenszwalb–Huttenlocher 2012). `sdf(p) =
+  d_out(p) − d_in(p)` where `d_out` is the distance to the nearest
+  foreground pixel (the EDT of the mask) and `d_in` the distance to the
+  nearest background pixel (the EDT of the inverted mask) — so
+  foreground pixels carry negative distance and background pixels
+  positive, with the zero level-set tracing the shape boundary. Renders
+  as `clamp(midpoint + scale · sdf, 0, 255)` so an on-boundary pixel
+  lands at the neutral `midpoint` (default `128`), the interior darkens
+  below it, and the exterior brightens above it. Reuses the `dt_1d`
+  lower-envelope driver of `EuclideanDistanceTransform`, so the whole
+  filter is `O(d · N)` for an exact result. Knobs:
+  `threshold` / `invert` / `scale` / `midpoint`. Gray8 input only;
+  Gray8 output of the same dimensions. The signed counterpart to the
+  unsigned `EuclideanDistanceTransform` — useful for
+  resolution-independent glyph / shape rendering, feathering, outline /
+  glow generation, and iso-level morphological grow / shrink. Factory
+  aliases: `signed-distance-field`, `signed-distance`, `sdf`.
 
 ### Colour
 
