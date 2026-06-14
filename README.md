@@ -116,8 +116,8 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   range. documented CLI: `-normalize`.
 - **`Posterize`** — reduce each channel to `N` intensity levels. documented CLI: `-posterize N`.
 - **`Dither`** + **`DitherMode`** + **`BayerMatrix`** +
-  **`DiffusionKernel`** — bit-depth-reduction dither with two
-  algorithm families:
+  **`DiffusionKernel`** + **`ScanOrder`** — bit-depth-reduction dither
+  with two algorithm families:
   - **Bayer ordered dither** with tiled `2×2` / `4×4` / `8×8`
     threshold maps built by the standard
     `M_2n = 4·M_n + M_2[hi, lo]` recurrence (Bayer 1973 IEEE ICC).
@@ -131,7 +131,14 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
     and Atkinson (÷8 with coefficient sum 6, so 2/8 of each pixel's
     quantisation error is intentionally discarded; Apple, late
     1980s). Per-channel for R / G / B (alpha pass-through on
-    RGBA), luma-only on YUV.
+    RGBA), luma-only on YUV. The scan order is selectable via
+    `with_scan(ScanOrder::Serpentine)`: a boustrophedon traversal
+    that alternates row direction and mirrors the stencil
+    horizontally on the reversed rows, suppressing the directional
+    "worm"/hysteresis artifacts of a pure raster scan at no extra
+    cost (dithering-kernels.md §1.3). `ScanOrder::Raster` (the
+    default) keeps the classic left→right traversal; scan order has
+    no effect on the feedback-free Bayer mode.
 
   Output bit-depth is configurable via `with_levels`. Default
   `levels = 2` gives a 1-bit black-and-white halftone (Macintosh /
@@ -143,7 +150,9 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `dither-jarvis`, `dither-stucki`, `dither-sierra3`,
   `dither-sierra2`, `dither-sierra-lite`, `dither-atkinson`,
   `dither-bayer` / `ordered-dither` (matrix size via
-  `{"matrix": 2|4|8}`).
+  `{"matrix": 2|4|8}`). The error-diffusion factories accept
+  `{"scan": "serpentine"}` (or the `{"serpentine": true}` shorthand)
+  to switch to the boustrophedon scan.
 
 - **`Solarize`** — invert pixels above a threshold. documented CLI: `-solarize N%`.
 - **`AdaptiveThreshold`** — local-mean-based binarisation with a

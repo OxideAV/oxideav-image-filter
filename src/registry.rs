@@ -5812,13 +5812,41 @@ enum ForcedMode {
 /// otherwise the algorithm comes from `params.kernel` / `params.mode`
 /// with Floyd–Steinberg as the default.
 fn parse_dither(params: &Value, forced: Option<ForcedMode>) -> Result<crate::Dither> {
-    use crate::{BayerMatrix, DiffusionKernel, Dither};
+    use crate::{BayerMatrix, DiffusionKernel, Dither, ScanOrder};
     let p = params.as_object();
     let levels = p
         .and_then(|m| m.get("levels"))
         .and_then(|v| v.as_u64())
         .unwrap_or(2)
         .min(u32::MAX as u64) as u32;
+    // `scan: "serpentine" | "raster"` (default raster) selects the
+    // error-diffusion traversal order (§1.3). A `serpentine: true`
+    // boolean shorthand is also honoured. No effect on ordered/Bayer.
+    let scan = {
+        let by_str = p
+            .and_then(|m| m.get("scan"))
+            .and_then(|v| v.as_str())
+            .map(|s| {
+                if s.eq_ignore_ascii_case("serpentine") || s.eq_ignore_ascii_case("boustrophedon") {
+                    ScanOrder::Serpentine
+                } else {
+                    ScanOrder::Raster
+                }
+            });
+        by_str
+            .or_else(|| {
+                p.and_then(|m| m.get("serpentine"))
+                    .and_then(|v| v.as_bool())
+                    .map(|b| {
+                        if b {
+                            ScanOrder::Serpentine
+                        } else {
+                            ScanOrder::Raster
+                        }
+                    })
+            })
+            .unwrap_or(ScanOrder::Raster)
+    };
     let f = match forced {
         Some(ForcedMode::Diffusion(k)) => Dither::error_diffusion(k),
         Some(ForcedMode::Ordered(m)) => Dither::ordered(m),
@@ -5856,7 +5884,7 @@ fn parse_dither(params: &Value, forced: Option<ForcedMode>) -> Result<crate::Dit
             }
         }
     };
-    Ok(f.with_levels(levels))
+    Ok(f.with_levels(levels).with_scan(scan))
 }
 
 fn make_prewitt(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
@@ -6911,6 +6939,36 @@ mod tests {
         for &v in &out.planes[0].data {
             assert!(matches!(v, 0 | 85 | 170 | 255), "4-level produced {v}");
         }
+    }
+
+    #[test]
+    fn dither_factory_parses_scan_order() {
+        use crate::ScanOrder;
+        // Default → raster.
+        assert_eq!(
+            parse_dither(&json!({}), None).unwrap().scan(),
+            ScanOrder::Raster,
+        );
+        // String form.
+        assert_eq!(
+            parse_dither(&json!({"scan": "serpentine"}), None)
+                .unwrap()
+                .scan(),
+            ScanOrder::Serpentine,
+        );
+        assert_eq!(
+            parse_dither(&json!({"scan": "raster"}), None)
+                .unwrap()
+                .scan(),
+            ScanOrder::Raster,
+        );
+        // Boolean shorthand.
+        assert_eq!(
+            parse_dither(&json!({"serpentine": true}), None)
+                .unwrap()
+                .scan(),
+            ScanOrder::Serpentine,
+        );
     }
 
     #[test]

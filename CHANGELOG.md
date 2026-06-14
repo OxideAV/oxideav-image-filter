@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r297: add serpentine (boustrophedon) scan order to `Dither`'s
+  error-diffusion path via a new `ScanOrder` enum and `Dither::with_scan`
+  builder, per `docs/image/filter/dithering-kernels.md` §1.3. On
+  `ScanOrder::Serpentine` even scanlines run left→right and odd scanlines
+  run right→left with the stencil mirrored horizontally (every `dx`
+  negated), so error still flows into not-yet-quantised neighbours; this
+  breaks up the directional "worm"/hysteresis artifacts a pure raster
+  scan accumulates, the artifact-suppression order Ulichney recommends.
+  The kernel coefficients and divisors are unchanged, the quantiser is
+  unchanged (output is still bit-exact 1-bit at `levels = 2`), and the
+  conserving kernels still conserve the mean. `ScanOrder::Raster` is the
+  default, so pre-existing behaviour is preserved byte-for-byte. Scan
+  order has no effect on the feedback-free Bayer ordered-dither mode.
+  The registry error-diffusion factories accept `{"scan": "serpentine"}`
+  (or the `{"serpentine": true}` boolean shorthand).
+
 - r288: add `SignedDistanceField` — an exact signed distance field
   built as the difference of two exact-Euclidean distance transforms
   per `docs/image/filter/distance-transform.md` §1 (the generalised DT

@@ -22,7 +22,12 @@
 //!   8×8), or
 //! * an **error-diffusion** kernel that pushes the per-pixel
 //!   quantisation residue forward to not-yet-quantised neighbours along
-//!   a left-to-right raster scan.
+//!   a left-to-right raster scan — or, optionally, a **serpentine
+//!   (boustrophedon)** scan that alternates row direction and mirrors
+//!   the stencil horizontally on the reversed rows (`docs/image/filter/
+//!   dithering-kernels.md` §1.3). Serpentine scanning breaks up the
+//!   directional "worm"/hysteresis artifacts a pure raster scan
+//!   produces, at no extra cost; the kernel coefficients are unchanged.
 //!
 //! With `levels = 2` (the default) the result is a 1-bit black-and-white
 //! halftone — the classic use case. Higher `levels` give multi-tone
@@ -143,6 +148,29 @@ pub enum DiffusionKernel {
     /// Atkinson, ÷8 with coefficient sum 6 — 2/8 of the error is
     /// intentionally discarded (Atkinson, Apple, late 1980s).
     Atkinson,
+}
+
+/// Scan order for the error-diffusion path (`docs/image/filter/
+/// dithering-kernels.md` §1.3).
+///
+/// The kernel coefficients are identical for both orders; only the
+/// per-row traversal direction (and, on the reversed rows, the
+/// horizontal mirroring of the stencil) differs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ScanOrder {
+    /// Every scanline is processed left→right (top→bottom). The stencil
+    /// is used exactly as drawn. This is the classic ordering and the
+    /// default, preserving the pre-existing behaviour.
+    #[default]
+    Raster,
+    /// Boustrophedon: odd scanlines go left→right, even scanlines go
+    /// right→left with the stencil **mirrored horizontally** (every
+    /// `dx` negated). Recommended by Ulichney to suppress the
+    /// directional "worm"/hysteresis artifacts a pure raster scan
+    /// produces. Has no effect on the [`DitherMode::Ordered`] (Bayer)
+    /// path, which is a feedback-free point process whose result is
+    /// scan-order-independent.
+    Serpentine,
 }
 
 /// One entry in a diffusion stencil: `(dx, dy, weight)`.
@@ -318,6 +346,7 @@ impl Default for DitherMode {
 pub struct Dither {
     mode: DitherMode,
     levels: u32,
+    scan: ScanOrder,
 }
 
 impl Default for Dither {
@@ -327,11 +356,13 @@ impl Default for Dither {
 }
 
 impl Dither {
-    /// Default Floyd–Steinberg at `levels = 2` (1-bit B&W halftone).
+    /// Default Floyd–Steinberg at `levels = 2` (1-bit B&W halftone),
+    /// raster scan.
     pub fn new() -> Self {
         Self {
             mode: DitherMode::default(),
             levels: 2,
+            scan: ScanOrder::Raster,
         }
     }
 
@@ -340,14 +371,17 @@ impl Dither {
         Self {
             mode: DitherMode::Ordered(matrix),
             levels: 2,
+            scan: ScanOrder::Raster,
         }
     }
 
-    /// Error-diffusion dither with the given kernel at `levels = 2`.
+    /// Error-diffusion dither with the given kernel at `levels = 2`,
+    /// raster scan.
     pub fn error_diffusion(kernel: DiffusionKernel) -> Self {
         Self {
             mode: DitherMode::ErrorDiffusion(kernel),
             levels: 2,
+            scan: ScanOrder::Raster,
         }
     }
 
@@ -360,9 +394,25 @@ impl Dither {
         self
     }
 
+    /// Select the error-diffusion scan order (`docs/image/filter/
+    /// dithering-kernels.md` §1.3). [`ScanOrder::Serpentine`] alternates
+    /// row direction (mirroring the stencil on reversed rows) to break
+    /// up directional artifacts; it has no effect on the ordered (Bayer)
+    /// mode, which is scan-order-independent. Defaults to
+    /// [`ScanOrder::Raster`].
+    pub fn with_scan(mut self, scan: ScanOrder) -> Self {
+        self.scan = scan;
+        self
+    }
+
     /// Returns the dither's mode.
     pub fn mode(&self) -> DitherMode {
         self.mode
+    }
+
+    /// Returns the error-diffusion scan order.
+    pub fn scan(&self) -> ScanOrder {
+        self.scan
     }
 
     /// Returns the output bit-depth (in distinct levels per channel).
@@ -450,7 +500,17 @@ impl Dither {
                 let mut err = vec![0i32; width * height];
                 for y in 0..height {
                     let row_off = y * row_stride;
-                    for x in 0..width {
+                    // §1.3 serpentine: even rows (0, 2, …) go left→right;
+                    // odd rows go right→left with the stencil mirrored
+                    // horizontally (every `dx` negated). For raster scan
+                    // every row goes left→right and the stencil is used
+                    // as drawn. `reverse` selects the right→left rows.
+                    let reverse = matches!(self.scan, ScanOrder::Serpentine) && (y % 2 == 1);
+                    for col in 0..width {
+                        // Visit columns right→left on reversed rows so
+                        // the "not-yet-quantised" neighbours the stencil
+                        // pushes into stay ahead of the scan.
+                        let x = if reverse { width - 1 - col } else { col };
                         let idx = row_off + step * x + x_offset;
                         let s = data[idx] as i32 + err[y * width + x] / table.divisor;
                         let (q, e) = Self::quantise_with_error(s, levels);
@@ -459,9 +519,13 @@ impl Dither {
                         // `e * weight / divisor`; we delay dividing by
                         // `divisor` until the destination pixel is
                         // read (above) so all the arithmetic stays
-                        // integer and lossless across the stencil.
+                        // integer and lossless across the stencil. On a
+                        // reversed row the horizontal offsets are
+                        // mirrored (`-dx`) so error still flows into the
+                        // pixels the right→left scan hasn't reached yet.
                         for &(dx, dy, w) in table.stencil {
-                            let nx = x as i32 + dx;
+                            let sdx = if reverse { -dx } else { dx };
+                            let nx = x as i32 + sdx;
                             let ny = y as i32 + dy;
                             if nx < 0 || nx >= width as i32 || ny < 0 || ny >= height as i32 {
                                 continue;
@@ -922,5 +986,119 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("Dither"));
+    }
+
+    // ---- Serpentine scan (§1.3) ------------------------------------
+
+    #[test]
+    fn scan_order_default_is_raster() {
+        assert_eq!(Dither::new().scan(), ScanOrder::Raster);
+        assert_eq!(
+            Dither::error_diffusion(DiffusionKernel::Stucki).scan(),
+            ScanOrder::Raster,
+        );
+        assert_eq!(Dither::ordered(BayerMatrix::M4).scan(), ScanOrder::Raster,);
+        // The builder records the requested order.
+        assert_eq!(
+            Dither::new().with_scan(ScanOrder::Serpentine).scan(),
+            ScanOrder::Serpentine,
+        );
+    }
+
+    #[test]
+    fn serpentine_first_row_matches_raster() {
+        // Row 0 is even → left→right in both scan orders, and no prior
+        // row has fed error into it, so the first scanline must be
+        // byte-identical between raster and serpentine. (Lower rows can
+        // and do differ because the row-1 traversal reverses.)
+        let input = gray(24, 8, |x, y| ((x * 11 + y * 7) & 0xff) as u8);
+        let raster = Dither::error_diffusion(DiffusionKernel::FloydSteinberg)
+            .apply(&input, params(24, 8, PixelFormat::Gray8))
+            .unwrap();
+        let serp = Dither::error_diffusion(DiffusionKernel::FloydSteinberg)
+            .with_scan(ScanOrder::Serpentine)
+            .apply(&input, params(24, 8, PixelFormat::Gray8))
+            .unwrap();
+        assert_eq!(
+            raster.planes[0].data[0..24],
+            serp.planes[0].data[0..24],
+            "first scanline must match before the scan ever reverses",
+        );
+    }
+
+    #[test]
+    fn serpentine_differs_from_raster_on_lower_rows() {
+        // Once the scan reverses on odd rows the two orders diverge —
+        // that divergence is the whole point of serpentine (it breaks
+        // the directional "worm" the raster scan accumulates). A flat
+        // field dithers to a symmetric checker that happens to coincide
+        // under both scans, so use a smooth diagonal gradient whose
+        // residue trail is genuinely direction-dependent.
+        let input = gray(24, 24, |x, y| (((x + y) * 5) & 0xff) as u8);
+        let raster = Dither::error_diffusion(DiffusionKernel::FloydSteinberg)
+            .apply(&input, params(24, 24, PixelFormat::Gray8))
+            .unwrap();
+        let serp = Dither::error_diffusion(DiffusionKernel::FloydSteinberg)
+            .with_scan(ScanOrder::Serpentine)
+            .apply(&input, params(24, 24, PixelFormat::Gray8))
+            .unwrap();
+        assert_ne!(
+            raster.planes[0].data, serp.planes[0].data,
+            "serpentine should produce a different pattern than raster",
+        );
+    }
+
+    #[test]
+    fn serpentine_still_emits_only_two_levels() {
+        // The quantiser is unchanged; serpentine only affects which
+        // neighbour each residue lands in, so the output is still 1-bit.
+        let input = gray(16, 16, |x, y| ((x * 16 + y * 9) & 0xff) as u8);
+        let out = Dither::error_diffusion(DiffusionKernel::Jjn)
+            .with_scan(ScanOrder::Serpentine)
+            .apply(&input, params(16, 16, PixelFormat::Gray8))
+            .unwrap();
+        for v in &out.planes[0].data {
+            assert!(*v == 0 || *v == 255, "serpentine produced non-binary {v}");
+        }
+    }
+
+    #[test]
+    fn serpentine_conserves_mean_for_conserving_kernel() {
+        // Floyd–Steinberg conserves the full error regardless of scan
+        // order, so a flat field's mean must still track the input mean.
+        let input = gray(32, 32, |_, _| 128);
+        let out = Dither::error_diffusion(DiffusionKernel::FloydSteinberg)
+            .with_scan(ScanOrder::Serpentine)
+            .apply(&input, params(32, 32, PixelFormat::Gray8))
+            .unwrap();
+        let mean = out.planes[0].data.iter().map(|&v| v as u32).sum::<u32>() as f32 / (32.0 * 32.0);
+        assert!(
+            (mean - 128.0).abs() < 6.0,
+            "serpentine FS mean {mean} drifted off 128",
+        );
+    }
+
+    #[test]
+    fn serpentine_has_no_effect_on_ordered_dither() {
+        // Bayer is a feedback-free point process — scan order cannot
+        // change its output (doc §1.3 / §2 normalisation note).
+        let input = gray(16, 16, |x, y| ((x * 16 + y * 16) & 0xff) as u8);
+        let raster = Dither::ordered(BayerMatrix::M4)
+            .apply(&input, params(16, 16, PixelFormat::Gray8))
+            .unwrap();
+        let serp = Dither::ordered(BayerMatrix::M4)
+            .with_scan(ScanOrder::Serpentine)
+            .apply(&input, params(16, 16, PixelFormat::Gray8))
+            .unwrap();
+        assert_eq!(raster.planes[0].data, serp.planes[0].data);
+    }
+
+    #[test]
+    fn serpentine_is_stateless_across_invocations() {
+        let input = gray(16, 16, |x, _| (x * 16) as u8);
+        let f = Dither::error_diffusion(DiffusionKernel::Stucki).with_scan(ScanOrder::Serpentine);
+        let a = f.apply(&input, params(16, 16, PixelFormat::Gray8)).unwrap();
+        let b = f.apply(&input, params(16, 16, PixelFormat::Gray8)).unwrap();
+        assert_eq!(a.planes[0].data, b.planes[0].data);
     }
 }

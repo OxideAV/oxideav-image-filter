@@ -744,7 +744,7 @@ pub use difference::Difference;
 pub use displacement_map::DisplacementMap;
 pub use distance_transform::{ChamferKind, DistanceTransform};
 pub use distort::Distort;
-pub use dither::{BayerMatrix, DiffusionKernel, Dither, DitherMode};
+pub use dither::{BayerMatrix, DiffusionKernel, Dither, DitherMode, ScanOrder};
 pub use drago::Drago;
 pub use drop_shadow::DropShadow;
 pub use edge::Edge;
