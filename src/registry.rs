@@ -410,6 +410,14 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("sdf", Box::new(make_signed_distance_field));
 
+    // r303 factory: edge feathering — a soft coverage falloff at a
+    // shape boundary driven by the exact Euclidean inner-distance
+    // transform (distance-transform.md §1 names feathering; §2 is the
+    // exact transform reused here). Three aliases.
+    ctx.filters.register("feather", Box::new(make_feather));
+    ctx.filters.register("feather-edge", Box::new(make_feather));
+    ctx.filters.register("soft-edge", Box::new(make_feather));
+
     // r186 factory: classic bit-depth-reduction dither (Bayer ordered
     // + the Floyd–Steinberg / Jarvis–Judice–Ninke / Stucki /
     // Sierra-3 / Sierra-2 / Sierra-Lite / Atkinson error-diffusion
@@ -5580,6 +5588,42 @@ fn make_signed_distance_field(
     )))
 }
 
+fn make_feather(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::Feather;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+    let radius = match get_f64("radius") {
+        Some(r) => {
+            if !r.is_finite() {
+                return Err(Error::invalid("feather: radius must be finite".to_string()));
+            }
+            if r < 0.0 {
+                return Err(Error::invalid("feather: radius must be >= 0".to_string()));
+            }
+            r as f32
+        }
+        None => 4.0,
+    };
+    let mut f = Feather::new(radius);
+    if let Some(t) = get_u64("threshold") {
+        f = f.with_threshold(t.min(255) as u8);
+    }
+    if let Some(inv) = get_bool("invert") {
+        f = f.with_invert(inv);
+    }
+    // Feather preserves the input format: Rgba feathers the alpha edge
+    // (RGB pass-through), Gray8 emits the single-plane coverage ramp.
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 fn make_log(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::{LaplacianOfGaussian, LogMode};
     let p = params.as_object();
@@ -6207,6 +6251,11 @@ mod tests {
             "signed-distance-field",
             "signed-distance",
             "sdf",
+            // r303 additions (edge feathering — soft coverage falloff
+            // from the exact-Euclidean inner distance, three aliases).
+            "feather",
+            "feather-edge",
+            "soft-edge",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -6301,6 +6350,48 @@ mod tests {
         assert!(r.is_err(), "scale = 0 should be rejected");
         let r2 = c.filters.make("sdf", &json!({"scale": -1.0}), &inputs);
         assert!(r2.is_err(), "scale < 0 should be rejected");
+    }
+
+    #[test]
+    fn feather_factory_preserves_format() {
+        // Feather is format-preserving: Gray8 → Gray8, Rgba → Rgba.
+        let c = ctx();
+        let g = c
+            .filters
+            .make("feather", &json!({"radius": 4.0}), &[gray_in_port(16, 16)])
+            .expect("feather gray factory");
+        if let PortParams::Video { format, .. } = g.output_ports()[0].params {
+            assert_eq!(format, PixelFormat::Gray8);
+        } else {
+            panic!("expected video output port");
+        }
+        let r = c
+            .filters
+            .make("feather", &json!({"radius": 4.0}), &[rgba_in_port(16, 16)])
+            .expect("feather rgba factory");
+        if let PortParams::Video { format, .. } = r.output_ports()[0].params {
+            assert_eq!(format, PixelFormat::Rgba);
+        } else {
+            panic!("expected video output port");
+        }
+    }
+
+    #[test]
+    fn feather_factory_aliases() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        for name in ["feather", "feather-edge", "soft-edge"] {
+            let r = c.filters.make(name, &json!({}), &inputs);
+            assert!(r.is_ok(), "alias {name} failed: {:?}", r.err());
+        }
+    }
+
+    #[test]
+    fn feather_factory_rejects_bad_radius() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        let r = c.filters.make("feather", &json!({"radius": -1.0}), &inputs);
+        assert!(r.is_err(), "radius < 0 should be rejected");
     }
 
     #[test]

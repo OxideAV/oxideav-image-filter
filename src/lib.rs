@@ -214,6 +214,26 @@
 //!   `Gray8` in / out; useful for resolution-independent glyph / shape
 //!   rendering, feathering, outline / glow, and iso-level morphology.
 //!
+//! r303 additions:
+//!
+//! - [`Feather`](feather::Feather) — soft edge feathering driven by the
+//!   exact Euclidean distance transform. Per
+//!   `docs/image/filter/distance-transform.md` §1 (the generalised DT
+//!   `D_f(p) = min_q(‖p−q‖² + f(q))` whose intro names "feathering" as a
+//!   backed use-case) and §2 (Felzenszwalb–Huttenlocher): the inner
+//!   distance `d_in(p)` is the EDT of the inverted mask, and the coverage
+//!   ramp is `cov(p) = clamp(d_in(p)/radius, 0, 1)` (background → 0). A
+//!   boundary pixel maps to `0`, a full `radius` inside reaches `1`, and
+//!   the interior beyond the band saturates at `1`. Reuses the `dt_1d`
+//!   lower-envelope driver shared with
+//!   [`EuclideanDistanceTransform`](euclidean_distance_transform::EuclideanDistanceTransform)
+//!   and [`SignedDistanceField`](signed_distance_field::SignedDistanceField),
+//!   so the whole filter is `O(d·N)` for an exact distance field. `Rgba`
+//!   (alpha = mask, RGB pass-through, output alpha = feathered coverage)
+//!   or `Gray8` (luma = mask, output = coverage ramp). `radius` /
+//!   `threshold` / `invert` knobs. Factory aliases: `feather`,
+//!   `feather-edge`, `soft-edge`.
+//!
 //! r14 additions:
 //!
 //! - [`BarrelInverse`](barrel_inverse::BarrelInverse) — polynomial
@@ -616,6 +636,7 @@ pub mod euclidean_distance_transform;
 pub mod evaluate;
 pub mod exposure;
 pub mod extent;
+pub mod feather;
 pub mod flip;
 pub mod flood_fill;
 pub mod flop;
@@ -756,6 +777,7 @@ pub use euclidean_distance_transform::EuclideanDistanceTransform;
 pub use evaluate::{Evaluate, EvaluateOp};
 pub use exposure::Exposure;
 pub use extent::Extent;
+pub use feather::Feather;
 pub use flip::Flip;
 pub use flood_fill::FloodFill;
 pub use flop::Flop;

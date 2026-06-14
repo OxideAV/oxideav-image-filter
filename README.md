@@ -437,6 +437,22 @@ physically-meaningful luminance.
   resolution-independent glyph / shape rendering, feathering, outline /
   glow generation, and iso-level morphological grow / shrink. Factory
   aliases: `signed-distance-field`, `signed-distance`, `sdf`.
+- **`Feather`** — soft edge feathering driven by the exact Euclidean
+  distance transform per `docs/image/filter/distance-transform.md` §1
+  (the generalised DT `D_f(p) = min_q(‖p − q‖² + f(q))` whose intro
+  names "feathering" as a backed use-case) and §2
+  (Felzenszwalb–Huttenlocher 2012). The inner distance `d_in(p)` is the
+  EDT of the inverted mask, and the coverage ramp is `cov(p) =
+  clamp(d_in(p) / radius, 0, 1)` (background → 0): a boundary pixel maps
+  to `0`, a full `radius` inside reaches `1`, and the interior beyond the
+  band saturates at `1`. Reuses the same `dt_1d` lower-envelope driver
+  as `EuclideanDistanceTransform` / `SignedDistanceField`, so the whole
+  filter is `O(d · N)` for an exact distance field. `Rgba` (alpha =
+  coverage mask, RGB pass-through, output alpha = feathered coverage) or
+  `Gray8` (luma = mask, output = single-plane coverage ramp). Knobs:
+  `radius` / `threshold` / `invert`. The soft-matte complement to the
+  hard binary `Threshold` and the signed `SignedDistanceField`. Factory
+  aliases: `feather`, `feather-edge`, `soft-edge`.
 
 ### Colour
 

@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r303: add `Feather` — soft edge feathering driven by the exact
+  Euclidean distance transform per
+  `docs/image/filter/distance-transform.md` §1 (the generalised DT
+  `D_f(p) = min_q(‖p − q‖² + f(q))` whose intro names "feathering" as a
+  backed use-case) and §2 (Felzenszwalb–Huttenlocher 2012). The inner
+  distance `d_in(p)` is the EDT of the inverted mask, and the per-pixel
+  coverage ramp is `cov(p) = clamp(d_in(p) / radius, 0, 1)` with
+  background fixed at `0`: a boundary pixel maps to `0`, a full `radius`
+  inside reaches `1`, and the interior beyond the band saturates at `1`.
+  Reuses the same `dt_1d` lower-envelope-of-parabolas driver as
+  `EuclideanDistanceTransform` and `SignedDistanceField`, so the whole
+  filter is `O(d · N)` for an exact distance field. `Rgba` (alpha is the
+  coverage mask, RGB passes through unchanged, output alpha becomes the
+  feathered coverage) or `Gray8` (luma is the mask, output is the
+  single-plane coverage ramp); other formats return `Unsupported`.
+  Knobs: `radius` (feather width in pixels, `0` = hard binary mask),
+  `threshold` (foreground cut on the mask channel), `invert` (flip the
+  foreground test). Verified pixel-exact against a brute-force inner
+  Euclidean distance oracle. Registry factory aliases: `feather`,
+  `feather-edge`, `soft-edge`.
+
 - r297: add serpentine (boustrophedon) scan order to `Dither`'s
   error-diffusion path via a new `ScanOrder` enum and `Dither::with_scan`
   builder, per `docs/image/filter/dithering-kernels.md` §1.3. On
