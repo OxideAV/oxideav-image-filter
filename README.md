@@ -795,9 +795,9 @@ physically-meaningful luminance.
   a `Gray8` canvas. Complement (radius axis) to `HoughLines`.
 - **`Polar`** / **`PolarDirection::DePolar`** — Cartesian ⇄ polar
   coordinate distortion (`-distort Polar` / `-distort DePolar`). Bends
-  an image into a fan or unrolls a fan back to a rectangle. r7
-  surfaces optional `cx` / `cy` / `max_radius` overrides through both
-  the builder API and the JSON schema.
+  an image into a fan or unrolls a fan back to a rectangle. Optional
+  `cx` / `cy` / `max_radius` overrides are available through both the
+  builder API and the JSON schema.
 - **`Morphology`** + **`MorphologyChain`** — N-iteration greyscale
   dilate / erode with a 3×3 square or cross structuring element; plus
   `open` (erode → dilate) and `close` (dilate → erode) compositions.
@@ -875,7 +875,7 @@ physically-meaningful luminance.
     `screen`, `overlay` (multiply-or-screen on `dst < 128`),
     `darken` (per-channel min), `lighten` (per-channel max),
     `difference` (`|src - dst|`).
-  - Overlay family (r11): `hardlight` (overlay driven by `src` instead
+  - Overlay family: `hardlight` (overlay driven by `src` instead
     of `dst`), `softlight` (Pegtop continuous formula),
     `colordodge` (`dst / (1 - src/255)`), `colorburn`
     (`255 - (255 - dst) / (src/255)`).
@@ -892,13 +892,13 @@ manually with repeated `.apply()` calls, or feed them through
 
 ## Pixel formats
 
-Supported in v0:
+Supported:
 
 - `Gray8`, `Rgb24`, `Rgba`
 - `Yuv420P`, `Yuv422P`, `Yuv444P`
 
 Other formats return `Error::unsupported`. Planar higher-bit formats
-(`Yuv420P10Le` etc.) will land in a later release as filters grow
+(`Yuv420P10Le` etc.) are not yet supported and will land as filters grow
 per-format specialisations.
 
 ## License
