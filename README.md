@@ -322,9 +322,12 @@ physically-meaningful luminance.
   paper "Photographic Tone Reproduction for Digital Images". Log-
   average luminance scaling (`key` / "a" parameter, default `0.18`
   middle-grey) + extended `L · (1 + L/white²) / (1 + L)` compression
-  curve. Chroma is preserved by re-modulating linear RGB through
-  `L_d / L_w`. Gray8 / RGB / RGBA. Factory aliases: `reinhard`,
-  `tonemap-reinhard`.
+  curve. Re-colours via the §1 step 3 saturation-controlled form
+  `C_out = (C_in / L_w)^s · L_d`: the default `s = 1` is the plain
+  chroma-preserving re-modulation `C_in · (L_d / L_w)`, `0 ≤ s < 1`
+  desaturates toward neutral grey, `s > 1` boosts chroma
+  (`with_saturation`, JSON key `saturation` / `s`). Gray8 / RGB / RGBA.
+  Factory aliases: `reinhard`, `tonemap-reinhard`.
 - **`Hable`** — Uncharted-2 / John Hable filmic operator from the
   2010 GDC slides. Rational-function curve
   `((x(Ax+CB)+DE) / (x(Ax+B)+DF)) - E/F` with the classic constants

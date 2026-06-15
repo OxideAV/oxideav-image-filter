@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r316: add the §1 step 3 **saturation exponent** `s` to the `Reinhard`
+  tone-mapping operator per `docs/image/filter/tone-mapping-operators.md`
+  §1 (Conventions, step 3). The doc's general re-colouring form is
+  `C_out = (C_in / L_w)^s · L_d`; the prior operator hard-coded the
+  `s = 1` special case `C_out = C_in · (L_d / L_w)` (plain
+  chroma-preserving re-modulation). The new `saturation: f32` field
+  (default `1.0`) + `with_saturation(s)` builder exposes the exponent:
+  `0 ≤ s < 1` pulls colours toward neutral grey (chroma compresses along
+  with luminance — useful when the tone curve would otherwise leave
+  highlights looking unnaturally vivid), `s > 1` boosts chroma. The
+  `s = 1` fast path keeps byte-identical output to the previous default.
+  Non-finite / negative inputs to `with_saturation` are ignored; `s = 0`
+  is accepted (fully desaturated). Registry factory `reinhard` /
+  `tonemap-reinhard` accept the JSON key `saturation` (alias `s`).
 - r303: add `Feather` — soft edge feathering driven by the exact
   Euclidean distance transform per
   `docs/image/filter/distance-transform.md` §1 (the generalised DT

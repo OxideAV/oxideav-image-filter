@@ -18,8 +18,12 @@
 //! 4. Compress: `L_d = L_s · (1 + L_s / white²) / (1 + L_s)`. With
 //!    `white = +∞` (set very large) the term collapses to the simple
 //!    `L_d = L_s / (1 + L_s)` form.
-//! 5. Re-modulate the original linear RGB by `L_d / L_w` (so colour
-//!    saturation is preserved) and re-encode through the sRGB OETF.
+//! 5. Re-colour the original linear RGB per the doc's §1 step 3
+//!    saturation-controlled form `C_out = (C_in / L_w)^s · L_d`
+//!    (`tone-mapping-operators.md` §1, step 3). The default `s = 1`
+//!    collapses to `C_out = C_in · (L_d / L_w)`, the chroma-preserving
+//!    re-modulation; `s < 1` desaturates toward grey, `s > 1`
+//!    over-saturates. Re-encode the result through the sRGB OETF.
 //!
 //! Operates on `Rgb24` / `Rgba`. Gray8 falls back to the scalar form
 //! (no chroma preservation; just apply the curve to the channel). YUV
@@ -42,6 +46,13 @@ pub struct Reinhard {
     /// `L / (1 + L)` curve. Small values (`1.0..3.0`) preserve highlight
     /// detail by softly clipping above white.
     pub white: f32,
+    /// Saturation exponent `s` of the §1 step 3 re-colouring form
+    /// `C_out = (C_in / L_w)^s · L_d` (`tone-mapping-operators.md` §1).
+    /// `s = 1` (the default) is the plain chroma-preserving
+    /// re-modulation `C_in · (L_d / L_w)`; `0 ≤ s < 1` pulls colours
+    /// toward neutral grey (the tone curve compresses chroma along with
+    /// luminance), `s > 1` boosts it. Clamped non-negative.
+    pub saturation: f32,
 }
 
 impl Default for Reinhard {
@@ -49,6 +60,7 @@ impl Default for Reinhard {
         Self {
             key: 0.18,
             white: 1.0e6,
+            saturation: 1.0,
         }
     }
 }
@@ -62,12 +74,22 @@ impl Reinhard {
                 0.18
             },
             white: 1.0e6,
+            saturation: 1.0,
         }
     }
 
     pub fn with_white(mut self, white: f32) -> Self {
         if white.is_finite() && white > 0.0 {
             self.white = white;
+        }
+        self
+    }
+
+    /// Set the §1 step 3 saturation exponent `s`. Non-finite or negative
+    /// values are ignored (the field keeps its current value).
+    pub fn with_saturation(mut self, saturation: f32) -> Self {
+        if saturation.is_finite() && saturation >= 0.0 {
+            self.saturation = saturation;
         }
         self
     }
@@ -157,6 +179,10 @@ impl ImageFilter for Reinhard {
         let log_avg = (log_sum / n as f64).exp() as f32;
         let scale = self.key / log_avg.max(EPS);
         let white2 = self.white * self.white;
+        // §1 step 3 saturation exponent; `s == 1` keeps the exact
+        // chroma-preserving re-modulation `C_in · (L_d / L_w)`.
+        let sat = self.saturation;
+        let unit_sat = sat == 1.0;
 
         let mut out = vec![0u8; stride_out * h];
         for y in 0..h {
@@ -166,10 +192,19 @@ impl ImageFilter for Reinhard {
                 let l_s = l_w * scale;
                 // Extended Reinhard, paper eq. (4).
                 let l_d = (l_s * (1.0 + l_s / white2)) / (1.0 + l_s);
-                let g = l_d / l_w;
-                let r = linr[i] * g;
-                let gv = ling[i] * g;
-                let bv = linb[i] * g;
+                // §1 step 3: C_out = (C_in / L_w)^s · L_d. The s == 1
+                // fast path is byte-identical to the legacy g = L_d/L_w
+                // re-modulation.
+                let recolour = |c: f32| -> f32 {
+                    if unit_sat {
+                        c * (l_d / l_w)
+                    } else {
+                        (c / l_w).max(0.0).powf(sat) * l_d
+                    }
+                };
+                let r = recolour(linr[i]);
+                let gv = recolour(ling[i]);
+                let bv = recolour(linb[i]);
                 let db = y * stride_out + x * bpp;
                 match bpp {
                     1 => out[db] = linear_to_srgb(gv),
@@ -308,6 +343,82 @@ mod tests {
         for chunk in out.planes[0].data.chunks(4) {
             assert_eq!(chunk[3], 33);
         }
+    }
+
+    #[test]
+    fn default_saturation_is_unit_and_unchanged() {
+        // s == 1 (the default) must equal an explicit with_saturation(1.0)
+        // and the field defaults to 1.0.
+        let input = rgb(8, 8, |x, y| {
+            [
+                ((x * 32).min(255)) as u8,
+                ((y * 32).min(255)) as u8,
+                (((x + y) * 16).min(255)) as u8,
+            ]
+        });
+        assert_eq!(Reinhard::default().saturation, 1.0);
+        let a = Reinhard::default().apply(&input, p_rgb(8, 8)).unwrap();
+        let b = Reinhard::default()
+            .with_saturation(1.0)
+            .apply(&input, p_rgb(8, 8))
+            .unwrap();
+        assert_eq!(a.planes[0].data, b.planes[0].data);
+    }
+
+    #[test]
+    fn low_saturation_desaturates_toward_grey() {
+        // A strongly-coloured pixel: red-dominant. s < 1 should pull the
+        // R/G/B channels closer together (toward neutral grey) than the
+        // s == 1 chroma-preserving baseline.
+        let input = rgb(4, 4, |_, _| [200, 40, 40]);
+        let full = Reinhard::default().apply(&input, p_rgb(4, 4)).unwrap();
+        let desat = Reinhard::default()
+            .with_saturation(0.3)
+            .apply(&input, p_rgb(4, 4))
+            .unwrap();
+        let spread = |d: &[u8]| -> i32 {
+            let (r, g, b) = (d[0] as i32, d[1] as i32, d[2] as i32);
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            max - min
+        };
+        let full_spread = spread(&full.planes[0].data);
+        let desat_spread = spread(&desat.planes[0].data);
+        assert!(
+            desat_spread < full_spread,
+            "low saturation must reduce channel spread (full={full_spread} desat={desat_spread})"
+        );
+    }
+
+    #[test]
+    fn high_saturation_boosts_chroma() {
+        // s > 1 should widen the channel spread relative to the baseline.
+        let input = rgb(4, 4, |_, _| [180, 90, 90]);
+        let full = Reinhard::default().apply(&input, p_rgb(4, 4)).unwrap();
+        let oversat = Reinhard::default()
+            .with_saturation(1.8)
+            .apply(&input, p_rgb(4, 4))
+            .unwrap();
+        let spread = |d: &[u8]| -> i32 {
+            let (r, g, b) = (d[0] as i32, d[1] as i32, d[2] as i32);
+            r.max(g).max(b) - r.min(g).min(b)
+        };
+        assert!(
+            spread(&oversat.planes[0].data) > spread(&full.planes[0].data),
+            "high saturation must widen channel spread"
+        );
+    }
+
+    #[test]
+    fn with_saturation_rejects_invalid() {
+        let base = Reinhard::default().with_saturation(0.5);
+        assert_eq!(base.saturation, 0.5);
+        // Negative + non-finite are ignored (field unchanged).
+        assert_eq!(base.with_saturation(-1.0).saturation, 0.5);
+        assert_eq!(base.with_saturation(f32::NAN).saturation, 0.5);
+        assert_eq!(base.with_saturation(f32::INFINITY).saturation, 0.5);
+        // Zero is valid (fully desaturated).
+        assert_eq!(base.with_saturation(0.0).saturation, 0.0);
     }
 
     #[test]

@@ -4801,6 +4801,9 @@ fn make_reinhard(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFi
     if let Some(w) = get_f64("white").or_else(|| get_f64("white_point")) {
         f = f.with_white(w as f32);
     }
+    if let Some(s) = get_f64("saturation").or_else(|| get_f64("s")) {
+        f = f.with_saturation(s as f32);
+    }
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(
