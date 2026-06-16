@@ -418,6 +418,26 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("feather-edge", Box::new(make_feather));
     ctx.filters.register("soft-edge", Box::new(make_feather));
 
+    // r324 factory: sRGB / power-law transfer-function transform
+    // (tone-mapping-operators.md §5.2) exposed as a standalone LUT.
+    // Decode (display → linear, EOTF) and encode (linear → display, OETF)
+    // each get explicit aliases; the generic name reads direction + curve
+    // from JSON.
+    ctx.filters
+        .register("srgb-decode", Box::new(make_srgb_decode));
+    ctx.filters
+        .register("linearize", Box::new(make_srgb_decode));
+    ctx.filters
+        .register("srgb-to-linear", Box::new(make_srgb_decode));
+    ctx.filters
+        .register("srgb-encode", Box::new(make_srgb_encode));
+    ctx.filters
+        .register("delinearize", Box::new(make_srgb_encode));
+    ctx.filters
+        .register("linear-to-srgb", Box::new(make_srgb_encode));
+    ctx.filters
+        .register("srgb-transform", Box::new(make_srgb_decode));
+
     // r186 factory: classic bit-depth-reduction dither (Bayer ordered
     // + the Floyd–Steinberg / Jarvis–Judice–Ninke / Stucki /
     // Sierra-3 / Sierra-2 / Sierra-Lite / Atkinson error-diffusion
@@ -5627,6 +5647,66 @@ fn make_feather(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
     )))
 }
 
+/// Shared body: build an [`SrgbTransform`] from a JSON `params` object and a
+/// default direction, then wrap it in the adapter. The explicit encode /
+/// decode aliases pass the matching default; the generic `srgb-transform`
+/// alias passes `Decode` and lets JSON override.
+fn build_srgb_transform(
+    params: &Value,
+    inputs: &[PortSpec],
+    default_direction: crate::SrgbDirection,
+) -> Result<Box<dyn StreamFilter>> {
+    use crate::{SrgbCurve, SrgbDirection, SrgbTransform};
+    let p = params.as_object();
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+
+    let direction = match get_str("direction").or_else(|| get_str("mode")) {
+        Some(d) if d.eq_ignore_ascii_case("encode") || d.eq_ignore_ascii_case("forward") => {
+            SrgbDirection::Encode
+        }
+        Some(d) if d.eq_ignore_ascii_case("decode") || d.eq_ignore_ascii_case("inverse") => {
+            SrgbDirection::Decode
+        }
+        _ => default_direction,
+    };
+
+    // `curve: "srgb"` (default) or `curve: "gamma"`. A `gamma` numeric field
+    // implies the power-law curve even without `curve: "gamma"`.
+    let curve_name = get_str("curve");
+    let gamma_field = get_f64("gamma");
+    let curve = match curve_name {
+        Some(c) if c.eq_ignore_ascii_case("gamma") || c.eq_ignore_ascii_case("power") => {
+            SrgbCurve::gamma(gamma_field.unwrap_or(2.2) as f32)
+        }
+        Some(c) if c.eq_ignore_ascii_case("srgb") => SrgbCurve::Srgb,
+        _ => {
+            if let Some(g) = gamma_field {
+                SrgbCurve::gamma(g as f32)
+            } else {
+                SrgbCurve::Srgb
+            }
+        }
+    };
+
+    let f = SrgbTransform { curve, direction };
+    let in_port = video_in_port(inputs);
+    let out_port = passthrough_out_port(&in_port);
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_srgb_decode(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    build_srgb_transform(params, inputs, crate::SrgbDirection::Decode)
+}
+
+fn make_srgb_encode(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    build_srgb_transform(params, inputs, crate::SrgbDirection::Encode)
+}
+
 fn make_log(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::{LaplacianOfGaussian, LogMode};
     let p = params.as_object();
@@ -6259,6 +6339,15 @@ mod tests {
             "feather",
             "feather-edge",
             "soft-edge",
+            // r324 additions (sRGB / power-law transfer-function transform
+            // — display↔linear OETF/EOTF — with encode / decode aliases).
+            "srgb-decode",
+            "linearize",
+            "srgb-to-linear",
+            "srgb-encode",
+            "delinearize",
+            "linear-to-srgb",
+            "srgb-transform",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }

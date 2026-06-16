@@ -234,6 +234,24 @@
 //!   `threshold` / `invert` knobs. Factory aliases: `feather`,
 //!   `feather-edge`, `soft-edge`.
 //!
+//! r324 additions:
+//!
+//! - [`SrgbTransform`](srgb_transform::SrgbTransform) — sRGB / power-law
+//!   transfer-function transform exposing the documented display transfer
+//!   function (`docs/image/filter/tone-mapping-operators.md` §5.2) as a
+//!   standalone LUT. [`SrgbCurve::Srgb`](srgb_transform::SrgbCurve) is the
+//!   IEC 61966-2-1 piecewise curve (encode `V = 12.92·Lin` /
+//!   `1.055·Lin^(1/2.4) − 0.055`; decode the analytic inverse);
+//!   [`SrgbCurve::Gamma`](srgb_transform::SrgbCurve) is the pure power-law
+//!   `Lin^(1/γ)` / `V^γ`. [`SrgbDirection`](srgb_transform::SrgbDirection)
+//!   picks `Encode` (linear → display, the OETF) or `Decode` (display →
+//!   linear, the EOTF, default). Encode∘decode is identity within 8-bit
+//!   rounding. Gray8 / Rgb24 / Rgba (alpha = coverage, passed through);
+//!   YUV → `Unsupported`. Cost is one 256-LUT + `O(W·H)`. Factory aliases:
+//!   `srgb-decode` / `linearize` / `srgb-to-linear`, `srgb-encode` /
+//!   `delinearize` / `linear-to-srgb`, and `srgb-transform`
+//!   (direction / curve via JSON).
+//!
 //! r14 additions:
 //!
 //! - [`BarrelInverse`](barrel_inverse::BarrelInverse) — polynomial
@@ -703,6 +721,7 @@ pub mod sketch;
 pub mod solarize;
 pub mod split_tone;
 pub mod spread;
+pub mod srgb_transform;
 pub mod srt;
 pub mod statistic;
 pub mod stegano;
@@ -846,6 +865,7 @@ pub use sketch::Sketch;
 pub use solarize::Solarize;
 pub use split_tone::SplitTone;
 pub use spread::Spread;
+pub use srgb_transform::{SrgbCurve, SrgbDirection, SrgbTransform};
 pub use srt::Srt;
 pub use statistic::{Statistic, StatisticOp};
 pub use stegano::Stegano;

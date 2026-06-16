@@ -379,6 +379,26 @@ physically-meaningful luminance.
   round-trip; Gray8 / RGB / RGBA (YUV → `Unsupported`). Cost is
   `O(W·H·K)` with `K` scales. Factory aliases: `reinhard-local`,
   `tonemap-reinhard-local`, `dodge-and-burn`.
+- **`SrgbTransform`** + **`SrgbCurve`** + **`SrgbDirection`** — the
+  documented display transfer function
+  (`docs/image/filter/tone-mapping-operators.md` §5.2) exposed as a
+  standalone 256-entry LUT that converts between display-encoded and
+  linear-light pixel values, so a pipeline can wrap a linear-light
+  operation (additive light, blur, alpha compositing) in a correct
+  round-trip. `SrgbCurve::Srgb` (default) is the IEC 61966-2-1 piecewise
+  curve — encode `V = 12.92·Lin` (`Lin ≤ 0.0031308`) /
+  `1.055·Lin^(1/2.4) − 0.055`, decode the analytic inverse;
+  `SrgbCurve::Gamma` (via `SrgbCurve::gamma(γ)`) is the §5.2 pure
+  power-law `V = Lin^(1/γ)` / `Lin = V^γ`. `SrgbDirection::Encode` runs
+  the OETF (linear → display); `SrgbDirection::Decode` (default) runs the
+  EOTF (display → linear). Encode∘decode is identity within 8-bit
+  rounding (deep shadows excepted — inherent 8-bit shadow precision).
+  Gray8 / RGB / RGBA (alpha = coverage, passed through); YUV →
+  `Unsupported`. Distinct from `Gamma` (display-gamma power curve in
+  encoded space) — this is the colorimetric sRGB↔linear transfer pair.
+  Factory aliases: `srgb-decode` / `linearize` / `srgb-to-linear`,
+  `srgb-encode` / `delinearize` / `linear-to-srgb`, and `srgb-transform`
+  (`direction` / `curve` / `gamma` JSON keys).
 
 ### Distance / signed-distance
 

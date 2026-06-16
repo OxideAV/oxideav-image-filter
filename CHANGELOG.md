@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r324: add `SrgbTransform` — the documented display transfer function
+  (`docs/image/filter/tone-mapping-operators.md` §5.2) exposed as a
+  standalone 256-entry LUT primitive that converts between display-encoded
+  and linear-light pixel values (so a pipeline can wrap linear-light
+  operations — additive light, blur, alpha compositing — in a correct
+  round-trip). `SrgbCurve::Srgb` (default) is the IEC 61966-2-1 piecewise
+  curve: encode `V = 12.92·Lin` (`Lin ≤ 0.0031308`) /
+  `1.055·Lin^(1/2.4) − 0.055`, decode the analytic inverse
+  (`Lin = V/12.92` for `V ≤ 0.04045`, else `((V+0.055)/1.055)^2.4`).
+  `SrgbCurve::Gamma { .. }` (built via `SrgbCurve::gamma(γ)`) is the §5.2
+  pure power-law approximation `V = Lin^(1/γ)` / `Lin = V^γ`.
+  `SrgbDirection::Encode` runs the OETF (linear → display);
+  `SrgbDirection::Decode` (default) runs the EOTF (display → linear);
+  encode∘decode of the same curve is identity within 8-bit rounding (deep
+  shadows excepted — the EOTF compresses the bottom of the encoded range
+  onto a handful of linear codes, inherent 8-bit shadow precision).
+  Endpoints `0`/`255` are fixed points. Gray8 / Rgb24 / Rgba (alpha is
+  coverage, not light — passed through unchanged); YUV → `Unsupported`.
+  Cost is one LUT build + `O(W·H)`. Registry factories: `srgb-decode` /
+  `linearize` / `srgb-to-linear` (decode), `srgb-encode` / `delinearize`
+  / `linear-to-srgb` (encode), and `srgb-transform` (decode default;
+  `direction` + `curve` + `gamma` JSON keys override). Distinct from the
+  existing `Gamma` filter, which applies a display-gamma power curve in
+  encoded space rather than the colorimetric sRGB↔linear transfer pair.
 - r316: add the §1 step 3 **saturation exponent** `s` to the `Reinhard`
   tone-mapping operator per `docs/image/filter/tone-mapping-operators.md`
   §1 (Conventions, step 3). The doc's general re-colouring form is
