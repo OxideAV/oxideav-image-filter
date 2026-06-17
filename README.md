@@ -439,6 +439,27 @@ physically-meaningful luminance.
   `threshold` / `invert` / `scale`. Gray8 input only; Gray8 output
   of the same dimensions. Factory aliases:
   `euclidean-distance-transform`, `euclidean-distance`, `edt`.
+- **`WeightedDistanceTransform`** — weighted (generalised) distance
+  transform: the **continuous-seed** form of the generalised DT
+  `D_f(p) = min_q(‖p − q‖² + f(q))` named in
+  `docs/image/filter/distance-transform.md` §1 ("the generalized form
+  (arbitrary `f`) is what makes the algorithm reusable beyond binary
+  masks"). Where `EuclideanDistanceTransform` seeds the F–H driver with
+  a binary mask (`f(q) ∈ {0, +∞}`), this filter seeds **every** pixel
+  with a finite cost `f(q) = (weight · c(q))²` derived from its own
+  intensity (`c(q) ∈ [0, 1]` the normalised faintness — `0` for a free
+  foreground site, `1` for distant background). The output is then the
+  cheapest combined cost of *travelling* squared-Euclidean distance to a
+  site plus *paying* that site's intrinsic cost, so the field is a smooth
+  blend of "how far" and "how faint" (cost-weighted feature maps,
+  intensity-aware feathering, grey-weighted morphology). Reuses the exact
+  `dt_1d` lower-envelope driver of `EuclideanDistanceTransform`, so the
+  whole filter stays `O(d · N)` for an exact generalised result;
+  `weight = 0` makes every pixel a free seed (all-black field) and a very
+  large `weight` recovers the binary transform. Knobs:
+  `weight` / `invert` / `scale`. Gray8 input only; Gray8 output of the
+  same dimensions. Factory aliases: `weighted-distance-transform`,
+  `weighted-distance`, `wdt`.
 - **`SignedDistanceField`** — exact signed distance field, the
   difference of two exact-Euclidean transforms per
   `docs/image/filter/distance-transform.md` §1 (the generalised DT

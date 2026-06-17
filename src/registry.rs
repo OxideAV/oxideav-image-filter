@@ -395,6 +395,21 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("edt", Box::new(make_euclidean_distance_transform));
 
+    // Weighted (generalised) distance transform: the continuous-seed
+    // form `D_f(p) = min_q(‖p − q‖² + f(q))` of distance-transform.md
+    // §1, seeding every pixel with a finite cost derived from its
+    // intensity rather than the binary 0/∞ mask the EDT uses.
+    ctx.filters.register(
+        "weighted-distance-transform",
+        Box::new(make_weighted_distance_transform),
+    );
+    ctx.filters.register(
+        "weighted-distance",
+        Box::new(make_weighted_distance_transform),
+    );
+    ctx.filters
+        .register("wdt", Box::new(make_weighted_distance_transform));
+
     // Signed distance field: the difference of two exact-Euclidean
     // transforms (FG-distance minus BG-distance) so foreground pixels
     // carry negative distance and background pixels positive, biased to
@@ -5552,6 +5567,76 @@ fn make_euclidean_distance_transform(
     )))
 }
 
+fn make_weighted_distance_transform(
+    params: &Value,
+    inputs: &[PortSpec],
+) -> Result<Box<dyn StreamFilter>> {
+    use crate::WeightedDistanceTransform;
+    let p = params.as_object();
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+    let weight = match get_f64("weight") {
+        Some(wv) => {
+            if !wv.is_finite() {
+                return Err(Error::invalid(
+                    "weighted-distance-transform: weight must be finite".to_string(),
+                ));
+            }
+            if wv < 0.0 {
+                return Err(Error::invalid(
+                    "weighted-distance-transform: weight must be >= 0".to_string(),
+                ));
+            }
+            wv as f32
+        }
+        None => 16.0,
+    };
+    let mut f = WeightedDistanceTransform::new(weight);
+    if let Some(inv) = get_bool("invert") {
+        f = f.with_invert(inv);
+    }
+    if let Some(s) = get_f64("scale") {
+        if !s.is_finite() {
+            return Err(Error::invalid(
+                "weighted-distance-transform: scale must be finite".to_string(),
+            ));
+        }
+        if s <= 0.0 {
+            return Err(Error::invalid(
+                "weighted-distance-transform: scale must be > 0".to_string(),
+            ));
+        }
+        f = f.with_scale(s as f32);
+    }
+    let in_port = video_in_port(inputs);
+    // WeightedDistanceTransform always emits a single-plane Gray8
+    // intensity image; the input is Gray8-only too (apply() rejects
+    // every other format).
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec {
+            name: "video".to_string(),
+            params: PortParams::Video {
+                format: PixelFormat::Gray8,
+                width: *width,
+                height: *height,
+                time_base: *time_base,
+            },
+            ..in_port.clone()
+        },
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 fn make_signed_distance_field(
     params: &Value,
     inputs: &[PortSpec],
@@ -6348,6 +6433,12 @@ mod tests {
             "delinearize",
             "linear-to-srgb",
             "srgb-transform",
+            // r329 additions (weighted / generalised distance transform
+            // — continuous-seed `D_f(p)=min_q(‖p−q‖²+f(q))`, three
+            // aliases).
+            "weighted-distance-transform",
+            "weighted-distance",
+            "wdt",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -6399,6 +6490,51 @@ mod tests {
         assert!(r.is_err(), "scale = 0 should be rejected");
         let r2 = c.filters.make("edt", &json!({"scale": -1.0}), &inputs);
         assert!(r2.is_err(), "scale < 0 should be rejected");
+    }
+
+    #[test]
+    fn weighted_distance_transform_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        let f = c
+            .filters
+            .make(
+                "weighted-distance-transform",
+                &json!({"weight": 8.0, "scale": 2.0, "invert": true}),
+                &inputs,
+            )
+            .expect("wdt factory");
+        let outs = f.output_ports();
+        assert_eq!(outs.len(), 1);
+        if let PortParams::Video { format, .. } = outs[0].params {
+            assert_eq!(format, PixelFormat::Gray8);
+        } else {
+            panic!("expected video output port");
+        }
+    }
+
+    #[test]
+    fn weighted_distance_transform_factory_aliases() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        for name in ["weighted-distance-transform", "weighted-distance", "wdt"] {
+            let r = c.filters.make(name, &json!({}), &inputs);
+            assert!(r.is_ok(), "alias {name} failed: {:?}", r.err());
+        }
+    }
+
+    #[test]
+    fn weighted_distance_transform_factory_rejects_bad_params() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        assert!(c
+            .filters
+            .make("wdt", &json!({"scale": 0.0}), &inputs)
+            .is_err());
+        assert!(c
+            .filters
+            .make("wdt", &json!({"weight": -1.0}), &inputs)
+            .is_err());
     }
 
     #[test]

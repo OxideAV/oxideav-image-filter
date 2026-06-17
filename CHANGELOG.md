@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r329: add `WeightedDistanceTransform` — the **continuous-seed** form of
+  the generalised distance transform `D_f(p) = min_q(‖p − q‖² + f(q))`
+  named in `docs/image/filter/distance-transform.md` §1 ("the generalized
+  form (arbitrary `f`) is what makes the algorithm reusable beyond binary
+  masks"). Unlike `EuclideanDistanceTransform`, which seeds the
+  Felzenszwalb–Huttenlocher driver with a binary mask (`f(q) ∈ {0, +∞}`),
+  this filter seeds every pixel with a finite cost
+  `f(q) = (weight · c(q))²` derived from its own intensity, so the output
+  field is a smooth blend of squared-Euclidean travel distance and per-
+  pixel "faintness" cost (cost-weighted feature maps, intensity-aware
+  feathering, grey-weighted morphology). Reuses the exact `dt_1d`
+  lower-envelope driver of `EuclideanDistanceTransform` (§2) so the whole
+  filter stays `O(d · N)` for an exact generalised result; `weight = 0`
+  yields an all-black field (every pixel a free seed) and a large `weight`
+  recovers the binary transform. Knobs `weight` / `invert` / `scale`;
+  Gray8 input only, Gray8 output of the same dimensions. Factory aliases
+  `weighted-distance-transform`, `weighted-distance`, `wdt`. Verified
+  pixel-exact against a brute-force §1 minimisation oracle.
+
 - r324: add `SrgbTransform` — the documented display transfer function
   (`docs/image/filter/tone-mapping-operators.md` §5.2) exposed as a
   standalone 256-entry LUT primitive that converts between display-encoded

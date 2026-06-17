@@ -740,6 +740,7 @@ pub mod vignette;
 pub mod vignette_soft;
 pub mod watermark;
 pub mod wave;
+pub mod weighted_distance_transform;
 pub mod zoom_blur;
 
 pub use adaptive_threshold::AdaptiveThreshold;
@@ -883,6 +884,7 @@ pub use vignette::Vignette;
 pub use vignette_soft::VignetteSoft;
 pub use watermark::Watermark;
 pub use wave::Wave;
+pub use weighted_distance_transform::WeightedDistanceTransform;
 pub use zoom_blur::ZoomBlur;
 
 /// Stream-level video parameters threaded into [`ImageFilter::apply`].
