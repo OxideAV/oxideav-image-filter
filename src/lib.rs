@@ -252,6 +252,24 @@
 //!   `delinearize` / `linear-to-srgb`, and `srgb-transform`
 //!   (direction / curve via JSON).
 //!
+//! r329 additions:
+//!
+//! - [`WeightedDistanceTransform`](weighted_distance_transform::WeightedDistanceTransform)
+//!   — weighted (generalised) distance transform: the continuous-seed
+//!   form of `D_f(p) = min_q(‖p − q‖² + f(q))` from
+//!   `docs/image/filter/distance-transform.md` §1. Where
+//!   [`EuclideanDistanceTransform`](euclidean_distance_transform::EuclideanDistanceTransform)
+//!   seeds the Felzenszwalb–Huttenlocher driver with a binary mask
+//!   (`f(q) ∈ {0, +∞}`), this filter seeds every pixel with a finite
+//!   cost `f(q) = (weight · c(q))²` derived from its intensity, so the
+//!   field blends squared-Euclidean travel distance with per-pixel
+//!   "faintness" cost. Reuses the exact `dt_1d` lower-envelope driver
+//!   (§2) so the filter stays `O(d · N)` for an exact generalised
+//!   result; `weight = 0` gives an all-black field and a large `weight`
+//!   recovers the binary transform. Knobs `weight` / `invert` / `scale`;
+//!   Gray8-only in/out. Factory aliases: `weighted-distance-transform`,
+//!   `weighted-distance`, `wdt`.
+//!
 //! r14 additions:
 //!
 //! - [`BarrelInverse`](barrel_inverse::BarrelInverse) — polynomial
