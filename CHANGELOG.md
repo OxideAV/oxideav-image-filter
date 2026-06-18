@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r333: add the Bayer `16×16` ordered-dither matrix (`BayerMatrix::M16`) —
+  one more turn of the `M_2n = 4·M_n + M_2[hi, lo]` recurrence past the
+  existing `8×8` map (`docs/image/filter/dithering-kernels.md` §2). Its
+  256-entry threshold map (a full permutation of `0..=255`) is the finest
+  dispersed-dot ordered dither, showing the least cross-hatch texture on
+  smooth gradients. Wired into the `dither-bayer` / `ordered-dither`
+  factory via `{"matrix": 16}` and the `kernel` string aliases
+  `bayer16` / `bayer-16` / `ordered16`.
+
 - r329: add `WeightedDistanceTransform` — the **continuous-seed** form of
   the generalised distance transform `D_f(p) = min_q(‖p − q‖² + f(q))`
   named in `docs/image/filter/distance-transform.md` §1 ("the generalized

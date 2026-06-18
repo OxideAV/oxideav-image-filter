@@ -5998,9 +5998,10 @@ fn make_dither_bayer(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Stre
         2 => BayerMatrix::M2,
         4 => BayerMatrix::M4,
         8 => BayerMatrix::M8,
+        16 => BayerMatrix::M16,
         other => {
             return Err(Error::invalid(format!(
-                "dither-bayer: matrix size must be 2, 4 or 8 (got {other})",
+                "dither-bayer: matrix size must be 2, 4, 8 or 16 (got {other})",
             )));
         }
     };
@@ -6088,6 +6089,7 @@ fn parse_dither(params: &Value, forced: Option<ForcedMode>) -> Result<crate::Dit
                     Dither::ordered(BayerMatrix::M4)
                 }
                 "bayer8" | "bayer-8" | "ordered8" => Dither::ordered(BayerMatrix::M8),
+                "bayer16" | "bayer-16" | "ordered16" => Dither::ordered(BayerMatrix::M16),
                 other => {
                     return Err(Error::invalid(format!(
                         "dither: unknown kernel/mode '{other}'",
@@ -7243,6 +7245,21 @@ mod tests {
             .filters
             .make("dither-bayer", &json!({"matrix": 3}), &inputs)
             .is_err());
+    }
+
+    #[test]
+    fn dither_bayer_accepts_matrix_16() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        assert!(c
+            .filters
+            .make("dither-bayer", &json!({"matrix": 16}), &inputs)
+            .is_ok());
+        // The `kernel`-string alias on the generic `dither` factory too.
+        assert!(c
+            .filters
+            .make("dither", &json!({"kernel": "bayer16"}), &inputs)
+            .is_ok());
     }
 
     #[test]

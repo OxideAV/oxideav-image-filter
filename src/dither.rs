@@ -18,8 +18,8 @@
 //! luma of YUV) to one of `levels` evenly-spaced output values, applying
 //! either:
 //!
-//! * an **ordered dither** with a tiled Bayer threshold map (2×2, 4×4 or
-//!   8×8), or
+//! * an **ordered dither** with a tiled Bayer threshold map (2×2, 4×4,
+//!   8×8 or 16×16), or
 //! * an **error-diffusion** kernel that pushes the per-pixel
 //!   quantisation residue forward to not-yet-quantised neighbours along
 //!   a left-to-right raster scan — or, optionally, a **serpentine
@@ -90,7 +90,35 @@ const BAYER_8: [[u8; 8]; 8] = [
     [63, 31, 55, 23, 61, 29, 53, 21],
 ];
 
-/// Pick the Bayer 2×2 / 4×4 / 8×8 entry for pixel `(x, y)` and return
+/// Bayer 16×16 index matrix.
+///
+/// One more turn of the `M_2n = 4·M_n + recurrence` crank past
+/// [`BAYER_8`] (`docs/image/filter/dithering-kernels.md` §2). Entries
+/// span `0 ..= 255` (a full permutation), giving the finest
+/// dispersed-dot ordered dither — 256 distinct thresholds tiled across
+/// the 16×16 cell, so smooth gradients reproduce with the least
+/// visible cross-hatch texture of the family.
+#[rustfmt::skip]
+const BAYER_16: [[u8; 16]; 16] = [
+    [  0,128, 32,160,  8,136, 40,168,  2,130, 34,162, 10,138, 42,170],
+    [192, 64,224, 96,200, 72,232,104,194, 66,226, 98,202, 74,234,106],
+    [ 48,176, 16,144, 56,184, 24,152, 50,178, 18,146, 58,186, 26,154],
+    [240,112,208, 80,248,120,216, 88,242,114,210, 82,250,122,218, 90],
+    [ 12,140, 44,172,  4,132, 36,164, 14,142, 46,174,  6,134, 38,166],
+    [204, 76,236,108,196, 68,228,100,206, 78,238,110,198, 70,230,102],
+    [ 60,188, 28,156, 52,180, 20,148, 62,190, 30,158, 54,182, 22,150],
+    [252,124,220, 92,244,116,212, 84,254,126,222, 94,246,118,214, 86],
+    [  3,131, 35,163, 11,139, 43,171,  1,129, 33,161,  9,137, 41,169],
+    [195, 67,227, 99,203, 75,235,107,193, 65,225, 97,201, 73,233,105],
+    [ 51,179, 19,147, 59,187, 27,155, 49,177, 17,145, 57,185, 25,153],
+    [243,115,211, 83,251,123,219, 91,241,113,209, 81,249,121,217, 89],
+    [ 15,143, 47,175,  7,135, 39,167, 13,141, 45,173,  5,133, 37,165],
+    [207, 79,239,111,199, 71,231,103,205, 77,237,109,197, 69,229,101],
+    [ 63,191, 31,159, 55,183, 23,151, 61,189, 29,157, 53,181, 21,149],
+    [255,127,223, 95,247,119,215, 87,253,125,221, 93,245,117,213, 85],
+];
+
+/// Pick the Bayer 2×2 / 4×4 / 8×8 / 16×16 entry for pixel `(x, y)` and return
 /// it as a fractional threshold scaled into the 8-bit range. The
 /// threshold for cell index `m` in an `n²`-entry map is
 /// `(m + 0.5) / n²`, expressed in eighths of `255` rounded to the
@@ -110,6 +138,11 @@ fn bayer_threshold_q8(matrix: BayerMatrix, x: usize, y: usize) -> i32 {
             let m = BAYER_8[y & 7][x & 7] as i32;
             (((2 * m + 1) * 255) + 64) / 128
         }
+        BayerMatrix::M16 => {
+            let m = BAYER_16[y & 15][x & 15] as i32;
+            // (m + 0.5) / 256 * 255  ==  ((2m + 1) * 255 + 256) / 512
+            (((2 * m + 1) * 255) + 256) / 512
+        }
     }
 }
 
@@ -123,6 +156,9 @@ pub enum BayerMatrix {
     M4,
     /// 8×8 — 64-level dither, the standard choice for 1-bit output.
     M8,
+    /// 16×16 — 256-level dither, the finest dispersed-dot map; smooth
+    /// gradients show the least cross-hatch texture.
+    M16,
 }
 
 // ----------------------------------------------------------------------
@@ -663,6 +699,60 @@ mod tests {
                 seen[v as usize] = true;
             }
         }
+    }
+
+    #[test]
+    fn bayer_16_is_a_permutation_of_0_to_255() {
+        let mut seen = [false; 256];
+        for row in BAYER_16 {
+            for v in row {
+                assert!(!seen[v as usize], "Bayer 16 duplicate: {v}");
+                seen[v as usize] = true;
+            }
+        }
+        assert!(
+            seen.iter().all(|&s| s),
+            "Bayer 16 is not a full permutation"
+        );
+    }
+
+    #[test]
+    fn bayer_16_recurrence_derives_from_bayer_8() {
+        // `docs/image/filter/dithering-kernels.md` §2: one more turn of
+        // the `M_2n = 4·M_n + M_2[hi, lo]` crank. The high-block index
+        // `(i / 8, j / 8)` selects the flattened-M2 constant and the
+        // low-block index `(i mod 8, j mod 8)` indexes the 8×8 map.
+        for i in 0..16 {
+            for j in 0..16 {
+                let hi = BAYER_2[i / 8][j / 8] as u32;
+                let lo = BAYER_8[i % 8][j % 8] as u32;
+                let expected = 4 * lo + hi;
+                assert_eq!(
+                    BAYER_16[i][j] as u32, expected,
+                    "Bayer 16 recurrence broken at ({i},{j})",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bayer_16_thresholds_span_the_full_byte_range() {
+        // Each of the 256 cells maps to a distinct `(m + 0.5) / 256`
+        // threshold scaled to 8-bit, so the spread covers the range
+        // from near-0 to near-255 without clustering.
+        let mut lo = i32::MAX;
+        let mut hi = i32::MIN;
+        for y in 0..16 {
+            for x in 0..16 {
+                let t = bayer_threshold_q8(BayerMatrix::M16, x, y);
+                assert!((0..=255).contains(&t), "threshold {t} out of range");
+                lo = lo.min(t);
+                hi = hi.max(t);
+            }
+        }
+        // The smallest index (0) → ~0, the largest (255) → ~254.
+        assert!(lo <= 1, "lowest threshold should be near 0, got {lo}");
+        assert!(hi >= 254, "highest threshold should be near 255, got {hi}");
     }
 
     // ---- Error-diffusion kernel divisor checks ---------------------

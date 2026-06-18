@@ -118,11 +118,13 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
 - **`Dither`** + **`DitherMode`** + **`BayerMatrix`** +
   **`DiffusionKernel`** + **`ScanOrder`** — bit-depth-reduction dither
   with two algorithm families:
-  - **Bayer ordered dither** with tiled `2×2` / `4×4` / `8×8`
+  - **Bayer ordered dither** with tiled `2×2` / `4×4` / `8×8` / `16×16`
     threshold maps built by the standard
     `M_2n = 4·M_n + M_2[hi, lo]` recurrence (Bayer 1973 IEEE ICC).
     No state, perfectly parallel, produces the classic crosshatch
-    texture.
+    texture; the `16×16` map (256 distinct thresholds) is the finest
+    dispersed-dot variant and shows the least texture on smooth
+    gradients.
   - **Error diffusion** along a left-to-right raster scan: the seven
     canonical kernels Floyd–Steinberg (÷16, 1976 SID),
     Jarvis–Judice–Ninke (÷48, 1976 CGIP), Stucki (÷42, 1981 IBM
@@ -150,7 +152,7 @@ output dimensions (e.g. 4:2:0 halves both chroma axes).
   `dither-jarvis`, `dither-stucki`, `dither-sierra3`,
   `dither-sierra2`, `dither-sierra-lite`, `dither-atkinson`,
   `dither-bayer` / `ordered-dither` (matrix size via
-  `{"matrix": 2|4|8}`). The error-diffusion factories accept
+  `{"matrix": 2|4|8|16}`). The error-diffusion factories accept
   `{"scan": "serpentine"}` (or the `{"serpentine": true}` shorthand)
   to switch to the boustrophedon scan.
 
