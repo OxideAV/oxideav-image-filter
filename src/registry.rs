@@ -4927,8 +4927,27 @@ fn make_drago(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilte
     let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
     let bias = get_f64("bias").unwrap_or(0.85) as f32;
     let mut f = Drago::new(bias);
+    if let Some(m) = get_f64("ld_max").or_else(|| get_f64("ldmax")) {
+        f = f.with_ld_max(m as f32);
+    }
     if let Some(s) = get_f64("display_scale").or_else(|| get_f64("scale")) {
         f = f.with_display_scale(s as f32);
+    }
+    // §4.1 exposure-independent pre-scaling. `{"key": <v>}` supplies an
+    // explicit log-average key; `{"auto_key": true}` (or `"key":
+    // "auto"`) uses the image's own §1.1 log-average luminance.
+    let auto_key = p
+        .and_then(|m| m.get("auto_key"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || p.and_then(|m| m.get("key"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.eq_ignore_ascii_case("auto"))
+            .unwrap_or(false);
+    if auto_key {
+        f = f.with_auto_key();
+    } else if let Some(k) = get_f64("key") {
+        f = f.with_key(k as f32);
     }
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
@@ -6492,6 +6511,62 @@ mod tests {
         assert!(r.is_err(), "scale = 0 should be rejected");
         let r2 = c.filters.make("edt", &json!({"scale": -1.0}), &inputs);
         assert!(r2.is_err(), "scale < 0 should be rejected");
+    }
+
+    #[test]
+    fn drago_factory_wires_ld_max_and_key() {
+        // The §4.2 `ld_max` and §4.1 `key` / `auto_key` params must
+        // reach the filter. We verify behaviourally: `ld_max < 100`
+        // dims, and `auto_key` changes the mapping vs the default.
+        let c = ctx();
+        let inputs = [rgb24_in_port(4, 4)];
+        let frame = || {
+            let mut data = Vec::with_capacity(4 * 4 * 3);
+            for y in 0..4u32 {
+                for x in 0..4u32 {
+                    data.extend_from_slice(&[(x * 40 + 30) as u8, (y * 40 + 30) as u8, 90]);
+                }
+            }
+            VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane { stride: 12, data }],
+            }
+        };
+        let base = run_one(
+            c.filters.make("drago", &json!({}), &inputs).expect("drago"),
+            frame(),
+        );
+        let dim = run_one(
+            c.filters
+                .make("drago", &json!({"ld_max": 50.0}), &inputs)
+                .expect("drago ld_max"),
+            frame(),
+        );
+        assert!(
+            dim.planes[0].data[0] < base.planes[0].data[0],
+            "factory ld_max = 50 must dim vs default"
+        );
+        let keyed = run_one(
+            c.filters
+                .make("drago", &json!({"auto_key": true}), &inputs)
+                .expect("drago auto_key"),
+            frame(),
+        );
+        assert_ne!(
+            base.planes[0].data, keyed.planes[0].data,
+            "factory auto_key must reshape the mapping"
+        );
+        // String `"key": "auto"` is an accepted alias for auto_key.
+        let keyed_str = run_one(
+            c.filters
+                .make("drago", &json!({"key": "auto"}), &inputs)
+                .expect("drago key=auto"),
+            frame(),
+        );
+        assert_eq!(
+            keyed.planes[0].data, keyed_str.planes[0].data,
+            "\"key\":\"auto\" must equal auto_key:true"
+        );
     }
 
     #[test]

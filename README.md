@@ -338,13 +338,18 @@ physically-meaningful luminance.
   Per-channel LUT (cost `O(W·H)`). Gray8 / RGB / RGBA. Factory
   aliases: `hable`, `tonemap-hable`, `uncharted2`.
 - **`Drago`** — Drago, Myszkowski, Annen, Chiba 2003 Eurographics
-  paper "Adaptive Logarithmic Mapping For Displaying High Contrast
-  Scenes". Per-pixel logarithmic compression
-  `log(Lw+1) / log(2 + 8·(Lw/Lwmax)^(log(bias)/log(0.5)))` with bias
-  parameter `b ∈ [0.5, 1.0]` (default `0.85`); maps the scene
-  maximum to the display maximum, adapting per frame. Chroma-
+  "Adaptive Logarithmic Mapping" per
+  `docs/image/filter/tone-mapping-operators.md` §4. Per-pixel log
+  compression `log(Lw+1) / log(2 + 8·(Lw/Lwmax)^(log(bias)/log(0.5)))`
+  with bias `b ∈ [0.5, 1.0]` (default `0.85`). The §4.2 leading factor
+  `Ld_max · 0.01 / log10(Lwmax+1)` is exposed as `ld_max` (cd/m²,
+  default `100` → `[0,1]` normalisation). Optional §4.1 exposure-
+  independent pre-scaling: `with_key` (explicit §1.1 log-average key) /
+  `with_auto_key` (image's own log-average) divides luminance before
+  the curve so the mapping is invariant to scene exposure. Chroma-
   preserving sRGB round-trip. Gray8 / RGB / RGBA. Factory aliases:
-  `drago`, `tonemap-drago`.
+  `drago`, `tonemap-drago`; params `{"bias", "ld_max", "key",
+  "auto_key", "display_scale"}` (`"key": "auto"` = auto-key).
 - **`ReinhardExtended`** — the unkeyed white-clamping form of the
   Reinhard 2002 operator per
   `docs/image/filter/tone-mapping-operators.md` §5.1: the same

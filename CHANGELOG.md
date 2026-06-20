@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r352: drive the `Drago` adaptive-logarithmic tone mapper to full
+  `docs/image/filter/tone-mapping-operators.md` §4 fidelity.
+  - **§4.2 `Ld_max` parameterisation** — new `Drago::ld_max` field +
+    `with_ld_max` builder exposing the doc's target maximum display
+    luminance in cd/m². The §4.2 leading factor becomes
+    `Ld_max · 0.01 / log10(Lwmax + 1)`; the params-table default `100`
+    keeps `Ld_max · 0.01 == 1.0`, so existing default output is
+    byte-identical while a caller can now dim/brighten by the cd/m²
+    target independently of the auxiliary `display_scale` multiplier.
+  - **§4.1 exposure-independent pre-scaling** — new `Drago::key` field +
+    `with_key` (explicit log-average key) and `with_auto_key` (use the
+    image's own §1.1 log-average luminance) builders. Dividing scene
+    luminance by the log-average key before the curve makes the mapping
+    invariant to a global exposure change (verified by a two-exposure
+    mean-absolute-difference test). Chroma re-modulation divides by the
+    **original** (un-prescaled) luminance per §1 step 3, so the key only
+    reshapes the tone curve.
+  - Registry factory `drago` / `tonemap-drago` now accepts
+    `{"ld_max": <cd/m²>}`, `{"key": <v>}`, `{"auto_key": true}`, and the
+    string alias `{"key": "auto"}`.
+  - Drago test coverage `6 → 12`; one new registry factory test.
+
 - r333: add the Bayer `16×16` ordered-dither matrix (`BayerMatrix::M16`) —
   one more turn of the `M_2n = 4·M_n + M_2[hi, lo]` recurrence past the
   existing `8×8` map (`docs/image/filter/dithering-kernels.md` §2). Its
