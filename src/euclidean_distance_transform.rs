@@ -205,6 +205,86 @@ pub(crate) fn dt_1d(f: &[f64], d: &mut [f64], v: &mut [usize], z: &mut [f64]) {
     }
 }
 
+/// 1-D distance transform that **also records the nearest feature
+/// index** (the argmin) for every output sample.
+///
+/// Identical lower-envelope march as [`dt_1d`] (§2.3 of
+/// `docs/image/filter/distance-transform.md`), but the second pass
+/// additionally writes `arg[q] = v[k]` — the sample index whose
+/// parabola is lowest at `q`. For a 1-D feature seed (`f[i] = 0` at a
+/// feature, `INF` elsewhere) `arg[q]` is the position of the nearest
+/// feature along this line, and `d[q]` the squared distance to it. The
+/// envelope already tracks `v[k]` for the distance pass, so surfacing
+/// the nearest index is free — no extra march.
+///
+/// Run separably this builds the exact 2-D **feature transform**: the
+/// column pass collapses each column to its nearest in-column feature
+/// (storing that feature's row), and the row pass picks the column
+/// whose per-column best is globally nearest. The resulting
+/// `(arg_x, arg_y)` pair is the exact nearest feature pixel — the
+/// argmin counterpart to the distance the unsigned transform already
+/// computes. Exposed `pub(crate)` so the Voronoi / nearest-feature
+/// filters can reuse the driver without re-transcribing the march.
+pub(crate) fn dt_1d_arg(
+    f: &[f64],
+    d: &mut [f64],
+    arg: &mut [usize],
+    v: &mut [usize],
+    z: &mut [f64],
+) {
+    let n = f.len();
+    debug_assert_eq!(d.len(), n);
+    debug_assert_eq!(arg.len(), n);
+    debug_assert!(v.len() >= n);
+    debug_assert!(z.len() > n);
+    if n == 0 {
+        return;
+    }
+    // Build the lower envelope (identical to dt_1d).
+    let mut k: usize = 0;
+    v[0] = 0;
+    z[0] = f64::NEG_INFINITY;
+    z[1] = f64::INFINITY;
+    for q in 1..n {
+        loop {
+            let vq = v[k];
+            let fq = f[q];
+            let fvk = f[vq];
+            let qf = q as f64;
+            let vf = vq as f64;
+            let num = (fq + qf * qf) - (fvk + vf * vf);
+            let den = 2.0 * (qf - vf);
+            let s = num / den;
+            if s <= z[k] {
+                if k == 0 {
+                    v[0] = q;
+                    z[1] = f64::INFINITY;
+                    break;
+                }
+                k -= 1;
+                continue;
+            }
+            k += 1;
+            v[k] = q;
+            z[k] = s;
+            z[k + 1] = f64::INFINITY;
+            break;
+        }
+    }
+    // Second pass: distance + nearest-feature index by walking the
+    // envelope. `v[k2]` is the argmin sample at `q`.
+    let mut k2: usize = 0;
+    for q in 0..n {
+        while z[k2 + 1] < q as f64 {
+            k2 += 1;
+        }
+        let vq = v[k2];
+        let dx = q as f64 - vq as f64;
+        d[q] = dx * dx + f[vq];
+        arg[q] = vq;
+    }
+}
+
 impl ImageFilter for EuclideanDistanceTransform {
     fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
         if !matches!(params.format, PixelFormat::Gray8) {

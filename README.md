@@ -504,6 +504,22 @@ physically-meaningful luminance.
   `radius` / `threshold` / `invert`. The soft-matte complement to the
   hard binary `Threshold` and the signed `SignedDistanceField`. Factory
   aliases: `feather`, `feather-edge`, `soft-edge`.
+- **`VoronoiTransform`** — exact nearest-feature (Voronoi) transform: the
+  **argmin** counterpart of the exact-Euclidean distance per
+  `docs/image/filter/distance-transform.md` §2.3. The
+  lower-envelope march of `EuclideanDistanceTransform` already tracks
+  `v[k]` (the sample whose parabola is lowest at each output position),
+  so carrying that index through both separable passes labels every
+  pixel with the coordinate of its closest foreground site — the
+  discrete Voronoi / nearest-neighbour partition of the grid — at no
+  extra cost (`O(d · N)` total, exact). Output renders a deterministic
+  per-cell hash of the nearest seed so adjacent Voronoi cells get
+  distinct, flat grey levels (cracked-glass mosaic). Distinct from
+  `Crystallize` (which approximates with a jittered grid + 3×3 local
+  search); this is the exact global nearest over an arbitrary seed set.
+  Gray8 input only; Gray8 output of the same dimensions. Knobs:
+  `threshold` / `invert`. Factory aliases: `voronoi`,
+  `voronoi-transform`, `nearest-feature`.
 
 ### Colour
 

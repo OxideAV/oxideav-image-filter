@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r358: `VoronoiTransform` — exact nearest-feature (Voronoi) transform.
+  Labels every pixel with the coordinate of its closest foreground site,
+  the `argmin` counterpart to the distance the
+  `EuclideanDistanceTransform` already computes. The §2.3
+  lower-envelope march of `docs/image/filter/distance-transform.md`
+  already tracks `v[k]` (the sample whose parabola is lowest), so a new
+  `dt_1d_arg` argmin variant of the 1-D driver carries that index
+  through both separable passes, yielding the exact nearest feature in
+  `O(d · N)` total time. The output renders a deterministic per-cell
+  hash of the nearest seed so adjacent Voronoi cells get distinct, flat
+  grey levels (cracked-glass mosaic). Knobs `threshold` / `invert`;
+  Gray8-only in/out. Factory aliases: `voronoi`, `voronoi-transform`,
+  `nearest-feature`. Clean-room from
+  `docs/image/filter/distance-transform.md` §1 (generalised DT) + §2
+  (Felzenszwalb–Huttenlocher exact-Euclidean transform).
+
 - r352: drive the `Drago` adaptive-logarithmic tone mapper to full
   `docs/image/filter/tone-mapping-operators.md` §4 fidelity.
   - **§4.2 `Ld_max` parameterisation** — new `Drago::ld_max` field +

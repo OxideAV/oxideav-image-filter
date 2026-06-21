@@ -270,6 +270,22 @@
 //!   Gray8-only in/out. Factory aliases: `weighted-distance-transform`,
 //!   `weighted-distance`, `wdt`.
 //!
+//! r358 additions:
+//!
+//! - [`VoronoiTransform`](feature_transform::VoronoiTransform) — exact
+//!   nearest-feature (Voronoi) transform: labels every pixel with the
+//!   coordinate of its closest foreground site, the `argmin` counterpart
+//!   to the distance the
+//!   [`EuclideanDistanceTransform`](euclidean_distance_transform::EuclideanDistanceTransform)
+//!   already computes. The §2.3 lower-envelope march of
+//!   `docs/image/filter/distance-transform.md` already tracks `v[k]` (the
+//!   sample whose parabola is lowest), so carrying that index through
+//!   both separable passes yields the exact nearest feature pixel for
+//!   free — `O(d · N)` total. Output renders a deterministic per-cell
+//!   hash of the nearest seed so adjacent Voronoi cells get distinct,
+//!   flat grey levels. Knobs `threshold` / `invert`; Gray8-only in/out.
+//!   Factory aliases: `voronoi`, `voronoi-transform`, `nearest-feature`.
+//!
 //! r14 additions:
 //!
 //! - [`BarrelInverse`](barrel_inverse::BarrelInverse) — polynomial
@@ -673,6 +689,7 @@ pub mod evaluate;
 pub mod exposure;
 pub mod extent;
 pub mod feather;
+pub mod feature_transform;
 pub mod flip;
 pub mod flood_fill;
 pub mod flop;
@@ -816,6 +833,7 @@ pub use evaluate::{Evaluate, EvaluateOp};
 pub use exposure::Exposure;
 pub use extent::Extent;
 pub use feather::Feather;
+pub use feature_transform::VoronoiTransform;
 pub use flip::Flip;
 pub use flood_fill::FloodFill;
 pub use flop::Flop;

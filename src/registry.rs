@@ -433,6 +433,17 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters.register("feather-edge", Box::new(make_feather));
     ctx.filters.register("soft-edge", Box::new(make_feather));
 
+    // r358 factory: exact nearest-feature (Voronoi) transform — labels
+    // every pixel with its nearest foreground site, the argmin
+    // counterpart of the exact-Euclidean distance the EDT computes
+    // (distance-transform.md §2.3 already tracks v[k]). Three aliases.
+    ctx.filters
+        .register("voronoi", Box::new(make_voronoi_transform));
+    ctx.filters
+        .register("voronoi-transform", Box::new(make_voronoi_transform));
+    ctx.filters
+        .register("nearest-feature", Box::new(make_voronoi_transform));
+
     // r324 factory: sRGB / power-law transfer-function transform
     // (tone-mapping-operators.md §5.2) exposed as a standalone LUT.
     // Decode (display → linear, EOTF) and encode (linear → display, OETF)
@@ -5751,6 +5762,45 @@ fn make_feather(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
     )))
 }
 
+fn make_voronoi_transform(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::VoronoiTransform;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+    let threshold = get_u64("threshold").unwrap_or(128).min(255) as u8;
+    let mut f = VoronoiTransform::new(threshold);
+    if let Some(inv) = get_bool("invert") {
+        f = f.with_invert(inv);
+    }
+    let in_port = video_in_port(inputs);
+    // VoronoiTransform always emits a single-plane Gray8 cell-label
+    // image; the input is Gray8-only too (apply() rejects every other
+    // format).
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec {
+            name: "video".to_string(),
+            params: PortParams::Video {
+                format: PixelFormat::Gray8,
+                width: *width,
+                height: *height,
+                time_base: *time_base,
+            },
+            ..in_port.clone()
+        },
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 /// Shared body: build an [`SrgbTransform`] from a JSON `params` object and a
 /// default direction, then wrap it in the adapter. The explicit encode /
 /// decode aliases pass the matching default; the generic `srgb-transform`
@@ -6460,6 +6510,11 @@ mod tests {
             "weighted-distance-transform",
             "weighted-distance",
             "wdt",
+            // r358 additions (exact nearest-feature / Voronoi transform —
+            // argmin of the exact-Euclidean march, three aliases).
+            "voronoi",
+            "voronoi-transform",
+            "nearest-feature",
         ] {
             assert!(c.filters.contains(name), "missing factory: {name}");
         }
@@ -6511,6 +6566,33 @@ mod tests {
         assert!(r.is_err(), "scale = 0 should be rejected");
         let r2 = c.filters.make("edt", &json!({"scale": -1.0}), &inputs);
         assert!(r2.is_err(), "scale < 0 should be rejected");
+    }
+
+    #[test]
+    fn voronoi_factory_emits_gray8() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        let f = c
+            .filters
+            .make("voronoi", &json!({"threshold": 200}), &inputs)
+            .expect("voronoi factory");
+        let outs = f.output_ports();
+        assert_eq!(outs.len(), 1);
+        if let PortParams::Video { format, .. } = outs[0].params {
+            assert_eq!(format, PixelFormat::Gray8);
+        } else {
+            panic!("expected video output port");
+        }
+    }
+
+    #[test]
+    fn voronoi_factory_aliases() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        for name in ["voronoi", "voronoi-transform", "nearest-feature"] {
+            let r = c.filters.make(name, &json!({"invert": true}), &inputs);
+            assert!(r.is_ok(), "alias {name} failed: {:?}", r.err());
+        }
     }
 
     #[test]
