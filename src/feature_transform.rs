@@ -256,6 +256,133 @@ impl ImageFilter for VoronoiTransform {
     }
 }
 
+/// Exact nearest-seed value propagation (Voronoi region fill).
+///
+/// Where [`VoronoiTransform`] renders a synthetic per-cell *label*, this
+/// filter paints every pixel with the **source intensity of its nearest
+/// feature site**. The result is the exact discrete Voronoi partition
+/// coloured by the seeds' own values: each cell is flat-filled with the
+/// grey level of the seed pixel at its centre. It is the standard
+/// nearest-neighbour region-grow / sparse-inpainting primitive — given a
+/// few known samples (the feature sites), it fills the whole frame by
+/// extending each sample to its zone of influence.
+///
+/// Built on the same exact [`feature_transform_2d`] as
+/// [`VoronoiTransform`], so it is `O(d · N)` and exact (the global
+/// nearest over an arbitrary seed set, not the local-window
+/// approximation of [`Crystallize`](crate::Crystallize)).
+///
+/// Clean-room transcription from `docs/image/filter/distance-transform.md`
+/// §1 (the generalised DT, whose intro names morphology / region tasks)
+/// and §2 (the exact Euclidean transform whose argmin march this filter
+/// reuses).
+///
+/// Single-plane `Gray8` input + single-plane `Gray8` output of the same
+/// dimensions. With no feature pixels the output is a verbatim copy of
+/// the input (no seed to propagate from).
+#[derive(Clone, Copy, Debug)]
+pub struct ProximityFill {
+    /// Feature (seed) threshold. Pixels with `value >= threshold` are
+    /// seeds whose value is propagated to their Voronoi cell.
+    pub threshold: u8,
+    /// If `true`, dark pixels (`value < threshold`) become the seeds
+    /// instead.
+    pub invert: bool,
+}
+
+impl Default for ProximityFill {
+    fn default() -> Self {
+        Self {
+            threshold: 128,
+            invert: false,
+        }
+    }
+}
+
+impl ProximityFill {
+    /// New filter with the given seed `threshold` and `invert = false`.
+    pub fn new(threshold: u8) -> Self {
+        Self {
+            threshold,
+            invert: false,
+        }
+    }
+
+    /// Flip the seed/background test (dark pixels become seeds).
+    pub fn with_invert(mut self, invert: bool) -> Self {
+        self.invert = invert;
+        self
+    }
+
+    fn build_mask(&self, data: &[u8], stride: usize, w: usize, h: usize) -> Vec<bool> {
+        let mut mask = vec![false; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let v = data[y * stride + x];
+                let fg = if self.invert {
+                    v < self.threshold
+                } else {
+                    v >= self.threshold
+                };
+                mask[y * w + x] = fg;
+            }
+        }
+        mask
+    }
+}
+
+impl ImageFilter for ProximityFill {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !matches!(params.format, PixelFormat::Gray8) {
+            return Err(Error::unsupported(format!(
+                "oxideav-image-filter: ProximityFill requires Gray8, got {:?}",
+                params.format
+            )));
+        }
+        if input.planes.is_empty() {
+            return Err(Error::invalid(
+                "oxideav-image-filter: ProximityFill requires a non-empty input plane",
+            ));
+        }
+        let w = params.width as usize;
+        let h = params.height as usize;
+        if w == 0 || h == 0 {
+            return Ok(input.clone());
+        }
+        let src = &input.planes[0];
+        let mask = self.build_mask(&src.data, src.stride, w, h);
+        let ft = feature_transform_2d(&mask, w, h);
+
+        let mut out = vec![0u8; w * h];
+        if ft.has_feature {
+            for y in 0..h {
+                for x in 0..w {
+                    let i = y * w + x;
+                    let sx = ft.nearest_x[i] as usize;
+                    let sy = ft.nearest_y[i] as usize;
+                    out[i] = src.data[sy * src.stride + sx];
+                }
+            }
+        } else {
+            // No seed to propagate — copy the input plane verbatim
+            // (respecting the source stride).
+            for y in 0..h {
+                for x in 0..w {
+                    out[y * w + x] = src.data[y * src.stride + x];
+                }
+            }
+        }
+
+        Ok(VideoFrame {
+            pts: input.pts,
+            planes: vec![VideoPlane {
+                stride: w,
+                data: out,
+            }],
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,5 +570,83 @@ mod tests {
             )
             .unwrap_err();
         assert!(format!("{err}").contains("VoronoiTransform"));
+    }
+
+    #[test]
+    fn proximity_fill_propagates_nearest_seed_value() {
+        // Two seeds with distinct values on a dark field. Every pixel
+        // takes the value of its nearest seed; the dividing line is the
+        // perpendicular bisector (here the midpoint of the row). Both
+        // seed values clear the threshold; the dark background does not.
+        let input = gray(16, 1, |x, _| {
+            if x == 2 {
+                90
+            } else if x == 13 {
+                210
+            } else {
+                0
+            }
+        });
+        let out = ProximityFill::new(50).apply(&input, p_gray(16, 1)).unwrap();
+        for (x, &v) in out.planes[0].data.iter().enumerate() {
+            // |x-2| vs |x-13|: nearer seed wins. Midpoint = 7.5, so
+            // x<=7 → seed at 2 (value 90), x>=8 → seed at 13 (value 210).
+            let expect = if x <= 7 { 90 } else { 210 };
+            assert_eq!(v, expect, "proximity fill mismatch at x={x}");
+        }
+    }
+
+    #[test]
+    fn proximity_fill_seed_keeps_own_value() {
+        // A single seed: the whole frame floods to its value.
+        let input = gray(6, 5, |x, y| if x == 2 && y == 1 { 177 } else { 0 });
+        let out = ProximityFill::new(50).apply(&input, p_gray(6, 5)).unwrap();
+        for &v in &out.planes[0].data {
+            assert_eq!(v, 177);
+        }
+    }
+
+    #[test]
+    fn proximity_fill_no_seed_copies_input() {
+        // No pixel passes the threshold → verbatim copy.
+        let input = gray(5, 5, |x, _| (x * 3) as u8);
+        let out = ProximityFill::new(200).apply(&input, p_gray(5, 5)).unwrap();
+        assert_eq!(out.planes[0].data, input.planes[0].data);
+    }
+
+    #[test]
+    fn proximity_fill_invert_uses_dark_seeds() {
+        // Dark dot on a bright field: with invert the dot is the only
+        // seed, so the whole frame floods to the dot's value (0).
+        let input = gray(7, 7, |x, y| if x == 3 && y == 3 { 0 } else { 255 });
+        let out = ProximityFill::new(128)
+            .with_invert(true)
+            .apply(&input, p_gray(7, 7))
+            .unwrap();
+        for &v in &out.planes[0].data {
+            assert_eq!(v, 0);
+        }
+    }
+
+    #[test]
+    fn proximity_fill_rejects_rgb() {
+        let input = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 12,
+                data: vec![0; 48],
+            }],
+        };
+        let err = ProximityFill::default()
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap_err();
+        assert!(format!("{err}").contains("ProximityFill"));
     }
 }

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r358: `ProximityFill` — exact nearest-seed value propagation (Voronoi
+  region fill). Paints every pixel with the source intensity of its
+  nearest feature site, built on the same exact `feature_transform_2d`
+  as `VoronoiTransform`. The standard nearest-neighbour region-grow /
+  sparse-inpainting primitive: extend a handful of known samples to
+  fill the whole frame, exact over an arbitrary seed set (not the
+  local-window approximation of `Crystallize`). No seeds → verbatim
+  input copy. Knobs `threshold` / `invert`; Gray8-only in/out. Factory
+  aliases: `proximity-fill`, `voronoi-fill`, `nearest-fill`. Clean-room
+  from `docs/image/filter/distance-transform.md` §1 + §2.
+
 - r358: `VoronoiTransform` — exact nearest-feature (Voronoi) transform.
   Labels every pixel with the coordinate of its closest foreground site,
   the `argmin` counterpart to the distance the

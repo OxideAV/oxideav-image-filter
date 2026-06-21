@@ -285,6 +285,18 @@
 //!   hash of the nearest seed so adjacent Voronoi cells get distinct,
 //!   flat grey levels. Knobs `threshold` / `invert`; Gray8-only in/out.
 //!   Factory aliases: `voronoi`, `voronoi-transform`, `nearest-feature`.
+//! - [`ProximityFill`](feature_transform::ProximityFill) — exact
+//!   nearest-seed **value** propagation (Voronoi region fill). Where
+//!   [`VoronoiTransform`](feature_transform::VoronoiTransform) renders a
+//!   synthetic per-cell label, this paints every pixel with the source
+//!   intensity of its nearest feature site — the standard
+//!   nearest-neighbour region-grow / sparse-inpainting primitive (extend
+//!   a handful of known samples to fill the whole frame). Built on the
+//!   same exact `feature_transform_2d`, so `O(d · N)` and exact (the
+//!   global nearest over an arbitrary seed set, not the local-window
+//!   approximation of [`Crystallize`](crystallize::Crystallize)).
+//!   Knobs `threshold` / `invert`; Gray8-only in/out. Factory aliases:
+//!   `proximity-fill`, `voronoi-fill`, `nearest-fill`.
 //!
 //! r14 additions:
 //!
@@ -833,7 +845,7 @@ pub use evaluate::{Evaluate, EvaluateOp};
 pub use exposure::Exposure;
 pub use extent::Extent;
 pub use feather::Feather;
-pub use feature_transform::VoronoiTransform;
+pub use feature_transform::{ProximityFill, VoronoiTransform};
 pub use flip::Flip;
 pub use flood_fill::FloodFill;
 pub use flop::Flop;

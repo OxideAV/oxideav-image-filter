@@ -520,6 +520,17 @@ physically-meaningful luminance.
   Gray8 input only; Gray8 output of the same dimensions. Knobs:
   `threshold` / `invert`. Factory aliases: `voronoi`,
   `voronoi-transform`, `nearest-feature`.
+- **`ProximityFill`** — exact nearest-seed **value** propagation
+  (Voronoi region fill). Where `VoronoiTransform` renders a synthetic
+  per-cell label, this paints every pixel with the source intensity of
+  its nearest feature site — the standard nearest-neighbour region-grow
+  / sparse-inpainting primitive (extend a handful of known samples to
+  fill the whole frame). Built on the same exact feature transform, so
+  `O(d · N)` and exact (the global nearest over an arbitrary seed set,
+  not the local-window approximation of `Crystallize`). With no seed
+  pixels the output copies the input verbatim. Gray8 input only; Gray8
+  output of the same dimensions. Knobs: `threshold` / `invert`. Factory
+  aliases: `proximity-fill`, `voronoi-fill`, `nearest-fill`.
 
 ### Colour
 
