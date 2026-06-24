@@ -531,6 +531,32 @@ physically-meaningful luminance.
   pixels the output copies the input verbatim. Gray8 input only; Gray8
   output of the same dimensions. Knobs: `threshold` / `invert`. Factory
   aliases: `proximity-fill`, `voronoi-fill`, `nearest-fill`.
+- **`DistanceMorphology`** + **`MorphOp`** — exact-Euclidean binary
+  morphology (dilate / erode / open / close) derived directly from the
+  `docs/image/filter/distance-transform.md` §1 nearest-feature distance.
+  A disc dilation of radius `r` keeps every pixel within Euclidean
+  distance `r` of a foreground site (`D_FG(p) ≤ r²`); erosion is the
+  dual `D_BG(p) > r²` (dilation of the complement); **opening**
+  `δ_r(ε_r(·))` clears foreground specks; **closing** `ε_r(δ_r(·))`
+  fills background holes. Each primitive is one exact §2.4
+  squared-Euclidean transform plus an `r²` threshold, so the structuring
+  element is a true Euclidean circle — not the octagon a 3×3 iteration
+  produces — and the test is `sqrt`-free and exact for integer `r`.
+  Distinct from the structuring-element `Morphology` family below.
+  Gray8 in/out. Knobs: `radius`, `threshold`, `invert`, `fg_value`.
+  Factory aliases: `distance-dilate` / `distance-erode` /
+  `distance-open` / `distance-close` (+ `euclidean-` forms), with an
+  `op` JSON override.
+- **`DistanceOutline`** — exact-Euclidean boundary band (outline /
+  stroke). Paints the band `{ p : −inner ≤ s(p) ≤ outer }` straddling
+  the shape contour, where `s` is the signed Euclidean distance
+  (`+D_FG` outside, `−D_BG` inside): `inner = 0` gives a purely-outer
+  stroke, `outer = 0` a purely-inner one, equal radii a centred stroke.
+  Exactly the set difference `dilate(outer) − erode(inner)`; two exact
+  §2.4 transforms, `sqrt`-free. Gray8 in/out. Knobs: `inner`, `outer`
+  (or `width` for a centred stroke), `threshold`, `invert`, `fg_value`.
+  Factory aliases: `distance-outline`, `euclidean-outline`,
+  `distance-stroke`.
 
 ### Colour
 
