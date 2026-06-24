@@ -56,6 +56,32 @@ pub enum MorphOp {
     /// Shrink the foreground by a Euclidean disc of the given radius
     /// (`D_BG > r²`).
     Erode,
+    /// **Opening**: erode then dilate (`δ_r(ε_r(FG))`). Removes
+    /// foreground specks smaller than the disc while preserving the
+    /// overall shape — the standard salt-noise / thin-protrusion cleaner.
+    Open,
+    /// **Closing**: dilate then erode (`ε_r(δ_r(FG))`). Fills background
+    /// holes and gaps narrower than the disc while preserving the overall
+    /// shape — the standard pepper-noise / hairline-crack filler.
+    Close,
+}
+
+/// Run one exact-Euclidean morphology primitive on a boolean mask,
+/// returning the result mask. `dilate(r)` keeps every pixel within
+/// Euclidean radius `r` of a foreground site (`D_FG ≤ r²`); `erode(r)`
+/// keeps only pixels farther than `r` from the nearest background site
+/// (`D_BG > r²`). Both come straight from §1 of
+/// `docs/image/filter/distance-transform.md` via the §2.4 separable
+/// transform.
+fn morph_primitive(mask: &[bool], w: usize, h: usize, dilate: bool, r2: f64) -> Vec<bool> {
+    if dilate {
+        let d2 = edt_squared_2d(mask, w, h);
+        d2.iter().map(|&d| d <= r2).collect()
+    } else {
+        let bg: Vec<bool> = mask.iter().map(|&m| !m).collect();
+        let d2 = edt_squared_2d(&bg, w, h);
+        d2.iter().map(|&d| d > r2).collect()
+    }
 }
 
 /// Exact-Euclidean binary morphology (dilation / erosion).
@@ -100,6 +126,16 @@ impl DistanceMorphology {
     /// Shorthand for an erosion of the given radius.
     pub fn erode(radius: f32) -> Self {
         Self::new(MorphOp::Erode, radius)
+    }
+
+    /// Shorthand for an opening (erode then dilate) of the given radius.
+    pub fn open(radius: f32) -> Self {
+        Self::new(MorphOp::Open, radius)
+    }
+
+    /// Shorthand for a closing (dilate then erode) of the given radius.
+    pub fn close(radius: f32) -> Self {
+        Self::new(MorphOp::Close, radius)
     }
 
     /// Set the binarisation threshold.
@@ -165,30 +201,28 @@ impl ImageFilter for DistanceMorphology {
         let r = self.radius.max(0.0) as f64;
         let r2 = r * r;
 
-        // For dilation the seed set is the foreground; for erosion the
-        // seed set is the background (we measure distance to the nearest
-        // background pixel). Erosion of the complement equals dilation,
-        // so a single transform + threshold serves both.
-        let mut out = vec![0u8; w * h];
-        match self.op {
-            MorphOp::Dilate => {
-                // dilate_r(FG) = { p : D_FG(p) ≤ r² }
-                let d2 = edt_squared_2d(&mask, w, h);
-                for (o, &dist) in out.iter_mut().zip(d2.iter()) {
-                    if dist <= r2 {
-                        *o = self.fg_value;
-                    }
-                }
+        // Each primitive is one exact §2.4 transform + an `r²` threshold;
+        // opening / closing compose the two in sequence on the
+        // intermediate binary mask.
+        let result = match self.op {
+            MorphOp::Dilate => morph_primitive(&mask, w, h, true, r2),
+            MorphOp::Erode => morph_primitive(&mask, w, h, false, r2),
+            MorphOp::Open => {
+                // open = dilate(erode(mask))
+                let eroded = morph_primitive(&mask, w, h, false, r2);
+                morph_primitive(&eroded, w, h, true, r2)
             }
-            MorphOp::Erode => {
-                // erode_r(FG) = { p : D_BG(p) > r² }; seed the BG mask.
-                let bg: Vec<bool> = mask.iter().map(|&m| !m).collect();
-                let d2 = edt_squared_2d(&bg, w, h);
-                for (o, &dist) in out.iter_mut().zip(d2.iter()) {
-                    if dist > r2 {
-                        *o = self.fg_value;
-                    }
-                }
+            MorphOp::Close => {
+                // close = erode(dilate(mask))
+                let dilated = morph_primitive(&mask, w, h, true, r2);
+                morph_primitive(&dilated, w, h, false, r2)
+            }
+        };
+
+        let mut out = vec![0u8; w * h];
+        for (o, &on) in out.iter_mut().zip(result.iter()) {
+            if on {
+                *o = self.fg_value;
             }
         }
 
@@ -611,6 +645,87 @@ mod tests {
             .apply(&input, params)
             .unwrap_err();
         assert!(format!("{err}").contains("DistanceMorphology"));
+    }
+
+    #[test]
+    fn open_removes_an_isolated_speck() {
+        // A solid block plus a lone speck far away. Opening with radius 1
+        // erases the 1-pixel speck (it vanishes under erosion and never
+        // returns) while the block survives.
+        let w = 13;
+        let h = 9;
+        let input = gray(w as u32, h as u32, |x, y| {
+            let in_block = (2..6).contains(&x) && (2..6).contains(&y);
+            let is_speck = x == 10 && y == 7;
+            if in_block || is_speck {
+                255
+            } else {
+                0
+            }
+        });
+        let out = DistanceMorphology::open(1.0)
+            .apply(&input, p_gray(w as u32, h as u32))
+            .unwrap();
+        let p = plane_of(&out);
+        assert_eq!(p[7 * w + 10], 0, "isolated speck should be opened away");
+        // The block interior survives (centre at (3,3) is 1+ px deep).
+        assert_ne!(p[3 * w + 3], 0, "block should survive opening");
+    }
+
+    #[test]
+    fn close_fills_a_small_hole() {
+        // A solid block with a single-pixel hole punched in it. Closing
+        // with radius 1 fills the hole while the block boundary is
+        // preserved.
+        let w = 9;
+        let h = 9;
+        let input = gray(w as u32, h as u32, |x, y| {
+            let in_block = (2..7).contains(&x) && (2..7).contains(&y);
+            let is_hole = x == 4 && y == 4;
+            if in_block && !is_hole {
+                255
+            } else {
+                0
+            }
+        });
+        // Before: the hole is background.
+        assert_eq!(plane_of(&input)[4 * w + 4], 0);
+        let out = DistanceMorphology::close(1.0)
+            .apply(&input, p_gray(w as u32, h as u32))
+            .unwrap();
+        let p = plane_of(&out);
+        assert_ne!(p[4 * w + 4], 0, "interior hole should be closed/filled");
+        // A pixel well outside the block stays background.
+        assert_eq!(p[0], 0, "exterior should not be filled");
+    }
+
+    #[test]
+    fn open_is_idempotent() {
+        // Opening twice equals opening once (a defining morphology
+        // property): γ(γ(X)) = γ(X).
+        let w = 11;
+        let h = 11;
+        let input = gray(w as u32, h as u32, |x, y| {
+            // An irregular blob.
+            let dx = x as f64 - 5.0;
+            let dy = y as f64 - 5.0;
+            if dx * dx + dy * dy <= 9.0 || (x == 1 && y == 1) {
+                255
+            } else {
+                0
+            }
+        });
+        let once = DistanceMorphology::open(1.5)
+            .apply(&input, p_gray(w as u32, h as u32))
+            .unwrap();
+        let twice = DistanceMorphology::open(1.5)
+            .apply(&once, p_gray(w as u32, h as u32))
+            .unwrap();
+        assert_eq!(
+            plane_of(&once),
+            plane_of(&twice),
+            "opening must be idempotent"
+        );
     }
 
     // --- DistanceOutline ---

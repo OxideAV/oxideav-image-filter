@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r369: `DistanceMorphology` gains exact-Euclidean **opening**
+  (`MorphOp::Open` = `δ_r(ε_r(·))`, clears foreground specks) and
+  **closing** (`MorphOp::Close` = `ε_r(δ_r(·))`, fills background holes),
+  composed from the dilate/erode primitives on the intermediate binary
+  mask. Verified by speck-removal, hole-fill, and opening-idempotence
+  (`γ(γ(X)) = γ(X)`) tests. `open(r)` / `close(r)` constructors; factory
+  aliases `distance-open`, `euclidean-open`, `distance-close`,
+  `euclidean-close` (and `op: "open"` / `"close"` overrides). Clean-room
+  from `docs/image/filter/distance-transform.md` §1 + §2.4.
+
 - r369: `DistanceOutline` — exact-Euclidean boundary band (outline /
   stroke). Paints `{ p : −inner ≤ s(p) ≤ outer }` where `s` is the
   signed Euclidean distance to the shape contour (`+D_FG` outside,

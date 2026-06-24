@@ -273,18 +273,20 @@
 //! r369 additions:
 //!
 //! - [`DistanceMorphology`](distance_morphology::DistanceMorphology) —
-//!   exact-Euclidean binary morphology (dilate / erode) via the distance
-//!   transform. A disc dilation of radius `r` grows the foreground by
-//!   every pixel whose nearest-feature distance is `≤ r`
+//!   exact-Euclidean binary morphology (dilate / erode / open / close)
+//!   via the distance transform. A disc dilation of radius `r` grows the
+//!   foreground by every pixel whose nearest-feature distance is `≤ r`
 //!   (`D_FG(p) ≤ r²`); erosion is the dual `D_BG(p) > r²` (dilation of
-//!   the complement). One exact §2.4 squared-Euclidean transform plus a
-//!   `r²` threshold, so the structuring element is a **true Euclidean
-//!   circle** — not the octagon a 3×3-iteration produces — and the test
-//!   is `sqrt`-free. [`MorphOp::Dilate`](distance_morphology::MorphOp) /
-//!   [`Erode`](distance_morphology::MorphOp); knobs `radius`,
-//!   `threshold`, `invert`, `fg_value`; Gray8-only in/out. Factory
-//!   aliases: `distance-dilate`, `distance-erode`, `euclidean-dilate`,
-//!   `euclidean-erode`. Clean-room from
+//!   the complement); **opening** is `δ_r(ε_r(·))` (clears specks),
+//!   **closing** is `ε_r(δ_r(·))` (fills holes). Each primitive is one
+//!   exact §2.4 squared-Euclidean transform plus an `r²` threshold, so
+//!   the structuring element is a **true Euclidean circle** — not the
+//!   octagon a 3×3-iteration produces — and the test is `sqrt`-free.
+//!   [`MorphOp`](distance_morphology::MorphOp) `Dilate` / `Erode` /
+//!   `Open` / `Close`; knobs `radius`, `threshold`, `invert`,
+//!   `fg_value`; Gray8-only in/out. Factory aliases: `distance-dilate`,
+//!   `distance-erode`, `distance-open`, `distance-close` (+ `euclidean-`
+//!   forms). Clean-room from
 //!   `docs/image/filter/distance-transform.md` §1 + §2.4.
 //! - [`DistanceOutline`](distance_morphology::DistanceOutline) —
 //!   exact-Euclidean boundary band (outline / stroke). Paints the band

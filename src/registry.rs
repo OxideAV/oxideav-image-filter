@@ -469,6 +469,19 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("euclidean-erode", Box::new(make_distance_erode));
 
+    // r369 factory: exact-Euclidean opening (erode∘dilate) and closing
+    // (dilate∘erode) — the two morphology primitives composed on the
+    // intermediate binary mask. Opening clears small foreground specks;
+    // closing fills small background holes.
+    ctx.filters
+        .register("distance-open", Box::new(make_distance_open));
+    ctx.filters
+        .register("euclidean-open", Box::new(make_distance_open));
+    ctx.filters
+        .register("distance-close", Box::new(make_distance_close));
+    ctx.filters
+        .register("euclidean-close", Box::new(make_distance_close));
+
     // r369 factory: exact-Euclidean boundary band (outline / stroke) —
     // the band { −inner ≤ s(p) ≤ outer } around the shape contour, i.e.
     // the set difference dilate(outer) − erode(inner). Two exact §2.4
@@ -5898,6 +5911,12 @@ fn build_distance_morphology(
         Some(s) if s.eq_ignore_ascii_case("erode") || s.eq_ignore_ascii_case("shrink") => {
             MorphOp::Erode
         }
+        Some(s) if s.eq_ignore_ascii_case("open") || s.eq_ignore_ascii_case("opening") => {
+            MorphOp::Open
+        }
+        Some(s) if s.eq_ignore_ascii_case("close") || s.eq_ignore_ascii_case("closing") => {
+            MorphOp::Close
+        }
         _ => default_op,
     };
 
@@ -5947,6 +5966,14 @@ fn make_distance_dilate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn S
 
 fn make_distance_erode(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     build_distance_morphology(params, inputs, crate::MorphOp::Erode)
+}
+
+fn make_distance_open(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    build_distance_morphology(params, inputs, crate::MorphOp::Open)
+}
+
+fn make_distance_close(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    build_distance_morphology(params, inputs, crate::MorphOp::Close)
 }
 
 fn make_distance_outline(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
@@ -6831,6 +6858,10 @@ mod tests {
             "euclidean-dilate",
             "distance-erode",
             "euclidean-erode",
+            "distance-open",
+            "euclidean-open",
+            "distance-close",
+            "euclidean-close",
         ] {
             let f = c
                 .filters
@@ -6883,6 +6914,65 @@ mod tests {
         assert_eq!(
             ero_fg, 0,
             "erode by 1 should remove the lone seed: {ero_fg}"
+        );
+    }
+
+    #[test]
+    fn distance_open_close_factories_clean_specks_and_holes() {
+        // open removes a lone speck; close fills a lone hole. Both via the
+        // dedicated aliases.
+        let c = ctx();
+        let inputs = [gray_in_port(9, 9)];
+        // Block with a speck for open.
+        let mut spk = vec![0u8; 81];
+        for y in 2..6 {
+            for x in 2..6 {
+                spk[y * 9 + x] = 255;
+            }
+        }
+        spk[7 * 9 + 8] = 255; // isolated speck
+        let opened = run_one(
+            c.filters
+                .make("distance-open", &json!({"radius": 1.0}), &inputs)
+                .expect("open"),
+            VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane {
+                    stride: 9,
+                    data: spk,
+                }],
+            },
+        );
+        assert_eq!(
+            opened.planes[0].data[7 * 9 + 8],
+            0,
+            "open should erase the speck"
+        );
+
+        // Block with a hole for close.
+        let mut hol = vec![0u8; 81];
+        for y in 2..7 {
+            for x in 2..7 {
+                hol[y * 9 + x] = 255;
+            }
+        }
+        hol[4 * 9 + 4] = 0; // punched hole
+        let closed = run_one(
+            c.filters
+                .make("distance-close", &json!({"radius": 1.0}), &inputs)
+                .expect("close"),
+            VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane {
+                    stride: 9,
+                    data: hol,
+                }],
+            },
+        );
+        assert_ne!(
+            closed.planes[0].data[4 * 9 + 4],
+            0,
+            "close should fill the hole"
         );
     }
 
