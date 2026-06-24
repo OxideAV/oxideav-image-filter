@@ -270,6 +270,23 @@
 //!   Gray8-only in/out. Factory aliases: `weighted-distance-transform`,
 //!   `weighted-distance`, `wdt`.
 //!
+//! r369 additions:
+//!
+//! - [`DistanceMorphology`](distance_morphology::DistanceMorphology) —
+//!   exact-Euclidean binary morphology (dilate / erode) via the distance
+//!   transform. A disc dilation of radius `r` grows the foreground by
+//!   every pixel whose nearest-feature distance is `≤ r`
+//!   (`D_FG(p) ≤ r²`); erosion is the dual `D_BG(p) > r²` (dilation of
+//!   the complement). One exact §2.4 squared-Euclidean transform plus a
+//!   `r²` threshold, so the structuring element is a **true Euclidean
+//!   circle** — not the octagon a 3×3-iteration produces — and the test
+//!   is `sqrt`-free. [`MorphOp::Dilate`](distance_morphology::MorphOp) /
+//!   [`Erode`](distance_morphology::MorphOp); knobs `radius`,
+//!   `threshold`, `invert`, `fg_value`; Gray8-only in/out. Factory
+//!   aliases: `distance-dilate`, `distance-erode`, `euclidean-dilate`,
+//!   `euclidean-erode`. Clean-room from
+//!   `docs/image/filter/distance-transform.md` §1 + §2.4.
+//!
 //! r358 additions:
 //!
 //! - [`VoronoiTransform`](feature_transform::VoronoiTransform) — exact
@@ -686,6 +703,7 @@ pub mod deskew;
 pub mod despeckle;
 pub mod difference;
 pub mod displacement_map;
+pub mod distance_morphology;
 pub mod distance_transform;
 pub mod distort;
 pub mod dither;
@@ -830,6 +848,7 @@ pub use deskew::Deskew;
 pub use despeckle::Despeckle;
 pub use difference::Difference;
 pub use displacement_map::DisplacementMap;
+pub use distance_morphology::{DistanceMorphology, MorphOp};
 pub use distance_transform::{ChamferKind, DistanceTransform};
 pub use distort::Distort;
 pub use dither::{BayerMatrix, DiffusionKernel, Dither, DitherMode, ScanOrder};

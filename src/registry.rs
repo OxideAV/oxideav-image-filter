@@ -455,6 +455,20 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("nearest-fill", Box::new(make_proximity_fill));
 
+    // r369 factory: exact-Euclidean binary morphology (dilate / erode).
+    // Dilation = { p : D_FG(p) ≤ r² }, erosion = { p : D_BG(p) > r² },
+    // both pure thresholds of the §1 nearest-feature distance computed by
+    // the §2.4 separable transform — a true Euclidean disc, not a 3×3
+    // octagon. The op is selected by the alias (or a `op` JSON field).
+    ctx.filters
+        .register("distance-dilate", Box::new(make_distance_dilate));
+    ctx.filters
+        .register("euclidean-dilate", Box::new(make_distance_dilate));
+    ctx.filters
+        .register("distance-erode", Box::new(make_distance_erode));
+    ctx.filters
+        .register("euclidean-erode", Box::new(make_distance_erode));
+
     // r324 factory: sRGB / power-law transfer-function transform
     // (tone-mapping-operators.md §5.2) exposed as a standalone LUT.
     // Decode (display → linear, EOTF) and encode (linear → display, OETF)
@@ -5850,6 +5864,80 @@ fn make_proximity_fill(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn St
     )))
 }
 
+/// Shared body for the exact-Euclidean morphology factories: build a
+/// [`DistanceMorphology`] for the given [`MorphOp`] from a JSON `params`
+/// object, then wrap it in the adapter. The op comes from the alias; a
+/// `op` JSON string (`"dilate"` / `"erode"`) may override it.
+fn build_distance_morphology(
+    params: &Value,
+    inputs: &[PortSpec],
+    default_op: crate::MorphOp,
+) -> Result<Box<dyn StreamFilter>> {
+    use crate::{DistanceMorphology, MorphOp};
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+
+    let op = match get_str("op") {
+        Some(s) if s.eq_ignore_ascii_case("dilate") || s.eq_ignore_ascii_case("grow") => {
+            MorphOp::Dilate
+        }
+        Some(s) if s.eq_ignore_ascii_case("erode") || s.eq_ignore_ascii_case("shrink") => {
+            MorphOp::Erode
+        }
+        _ => default_op,
+    };
+
+    let radius = get_f64("radius").unwrap_or(1.0).max(0.0) as f32;
+    let mut f = DistanceMorphology::new(op, radius);
+    if let Some(t) = get_u64("threshold") {
+        f = f.with_threshold(t.min(255) as u8);
+    }
+    if let Some(inv) = get_bool("invert") {
+        f = f.with_invert(inv);
+    }
+    if let Some(fg) = get_u64("fg_value").or_else(|| get_u64("foreground")) {
+        f = f.with_fg_value(fg.min(255) as u8);
+    }
+
+    let in_port = video_in_port(inputs);
+    // DistanceMorphology always emits a single-plane Gray8 binary mask;
+    // the input is Gray8-only too (apply() rejects every other format).
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec {
+            name: "video".to_string(),
+            params: PortParams::Video {
+                format: PixelFormat::Gray8,
+                width: *width,
+                height: *height,
+                time_base: *time_base,
+            },
+            ..in_port.clone()
+        },
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+fn make_distance_dilate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    build_distance_morphology(params, inputs, crate::MorphOp::Dilate)
+}
+
+fn make_distance_erode(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    build_distance_morphology(params, inputs, crate::MorphOp::Erode)
+}
+
 /// Shared body: build an [`SrgbTransform`] from a JSON `params` object and a
 /// default direction, then wrap it in the adapter. The explicit encode /
 /// decode aliases pass the matching default; the generic `srgb-transform`
@@ -6665,6 +6753,70 @@ mod tests {
                 panic!("expected video output port for {name}");
             }
         }
+    }
+
+    #[test]
+    fn distance_morphology_factory_emits_gray8_and_aliases() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        for name in [
+            "distance-dilate",
+            "euclidean-dilate",
+            "distance-erode",
+            "euclidean-erode",
+        ] {
+            let f = c
+                .filters
+                .make(name, &json!({"radius": 2.0, "threshold": 100}), &inputs)
+                .unwrap_or_else(|e| panic!("alias {name} failed: {e:?}"));
+            let outs = f.output_ports();
+            assert_eq!(outs.len(), 1);
+            if let PortParams::Video { format, .. } = outs[0].params {
+                assert_eq!(format, PixelFormat::Gray8);
+            } else {
+                panic!("expected video output port for {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn distance_morphology_op_override_changes_result() {
+        // The `op` JSON field overrides the alias default. Run a dilate
+        // and an erode on the same single-centre frame; dilate grows
+        // (more FG pixels), erode shrinks (the lone pixel vanishes).
+        let c = ctx();
+        let inputs = [gray_in_port(7, 7)];
+        let frame = || {
+            let mut data = vec![0u8; 49];
+            data[3 * 7 + 3] = 255;
+            VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane { stride: 7, data }],
+            }
+        };
+        let dil = run_one(
+            c.filters
+                .make("distance-dilate", &json!({"radius": 1.5}), &inputs)
+                .expect("dilate"),
+            frame(),
+        );
+        let ero = run_one(
+            c.filters
+                .make(
+                    "distance-dilate",
+                    &json!({"op": "erode", "radius": 1.0}),
+                    &inputs,
+                )
+                .expect("erode via op override"),
+            frame(),
+        );
+        let dil_fg = dil.planes[0].data.iter().filter(|&&v| v != 0).count();
+        let ero_fg = ero.planes[0].data.iter().filter(|&&v| v != 0).count();
+        assert!(dil_fg > 1, "dilate should grow the lone seed: {dil_fg}");
+        assert_eq!(
+            ero_fg, 0,
+            "erode by 1 should remove the lone seed: {ero_fg}"
+        );
     }
 
     #[test]

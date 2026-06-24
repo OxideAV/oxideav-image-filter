@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r369: `DistanceMorphology` — exact-Euclidean binary morphology
+  (dilate / erode). A disc dilation of radius `r` grows the foreground
+  by every pixel whose nearest-feature distance is `≤ r`
+  (`D_FG(p) ≤ r²`); erosion is the dual `D_BG(p) > r²` (dilation of the
+  complement). One exact §2.4 squared-Euclidean transform plus an `r²`
+  threshold, so the structuring element is a true Euclidean circle —
+  not the octagon a 3×3-iteration produces — and the test is `sqrt`-free
+  and exact for integer `r`. Validated against a brute-force
+  every-pixel oracle (single-seed disc + random masks). Knobs `radius`,
+  `threshold`, `invert`, `fg_value`; Gray8-only in/out. Factory aliases:
+  `distance-dilate`, `euclidean-dilate`, `distance-erode`,
+  `euclidean-erode` (with an `op` JSON override). Clean-room from
+  `docs/image/filter/distance-transform.md` §1 + §2.4.
+
 - r369: shared `edt_squared_2d` driver — the exact 2-D squared-Euclidean
   distance transform of `docs/image/filter/distance-transform.md` §2.4
   factored into one `pub(crate)` helper. `EuclideanDistanceTransform`'s
