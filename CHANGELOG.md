@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r369: shared `edt_squared_2d` driver — the exact 2-D squared-Euclidean
+  distance transform of `docs/image/filter/distance-transform.md` §2.4
+  factored into one `pub(crate)` helper. `EuclideanDistanceTransform`'s
+  `apply` now calls it instead of re-inlining the two separable passes;
+  output is bit-identical (the brute-force oracle tests are unchanged).
+  Unblocks the exact-Euclidean morphology filters below sharing one
+  transcribed driver.
+
 - r358: `ProximityFill` — exact nearest-seed value propagation (Voronoi
   region fill). Paints every pixel with the source intensity of its
   nearest feature site, built on the same exact `feature_transform_2d`

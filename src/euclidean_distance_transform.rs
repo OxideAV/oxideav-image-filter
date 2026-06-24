@@ -285,6 +285,78 @@ pub(crate) fn dt_1d_arg(
     }
 }
 
+/// Exact 2-D **squared** Euclidean distance transform of a binary mask.
+///
+/// `mask[y*w + x] == true` marks a feature (foreground) site. Returns a
+/// `w*h` buffer whose every entry is the squared Euclidean distance to
+/// the nearest feature pixel (`0` at feature pixels themselves). With no
+/// feature pixel at all every entry is [`INF`].
+///
+/// This is the separable Felzenszwalb–Huttenlocher transform of
+/// `docs/image/filter/distance-transform.md` §2.4 — the column pass then
+/// the row pass over [`dt_1d`], seeding `0` at features and [`INF`]
+/// elsewhere per §1. The result is exact (not an approximation); callers
+/// take `sqrt` for the actual Euclidean distance or compare against a
+/// squared radius to avoid the `sqrt` entirely.
+///
+/// Exposed `pub(crate)` so the exact-Euclidean morphology filters
+/// (distance dilate / erode / outline / gradient) share one transcribed
+/// driver rather than re-inlining the two separable passes.
+pub(crate) fn edt_squared_2d(mask: &[bool], w: usize, h: usize) -> Vec<f64> {
+    debug_assert_eq!(mask.len(), w * h);
+    if w == 0 || h == 0 {
+        return Vec::new();
+    }
+    // §1 seed: 0 at feature sites, INF elsewhere. We carry squared
+    // distances throughout; no sqrt until the caller wants it.
+    let mut f = vec![INF; w * h];
+    for (i, &m) in mask.iter().enumerate() {
+        if m {
+            f[i] = 0.0;
+        }
+    }
+
+    let n_max = w.max(h);
+    let mut line_in = vec![0.0_f64; n_max];
+    let mut line_out = vec![0.0_f64; n_max];
+    let mut v_buf = vec![0_usize; n_max];
+    let mut z_buf = vec![0.0_f64; n_max + 1];
+
+    // Column pass (§2.4): collapse each column to its squared vertical
+    // distance, write back into `f` so the row pass sees it as its `f`.
+    for x in 0..w {
+        for y in 0..h {
+            line_in[y] = f[y * w + x];
+        }
+        dt_1d(
+            &line_in[..h],
+            &mut line_out[..h],
+            &mut v_buf[..h],
+            &mut z_buf[..h + 1],
+        );
+        for y in 0..h {
+            f[y * w + x] = line_out[y];
+        }
+    }
+    // Row pass (§2.4): combine with the column result to the exact 2-D
+    // squared distance.
+    for y in 0..h {
+        for x in 0..w {
+            line_in[x] = f[y * w + x];
+        }
+        dt_1d(
+            &line_in[..w],
+            &mut line_out[..w],
+            &mut v_buf[..w],
+            &mut z_buf[..w + 1],
+        );
+        for x in 0..w {
+            f[y * w + x] = line_out[x];
+        }
+    }
+    f
+}
+
 impl ImageFilter for EuclideanDistanceTransform {
     fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
         if !matches!(params.format, PixelFormat::Gray8) {
@@ -305,10 +377,10 @@ impl ImageFilter for EuclideanDistanceTransform {
         }
         let src = &input.planes[0];
 
-        // Seed: 0.0 at foreground pixels, INF elsewhere. We hold the
+        // Seed: foreground pixels per threshold / invert. We hold the
         // *squared* distances throughout — the sqrt only happens at
         // render time.
-        let mut f = vec![INF; w * h];
+        let mut mask = vec![false; w * h];
         for y in 0..h {
             for x in 0..w {
                 let v = src.data[y * src.stride + x];
@@ -317,51 +389,12 @@ impl ImageFilter for EuclideanDistanceTransform {
                 } else {
                     v >= self.threshold
                 };
-                if fg {
-                    f[y * w + x] = 0.0;
-                }
+                mask[y * w + x] = fg;
             }
         }
 
-        // Scratch buffers reused across rows / columns.
-        let n_max = w.max(h);
-        let mut col_in = vec![0.0_f64; h];
-        let mut col_out = vec![0.0_f64; h];
-        let mut row_in = vec![0.0_f64; w];
-        let mut row_out = vec![0.0_f64; w];
-        let mut v_buf = vec![0_usize; n_max];
-        let mut z_buf = vec![0.0_f64; n_max + 1];
-
-        // Column pass: write back into `f` once each column is done.
-        for x in 0..w {
-            for y in 0..h {
-                col_in[y] = f[y * w + x];
-            }
-            dt_1d(
-                &col_in,
-                &mut col_out[..h],
-                &mut v_buf[..h],
-                &mut z_buf[..h + 1],
-            );
-            for y in 0..h {
-                f[y * w + x] = col_out[y];
-            }
-        }
-        // Row pass: write back row-by-row.
-        for y in 0..h {
-            for x in 0..w {
-                row_in[x] = f[y * w + x];
-            }
-            dt_1d(
-                &row_in,
-                &mut row_out[..w],
-                &mut v_buf[..w],
-                &mut z_buf[..w + 1],
-            );
-            for x in 0..w {
-                f[y * w + x] = row_out[x];
-            }
-        }
+        // §2.4 exact separable squared-Euclidean transform.
+        let f = edt_squared_2d(&mask, w, h);
 
         // Render to Gray8: take sqrt to convert squared to actual
         // Euclidean distance, apply scale, round, clamp.
