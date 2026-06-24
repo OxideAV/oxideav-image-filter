@@ -469,6 +469,17 @@ pub fn register(ctx: &mut RuntimeContext) {
     ctx.filters
         .register("euclidean-erode", Box::new(make_distance_erode));
 
+    // r369 factory: exact-Euclidean boundary band (outline / stroke) —
+    // the band { −inner ≤ s(p) ≤ outer } around the shape contour, i.e.
+    // the set difference dilate(outer) − erode(inner). Two exact §2.4
+    // transforms; Gray8 binary mask out.
+    ctx.filters
+        .register("distance-outline", Box::new(make_distance_outline));
+    ctx.filters
+        .register("euclidean-outline", Box::new(make_distance_outline));
+    ctx.filters
+        .register("distance-stroke", Box::new(make_distance_outline));
+
     // r324 factory: sRGB / power-law transfer-function transform
     // (tone-mapping-operators.md §5.2) exposed as a standalone LUT.
     // Decode (display → linear, EOTF) and encode (linear → display, OETF)
@@ -5938,6 +5949,62 @@ fn make_distance_erode(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn St
     build_distance_morphology(params, inputs, crate::MorphOp::Erode)
 }
 
+fn make_distance_outline(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::DistanceOutline;
+    let p = params.as_object();
+    let get_u64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_u64());
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
+
+    // A `width` field is a convenience for a centred stroke; explicit
+    // `inner` / `outer` override it.
+    let mut f = if let Some(wd) = get_f64("width") {
+        DistanceOutline::centred(wd.max(0.0) as f32)
+    } else {
+        DistanceOutline::new(0.0, 1.0)
+    };
+    if let Some(inner) = get_f64("inner") {
+        f.inner = inner.max(0.0) as f32;
+    }
+    if let Some(outer) = get_f64("outer") {
+        f.outer = outer.max(0.0) as f32;
+    }
+    if let Some(t) = get_u64("threshold") {
+        f = f.with_threshold(t.min(255) as u8);
+    }
+    if let Some(inv) = get_bool("invert") {
+        f = f.with_invert(inv);
+    }
+    if let Some(fg) = get_u64("fg_value").or_else(|| get_u64("foreground")) {
+        f = f.with_fg_value(fg.min(255) as u8);
+    }
+
+    let in_port = video_in_port(inputs);
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec {
+            name: "video".to_string(),
+            params: PortParams::Video {
+                format: PixelFormat::Gray8,
+                width: *width,
+                height: *height,
+                time_base: *time_base,
+            },
+            ..in_port.clone()
+        },
+        _ => passthrough_out_port(&in_port),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
 /// Shared body: build an [`SrgbTransform`] from a JSON `params` object and a
 /// default direction, then wrap it in the adapter. The explicit encode /
 /// decode aliases pass the matching default; the generic `srgb-transform`
@@ -6817,6 +6884,53 @@ mod tests {
             ero_fg, 0,
             "erode by 1 should remove the lone seed: {ero_fg}"
         );
+    }
+
+    #[test]
+    fn distance_outline_factory_emits_gray8_and_aliases() {
+        let c = ctx();
+        let inputs = [gray_in_port(16, 16)];
+        for name in ["distance-outline", "euclidean-outline", "distance-stroke"] {
+            let f = c
+                .filters
+                .make(name, &json!({"inner": 1.0, "outer": 2.0}), &inputs)
+                .unwrap_or_else(|e| panic!("alias {name} failed: {e:?}"));
+            let outs = f.output_ports();
+            assert_eq!(outs.len(), 1);
+            if let PortParams::Video { format, .. } = outs[0].params {
+                assert_eq!(format, PixelFormat::Gray8);
+            } else {
+                panic!("expected video output port for {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn distance_outline_width_makes_a_centred_band() {
+        // `width` builds a centred stroke; on a solid block the result is
+        // a non-empty boundary band that excludes the deep interior.
+        let c = ctx();
+        let inputs = [gray_in_port(11, 11)];
+        let mut data = vec![0u8; 121];
+        for y in 3..8 {
+            for x in 3..8 {
+                data[y * 11 + x] = 255;
+            }
+        }
+        let frame = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 11, data }],
+        };
+        let out = run_one(
+            c.filters
+                .make("distance-outline", &json!({"width": 2.0}), &inputs)
+                .expect("outline width"),
+            frame,
+        );
+        let p = &out.planes[0].data;
+        assert!(p.iter().any(|&v| v != 0), "band should be non-empty");
+        // Block centre (5,5) is 2 px deep → outside a width-2 centred band.
+        assert_eq!(p[5 * 11 + 5], 0, "deep interior excluded");
     }
 
     #[test]

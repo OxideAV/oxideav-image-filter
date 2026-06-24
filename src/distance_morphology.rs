@@ -202,6 +202,164 @@ impl ImageFilter for DistanceMorphology {
     }
 }
 
+/// Exact-Euclidean boundary band (outline / stroke) of a binary shape.
+///
+/// The signed Euclidean distance to a shape boundary is
+///
+/// ```text
+///   s(p) = +D_FG(p)   for p outside the shape  (distance to nearest FG)
+///   s(p) = −D_BG(p)   for p inside  the shape  (distance to nearest BG)
+/// ```
+///
+/// both `D_FG` / `D_BG` being the exact §1 nearest-feature distance. A
+/// pixel lies on the outline iff its signed distance falls in a band
+/// straddling the contour:
+///
+/// ```text
+///   outline = { p : −inner ≤ s(p) ≤ outer }
+/// ```
+///
+/// i.e. up to `inner` pixels *inside* the boundary and up to `outer`
+/// pixels *outside* it. `inner = 0, outer = w` traces a purely-outer
+/// stroke of width `w`; `inner = w, outer = 0` a purely-inner stroke;
+/// equal radii a centred stroke. Both comparisons run in squared
+/// distance (`D_FG ≤ outer²` outside, `D_BG ≤ inner²` inside), so no
+/// `sqrt` is taken and the stroke is a true Euclidean band — exactly the
+/// set difference `dilate(outer) − erode(inner)` of [`DistanceMorphology`].
+///
+/// Clean-room from `docs/image/filter/distance-transform.md` §1 + §2.4.
+///
+/// Single-plane `Gray8` in / out. Output is `fg_value` on the band, `0`
+/// elsewhere.
+#[derive(Clone, Copy, Debug)]
+pub struct DistanceOutline {
+    /// Band half-width *inside* the boundary (pixels of the shape interior
+    /// painted). `0` keeps the stroke entirely outside.
+    pub inner: f32,
+    /// Band half-width *outside* the boundary (pixels of the background
+    /// painted). `0` keeps the stroke entirely inside.
+    pub outer: f32,
+    /// Binarisation threshold: foreground = `value ≥ threshold`
+    /// (or `< threshold` when `invert`).
+    pub threshold: u8,
+    /// Flip the foreground test (dark pixels become the shape).
+    pub invert: bool,
+    /// Output value written on band pixels (background is always `0`).
+    pub fg_value: u8,
+}
+
+impl DistanceOutline {
+    /// New outline with the given inner / outer band half-widths
+    /// (threshold `128`, `invert = false`, `fg_value = 255`).
+    pub fn new(inner: f32, outer: f32) -> Self {
+        Self {
+            inner,
+            outer,
+            threshold: 128,
+            invert: false,
+            fg_value: 255,
+        }
+    }
+
+    /// A centred stroke of total width `width` (half inside, half
+    /// outside the contour).
+    pub fn centred(width: f32) -> Self {
+        let half = (width * 0.5).max(0.0);
+        Self::new(half, half)
+    }
+
+    /// Set the binarisation threshold.
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = threshold;
+        self
+    }
+
+    /// Flip the foreground test (dark pixels become the shape).
+    pub fn with_invert(mut self, invert: bool) -> Self {
+        self.invert = invert;
+        self
+    }
+
+    /// Set the output band value.
+    pub fn with_fg_value(mut self, fg_value: u8) -> Self {
+        self.fg_value = fg_value;
+        self
+    }
+
+    fn build_mask(&self, data: &[u8], stride: usize, w: usize, h: usize) -> Vec<bool> {
+        let mut mask = vec![false; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let v = data[y * stride + x];
+                mask[y * w + x] = if self.invert {
+                    v < self.threshold
+                } else {
+                    v >= self.threshold
+                };
+            }
+        }
+        mask
+    }
+}
+
+impl ImageFilter for DistanceOutline {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        if !matches!(params.format, PixelFormat::Gray8) {
+            return Err(Error::unsupported(format!(
+                "oxideav-image-filter: DistanceOutline requires Gray8, got {:?}",
+                params.format
+            )));
+        }
+        if input.planes.is_empty() {
+            return Err(Error::invalid(
+                "oxideav-image-filter: DistanceOutline requires a non-empty input plane",
+            ));
+        }
+        let w = params.width as usize;
+        let h = params.height as usize;
+        if w == 0 || h == 0 {
+            return Ok(input.clone());
+        }
+        let src = &input.planes[0];
+        let mask = self.build_mask(&src.data, src.stride, w, h);
+
+        let inner = self.inner.max(0.0) as f64;
+        let outer = self.outer.max(0.0) as f64;
+        let inner2 = inner * inner;
+        let outer2 = outer * outer;
+
+        // Outside pixels (mask == false): on the band iff distance to the
+        // nearest FG ≤ outer. Inside pixels (mask == true): on the band
+        // iff distance to the nearest BG ≤ inner. Two exact §2.4
+        // transforms — one seeded on FG, one on BG.
+        let d_fg = edt_squared_2d(&mask, w, h);
+        let bg: Vec<bool> = mask.iter().map(|&m| !m).collect();
+        let d_bg = edt_squared_2d(&bg, w, h);
+
+        let mut out = vec![0u8; w * h];
+        for i in 0..w * h {
+            let on = if mask[i] {
+                // inside: paint up to `inner` pixels in from the edge.
+                d_bg[i] <= inner2
+            } else {
+                // outside: paint up to `outer` pixels out from the edge.
+                d_fg[i] <= outer2
+            };
+            if on {
+                out[i] = self.fg_value;
+            }
+        }
+
+        Ok(VideoFrame {
+            pts: input.pts,
+            planes: vec![VideoPlane {
+                stride: w,
+                data: out,
+            }],
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,5 +611,113 @@ mod tests {
             .apply(&input, params)
             .unwrap_err();
         assert!(format!("{err}").contains("DistanceMorphology"));
+    }
+
+    // --- DistanceOutline ---
+
+    #[test]
+    fn outline_equals_dilate_minus_erode() {
+        // The band {−inner ≤ s ≤ outer} is exactly the set difference of
+        // dilate(outer) and erode(inner). Cross-check against the two
+        // morphology ops on a solid block.
+        let w = 11;
+        let h = 11;
+        let input = gray(w as u32, h as u32, |x, y| {
+            if (3..8).contains(&x) && (3..8).contains(&y) {
+                255
+            } else {
+                0
+            }
+        });
+        let p = p_gray(w as u32, h as u32);
+        for &(inner, outer) in &[(0.0_f32, 2.0_f32), (1.0, 0.0), (1.5, 1.5), (2.0, 3.0)] {
+            let outline = DistanceOutline::new(inner, outer).apply(&input, p).unwrap();
+            let dil = DistanceMorphology::dilate(outer).apply(&input, p).unwrap();
+            let ero = DistanceMorphology::erode(inner).apply(&input, p).unwrap();
+            let band = plane_of(&outline);
+            let d = plane_of(&dil);
+            let e = plane_of(&ero);
+            for i in 0..w * h {
+                // band = dilate AND NOT erode
+                let want = (d[i] != 0) && (e[i] == 0);
+                assert_eq!(
+                    band[i] != 0,
+                    want,
+                    "outline(inner={inner},outer={outer}) idx {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn outline_outer_only_is_outside_the_shape() {
+        // inner=0 → no interior painted; the lone-pixel shape's own pixel
+        // is interior, so with inner=0 it is NOT in the band, but its
+        // neighbours within `outer` are.
+        let input = gray(5, 5, |x, y| if x == 2 && y == 2 { 255 } else { 0 });
+        let out = DistanceOutline::new(0.0, 1.0)
+            .apply(&input, p_gray(5, 5))
+            .unwrap();
+        let p = plane_of(&out);
+        assert_eq!(p[2 * 5 + 2], 0, "centre is interior, inner=0 excludes it");
+        assert_ne!(p[5 + 2], 0, "the pixel above is within outer=1");
+    }
+
+    #[test]
+    fn outline_inner_only_is_inside_the_shape() {
+        // outer=0 → nothing outside painted; a solid block's rim (within
+        // `inner` of the edge) is painted, but background stays 0.
+        let w = 9;
+        let h = 9;
+        let input = gray(w as u32, h as u32, |x, y| {
+            if (2..7).contains(&x) && (2..7).contains(&y) {
+                255
+            } else {
+                0
+            }
+        });
+        let out = DistanceOutline::new(1.0, 0.0)
+            .apply(&input, p_gray(w as u32, h as u32))
+            .unwrap();
+        let p = plane_of(&out);
+        // A corner of the block (2,2) is within 1 px of the edge → painted.
+        assert_ne!(p[2 * w + 2], 0);
+        // The block centre (4,4) is 2 px deep → NOT within inner=1.
+        assert_eq!(p[4 * w + 4], 0);
+        // Pure background well outside stays 0.
+        assert_eq!(p[0], 0);
+    }
+
+    #[test]
+    fn outline_centred_splits_width() {
+        // centred(2.0) → inner = outer = 1.0.
+        let f = DistanceOutline::centred(2.0);
+        assert_eq!(f.inner, 1.0);
+        assert_eq!(f.outer, 1.0);
+    }
+
+    #[test]
+    fn outline_no_shape_is_empty() {
+        let input = gray(4, 4, |_, _| 0);
+        let out = DistanceOutline::new(2.0, 2.0)
+            .apply(&input, p_gray(4, 4))
+            .unwrap();
+        // No FG → the whole frame is "outside"; outer band measures
+        // distance to the nearest FG which is INF everywhere → empty.
+        assert!(plane_of(&out).iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn outline_rejects_rgb_input() {
+        let input = gray(2, 2, |_, _| 0);
+        let params = VideoStreamParams {
+            format: PixelFormat::Rgb24,
+            width: 2,
+            height: 2,
+        };
+        let err = DistanceOutline::new(1.0, 1.0)
+            .apply(&input, params)
+            .unwrap_err();
+        assert!(format!("{err}").contains("DistanceOutline"));
     }
 }

@@ -286,6 +286,16 @@
 //!   aliases: `distance-dilate`, `distance-erode`, `euclidean-dilate`,
 //!   `euclidean-erode`. Clean-room from
 //!   `docs/image/filter/distance-transform.md` §1 + §2.4.
+//! - [`DistanceOutline`](distance_morphology::DistanceOutline) —
+//!   exact-Euclidean boundary band (outline / stroke). Paints the band
+//!   `{ p : −inner ≤ s(p) ≤ outer }` where `s` is the signed Euclidean
+//!   distance to the shape contour (`+D_FG` outside, `−D_BG` inside):
+//!   `inner = 0` gives a purely-outer stroke, `outer = 0` a purely-inner
+//!   one, equal radii a centred stroke. Exactly the set difference
+//!   `dilate(outer) − erode(inner)`; two exact §2.4 transforms,
+//!   `sqrt`-free. Knobs `inner`, `outer`, `threshold`, `invert`,
+//!   `fg_value`; Gray8-only in/out. Factory aliases: `distance-outline`,
+//!   `euclidean-outline`, `distance-stroke`.
 //!
 //! r358 additions:
 //!
@@ -848,7 +858,7 @@ pub use deskew::Deskew;
 pub use despeckle::Despeckle;
 pub use difference::Difference;
 pub use displacement_map::DisplacementMap;
-pub use distance_morphology::{DistanceMorphology, MorphOp};
+pub use distance_morphology::{DistanceMorphology, DistanceOutline, MorphOp};
 pub use distance_transform::{ChamferKind, DistanceTransform};
 pub use distort::Distort;
 pub use dither::{BayerMatrix, DiffusionKernel, Dither, DitherMode, ScanOrder};

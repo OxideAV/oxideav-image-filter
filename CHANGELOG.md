@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r369: `DistanceOutline` — exact-Euclidean boundary band (outline /
+  stroke). Paints `{ p : −inner ≤ s(p) ≤ outer }` where `s` is the
+  signed Euclidean distance to the shape contour (`+D_FG` outside,
+  `−D_BG` inside): `inner = 0` a purely-outer stroke, `outer = 0` a
+  purely-inner one, equal radii a centred stroke. Exactly the set
+  difference `dilate(outer) − erode(inner)` (cross-checked in a test);
+  two exact §2.4 transforms, `sqrt`-free. Knobs `inner`, `outer`,
+  `threshold`, `invert`, `fg_value`; a `width` factory convenience for
+  centred strokes. Gray8-only in/out. Factory aliases:
+  `distance-outline`, `euclidean-outline`, `distance-stroke`. Clean-room
+  from `docs/image/filter/distance-transform.md` §1 + §2.4.
+
 - r369: `DistanceMorphology` — exact-Euclidean binary morphology
   (dilate / erode). A disc dilation of radius `r` grows the foreground
   by every pixel whose nearest-feature distance is `≤ r`
