@@ -11,6 +11,26 @@ pub enum Interpolation {
     /// Bilinear — smooth, default for natural images.
     #[default]
     Bilinear,
+    /// Bicubic — separable 4-tap cubic convolution using the uniform
+    /// Catmull-Rom cubic of `docs/image/filter/curve-interpolation.md`
+    /// §3.1 (`m_i = (p_{i+1} − p_{i−1}) / 2`). Sharper than bilinear on
+    /// upscale (it preserves more high-frequency detail because the
+    /// interpolating cubic has a steeper transition band) and can ring
+    /// slightly at hard edges (the cubic's negative side-lobes), which
+    /// is the standard quality/overshoot trade for cubic reconstruction.
+    /// Border taps clamp to the nearest in-bounds sample.
+    Bicubic,
+    /// Area-average ("box") resampling — every output pixel is the mean
+    /// of the source pixels its footprint covers. This is the correct
+    /// **downscale** kernel: a point-sampling kernel (nearest / bilinear /
+    /// bicubic) reads only a few source taps per output pixel and so
+    /// aliases when the scale factor drops below ~0.5, whereas the area
+    /// average integrates the *entire* shrinking footprint and is
+    /// alias-free by construction. The footprint is the half-open source
+    /// interval `[x·sx, (x+1)·sx)` weighted by fractional pixel coverage
+    /// at the two ragged ends, so non-integer ratios are handled exactly.
+    /// On upscale (footprint < 1 px) it degenerates to nearest-neighbour.
+    Area,
 }
 
 /// Rescale to `target_width × target_height`.
@@ -96,6 +116,13 @@ fn resize_plane(
     let scale_x = sw as f32 / dw as f32;
     let scale_y = sh as f32 / dh as f32;
 
+    // Area-average resampling integrates a whole source footprint per
+    // output pixel rather than point-sampling a fixed tap stencil, so it
+    // gets its own separable two-pass driver below.
+    if interp == Interpolation::Area {
+        return resize_plane_area(src, sw, sh, dw, dh, bpp);
+    }
+
     for y in 0..dh {
         let sy = (y as f32 + 0.5) * scale_y - 0.5;
         for x in 0..dw {
@@ -129,6 +156,37 @@ fn resize_plane(
                         out[y * dw * bpp + x * bpp + ch] = v.round().clamp(0.0, 255.0) as u8;
                     }
                 }
+                Interpolation::Bicubic => {
+                    // Separable 4-tap cubic convolution. The horizontal
+                    // weights `wx` and vertical weights `wy` are the
+                    // uniform Catmull-Rom cubic of
+                    // curve-interpolation.md §3.1, evaluated at the
+                    // fractional source position. We sum over the 4×4
+                    // tap neighbourhood `(ix0-1 .. ix0+2, iy0-1 .. iy0+2)`.
+                    let ix0 = sx.floor();
+                    let iy0 = sy.floor();
+                    let fx = sx - ix0;
+                    let fy = sy - iy0;
+                    let wx = catmull_rom_weights(fx);
+                    let wy = catmull_rom_weights(fy);
+                    let bx = ix0 as isize;
+                    let by = iy0 as isize;
+                    for ch in 0..bpp {
+                        let mut acc = 0.0f32;
+                        for (j, &wyj) in wy.iter().enumerate() {
+                            let syy = clamp_coord(by - 1 + j as isize, sh);
+                            let row = syy * src.stride;
+                            let mut rowacc = 0.0f32;
+                            for (i, &wxi) in wx.iter().enumerate() {
+                                let sxx = clamp_coord(bx - 1 + i as isize, sw);
+                                rowacc += wxi * src.data[row + sxx * bpp + ch] as f32;
+                            }
+                            acc += wyj * rowacc;
+                        }
+                        out[y * dw * bpp + x * bpp + ch] = acc.round().clamp(0.0, 255.0) as u8;
+                    }
+                }
+                Interpolation::Area => unreachable!("Area handled by resize_plane_area"),
             }
         }
     }
@@ -137,6 +195,132 @@ fn resize_plane(
         stride: dw * bpp,
         data: out,
     }
+}
+
+/// Clamp an integer source coordinate into `[0, extent − 1]` (replicate
+/// the border sample for out-of-bounds taps).
+#[inline]
+fn clamp_coord(c: isize, extent: usize) -> usize {
+    c.clamp(0, extent as isize - 1) as usize
+}
+
+/// The four uniform Catmull-Rom cubic weights for a fractional offset
+/// `t ∈ [0, 1)` between the second and third of four equally-spaced
+/// taps `p_{-1}, p_0, p_1, p_2`.
+///
+/// Derived directly from the §3.1 segment matrix of
+/// `docs/image/filter/curve-interpolation.md`: `P(t) = 0.5 · [1 t t² t³] ·
+/// M · [p_{-1} p_0 p_1 p_2]ᵀ` with
+///
+/// ```text
+///       |  0   2   0   0 |
+///   M = | -1   0   1   0 |
+///       |  2  -5   4  -1 |
+///       | -1   3  -3   1 |
+/// ```
+///
+/// Collapsing the row vector against each column gives the per-tap
+/// weights below; they sum to 1 for every `t` (partition of unity), so a
+/// flat input reproduces exactly.
+#[inline]
+fn catmull_rom_weights(t: f32) -> [f32; 4] {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    [
+        0.5 * (-t3 + 2.0 * t2 - t),
+        0.5 * (3.0 * t3 - 5.0 * t2 + 2.0),
+        0.5 * (-3.0 * t3 + 4.0 * t2 + t),
+        0.5 * (t3 - t2),
+    ]
+}
+
+/// Separable area-average ("box") resampling. Each axis is integrated
+/// independently: a horizontal pass collapses the source columns into
+/// `dw` averaged columns, then a vertical pass collapses the rows into
+/// `dh` averaged rows. Each output sample is the coverage-weighted mean
+/// of the source samples its footprint `[k·scale, (k+1)·scale)` spans,
+/// with fractional weights at the two ragged ends so non-integer ratios
+/// are exact. On upscale (footprint < 1 px) the single covered sample
+/// carries full weight, degenerating to nearest-neighbour.
+fn resize_plane_area(
+    src: &VideoPlane,
+    sw: usize,
+    sh: usize,
+    dw: usize,
+    dh: usize,
+    bpp: usize,
+) -> VideoPlane {
+    let scale_x = sw as f32 / dw as f32;
+    let scale_y = sh as f32 / dh as f32;
+
+    // Pass 1: horizontal — produce a (dw × sh) intermediate in f32.
+    let mut mid = vec![0.0f32; dw * sh * bpp];
+    for x in 0..dw {
+        let (lo, hi) = footprint(x, scale_x, sw);
+        for sy in 0..sh {
+            let row = sy * src.stride;
+            for ch in 0..bpp {
+                let v = integrate_axis(lo, hi, |sx| src.data[row + sx * bpp + ch] as f32);
+                mid[(sy * dw + x) * bpp + ch] = v;
+            }
+        }
+    }
+
+    // Pass 2: vertical — collapse the (dw × sh) intermediate to (dw × dh).
+    let mut out = vec![0u8; dw * dh * bpp];
+    for y in 0..dh {
+        let (lo, hi) = footprint(y, scale_y, sh);
+        for x in 0..dw {
+            for ch in 0..bpp {
+                let v = integrate_axis(lo, hi, |sy| mid[(sy * dw + x) * bpp + ch]);
+                out[(y * dw + x) * bpp + ch] = v.round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+
+    VideoPlane {
+        stride: dw * bpp,
+        data: out,
+    }
+}
+
+/// The continuous source footprint `[lo, hi)` of output index `k` at the
+/// given scale, clamped into `[0, extent]`. On upscale the footprint can
+/// be narrower than one pixel; we widen it to a minimum of one source
+/// pixel so the integral always has support (nearest-neighbour limit).
+#[inline]
+fn footprint(k: usize, scale: f32, extent: usize) -> (f32, f32) {
+    let mut lo = k as f32 * scale;
+    let mut hi = (k as f32 + 1.0) * scale;
+    if hi - lo < 1.0 {
+        // Upscale: centre a unit-wide window on the footprint midpoint.
+        let centre = 0.5 * (lo + hi);
+        lo = centre - 0.5;
+        hi = centre + 0.5;
+    }
+    let ext = extent as f32;
+    (lo.clamp(0.0, ext), hi.clamp(0.0, ext))
+}
+
+/// Coverage-weighted mean of `sample(i)` over the continuous interval
+/// `[lo, hi)`: each whole source pixel `i` contributes the length of its
+/// overlap with the interval, divided by the total interval length.
+#[inline]
+fn integrate_axis(lo: f32, hi: f32, sample: impl Fn(usize) -> f32) -> f32 {
+    let total = hi - lo;
+    if total <= 0.0 {
+        return sample(lo.floor() as usize);
+    }
+    let first = lo.floor() as usize;
+    let last = ((hi - 1e-6).floor() as usize).max(first);
+    let mut acc = 0.0f32;
+    for i in first..=last {
+        let pl = (i as f32).max(lo);
+        let pr = ((i + 1) as f32).min(hi);
+        let w = (pr - pl).max(0.0);
+        acc += w * sample(i);
+    }
+    acc / total
 }
 
 #[cfg(test)]
@@ -246,6 +430,162 @@ mod tests {
         }
         for b in &out.planes[2].data {
             assert_eq!(*b, 128);
+        }
+    }
+
+    #[test]
+    fn catmull_rom_weights_partition_of_unity() {
+        // The four Catmull-Rom taps must sum to 1 for every fraction, and
+        // at t = 0 the centre tap (p_0) must carry the whole weight (the
+        // interpolating-spline property: it passes exactly through knots).
+        for n in 0..=10 {
+            let t = n as f32 / 10.0;
+            let w = catmull_rom_weights(t);
+            let sum: f32 = w.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-5, "sum {sum} at t={t}");
+        }
+        let w0 = catmull_rom_weights(0.0);
+        assert!((w0[0]).abs() < 1e-6);
+        assert!((w0[1] - 1.0).abs() < 1e-6);
+        assert!((w0[2]).abs() < 1e-6);
+        assert!((w0[3]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn bicubic_flat_input_is_flat() {
+        // A constant field must reproduce exactly under bicubic (partition
+        // of unity + border clamp guarantee no overshoot on flat data).
+        let input = gray(8, 8, |_, _| 137);
+        let out = Resize::new(13, 5)
+            .with_interpolation(Interpolation::Bicubic)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 8,
+                    height: 8,
+                },
+            )
+            .unwrap();
+        for b in &out.planes[0].data {
+            assert_eq!(*b, 137);
+        }
+    }
+
+    #[test]
+    fn bicubic_linear_ramp_stays_monotone() {
+        // A horizontal ramp upscaled 2× must remain monotone non-decreasing
+        // along each row — the cubic reconstructs the underlying line
+        // without inverting it.
+        let input = gray(4, 1, |x, _| (x * 60) as u8); // 0,60,120,180
+        let out = Resize::new(8, 1)
+            .with_interpolation(Interpolation::Bicubic)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 1,
+                },
+            )
+            .unwrap();
+        let row = &out.planes[0].data;
+        for w in row.windows(2) {
+            assert!(w[1] >= w[0], "non-monotone bicubic ramp: {row:?}");
+        }
+    }
+
+    #[test]
+    fn area_downscale_2x_is_block_mean() {
+        // 4×4 with a known 2×2-block pattern → 2×2 area downscale must be
+        // the exact mean of each 2×2 source block.
+        // Blocks: TL=10, TR=20, BL=30, BR=40 (each filling a 2×2 quadrant).
+        let input = gray(4, 4, |x, y| {
+            let q = (y / 2) * 2 + (x / 2);
+            ((q + 1) * 10) as u8
+        });
+        let out = Resize::new(2, 2)
+            .with_interpolation(Interpolation::Area)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
+        assert_eq!(out.planes[0].data, vec![10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn area_non_integer_ratio_weights_fractional_coverage() {
+        // 3 → 2 downscale: each output pixel spans 1.5 source pixels.
+        // Output[0] footprint = [0, 1.5): pixel0 weight 1.0, pixel1 weight
+        // 0.5 → (1.0·0 + 0.5·100)/1.5 = 33.33 → 33.
+        // Output[1] footprint = [1.5, 3): pixel1 weight 0.5, pixel2 weight
+        // 1.0 → (0.5·100 + 1.0·200)/1.5 = 166.67 → 167.
+        let input = gray(3, 1, |x, _| (x * 100) as u8); // 0, 100, 200
+        let out = Resize::new(2, 1)
+            .with_interpolation(Interpolation::Area)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 3,
+                    height: 1,
+                },
+            )
+            .unwrap();
+        assert_eq!(out.planes[0].data, vec![33, 167]);
+    }
+
+    #[test]
+    fn area_flat_input_is_flat() {
+        let input = gray(7, 9, |_, _| 88);
+        let out = Resize::new(3, 4)
+            .with_interpolation(Interpolation::Area)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 7,
+                    height: 9,
+                },
+            )
+            .unwrap();
+        for b in &out.planes[0].data {
+            assert_eq!(*b, 88);
+        }
+    }
+
+    #[test]
+    fn area_rgb_channels_independent() {
+        // Each channel must be averaged independently — no bleed.
+        let mut data = Vec::new();
+        for _ in 0..(4 * 4) {
+            data.extend_from_slice(&[10, 20, 30]);
+        }
+        let input = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 4 * 3,
+                data,
+            }],
+        };
+        let out = Resize::new(2, 2)
+            .with_interpolation(Interpolation::Area)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 4,
+                    height: 4,
+                },
+            )
+            .unwrap();
+        for px in out.planes[0].data.chunks_exact(3) {
+            assert_eq!(px, [10, 20, 30]);
         }
     }
 }

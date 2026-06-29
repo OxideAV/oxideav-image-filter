@@ -883,10 +883,12 @@ fn make_resize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
     let interp = match get_str("interpolation") {
         Some("nearest") => Interpolation::Nearest,
         None | Some("bilinear") => Interpolation::Bilinear,
+        Some("bicubic") | Some("cubic") | Some("catmull-rom") => Interpolation::Bicubic,
+        Some("area") | Some("box") | Some("average") => Interpolation::Area,
         Some(other) => {
             return Err(Error::invalid(format!(
                 "job: filter 'resize': unknown interpolation '{other}' \
-                 (expected 'nearest' or 'bilinear')"
+                 (expected 'nearest', 'bilinear', 'bicubic', or 'area')"
             )));
         }
     };
@@ -9365,6 +9367,52 @@ mod tests {
             .expect("roll factory");
         let out = run_one(f, gray_arbitrary(4, 1, |x, _| x as u8));
         assert_eq!(out.planes[0].data, vec![3, 0, 1, 2]);
+    }
+
+    #[test]
+    fn resize_factory_accepts_all_interpolations() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        // Every documented alias must build and produce a 2×2 frame from
+        // a flat 4×4 input (flat input is preserved by all four kernels).
+        for interp in [
+            "nearest",
+            "bilinear",
+            "bicubic",
+            "cubic",
+            "catmull-rom",
+            "area",
+            "box",
+            "average",
+        ] {
+            let f = c
+                .filters
+                .make(
+                    "resize",
+                    &json!({"width": 2, "height": 2, "interpolation": interp}),
+                    &inputs,
+                )
+                .unwrap_or_else(|e| panic!("resize factory '{interp}': {e}"));
+            let out = run_one(f, gray_4x4(|_, _| 120));
+            assert_eq!(out.planes[0].data.len(), 4, "interp={interp}");
+            assert!(
+                out.planes[0].data.iter().all(|&v| v == 120),
+                "interp={interp} did not preserve flat input: {:?}",
+                out.planes[0].data
+            );
+        }
+    }
+
+    #[test]
+    fn resize_factory_rejects_unknown_interpolation() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        let r = c.filters.make(
+            "resize",
+            &json!({"width": 2, "height": 2, "interpolation": "splinemagic"}),
+            &inputs,
+        );
+        assert!(r.is_err(), "unknown interpolation must be rejected");
     }
 
     #[test]

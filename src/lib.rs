@@ -143,7 +143,9 @@
 //!   round each channel to one of `cbrt(N)` evenly-spaced palette
 //!   entries. documented CLI: `-colors N` (uniform-cube variant).
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
-//!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear.
+//!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear /
+//!   Bicubic (separable Catmull-Rom 4-tap cubic) / Area (alias-free
+//!   coverage-weighted box for downscale).
 //! - [`Roll`](roll::Roll) — circular pixel shift `(dx, dy)`; rows /
 //!   columns wrap around the borders. documented CLI: `-roll +X+Y`.
 //! - [`Rotate`](rotate::Rotate) — arbitrary-angle rotation with bilinear

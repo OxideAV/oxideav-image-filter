@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r380: `Resize` gains two reconstruction kernels.
+  `Interpolation::Bicubic` is a separable 4-tap cubic convolution using
+  the uniform Catmull-Rom cubic of
+  `docs/image/filter/curve-interpolation.md` §3.1
+  (`m_i = (p_{i+1} − p_{i−1}) / 2`); the four tap weights are derived
+  from the §3.1 segment matrix and form a partition of unity so flat
+  input reproduces exactly. Border taps clamp to the nearest in-bounds
+  sample. `Interpolation::Area` is coverage-weighted area-average ("box")
+  resampling — each output pixel is the mean of the source pixels its
+  footprint `[k·scale, (k+1)·scale)` spans, with fractional end weights
+  so non-integer ratios are exact; separable two-pass, alias-free on
+  downscale, degenerating to nearest on upscale. Pipeline JSON
+  `"interpolation"` accepts `bicubic` (aliases `cubic`, `catmull-rom`)
+  and `area` (aliases `box`, `average`). Verified by
+  partition-of-unity, flat-reproduction, monotone-ramp,
+  block-mean-downscale, fractional-coverage, and per-channel-independence
+  tests, plus factory-alias coverage. Clean-room from §3.1.
+
 - r369: `DistanceMorphology` gains exact-Euclidean **opening**
   (`MorphOp::Open` = `δ_r(ε_r(·))`, clears foreground specks) and
   **closing** (`MorphOp::Close` = `ε_r(δ_r(·))`, fills background holes),

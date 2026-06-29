@@ -52,7 +52,7 @@ directly.
 
 ### Resize
 
-Rescale to arbitrary dimensions, nearest-neighbour or bilinear:
+Rescale to arbitrary dimensions with four reconstruction kernels:
 
 ```rust
 use oxideav_image_filter::{Interpolation, ImageFilter, Resize};
@@ -62,8 +62,31 @@ let half = Resize::new(input.width / 2, input.height / 2)
     .apply(&input)?;
 ```
 
+- **`Nearest`** — point sample; fast, blocky, ideal for pixel art.
+- **`Bilinear`** (default) — 2×2 linear blend; smooth, the natural-image
+  default.
+- **`Bicubic`** — separable 4-tap cubic convolution using the uniform
+  **Catmull-Rom** cubic of `docs/image/filter/curve-interpolation.md`
+  §3.1 (`m_i = (p_{i+1} − p_{i−1}) / 2`, partition-of-unity weights so
+  flat input reproduces exactly). Sharper than bilinear on upscale and
+  can ring slightly at hard edges (the cubic's negative side-lobes) —
+  the standard cubic-reconstruction quality/overshoot trade. Border taps
+  clamp to the nearest in-bounds sample.
+- **`Area`** — coverage-weighted area average ("box"): every output
+  pixel is the mean of the source pixels its footprint
+  `[k·scale, (k+1)·scale)` spans, with fractional weights at the two
+  ragged ends so non-integer ratios are exact. This is the correct
+  **downscale** kernel — point-sampling kernels alias below ~0.5 scale
+  because they read only a few taps, whereas the area average integrates
+  the whole shrinking footprint and is alias-free by construction.
+  Separable two-pass (horizontal then vertical). On upscale (footprint
+  < 1 px) it degenerates to nearest-neighbour.
+
 For planar YUV the chroma planes are resized to the matching subsampled
-output dimensions (e.g. 4:2:0 halves both chroma axes).
+output dimensions (e.g. 4:2:0 halves both chroma axes). Pipeline JSON
+selects the kernel via `"interpolation"`: `nearest` / `bilinear` /
+`bicubic` (aliases `cubic`, `catmull-rom`) / `area` (aliases `box`,
+`average`).
 
 ### Geometric
 
