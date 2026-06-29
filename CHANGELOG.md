@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.2...v0.2.0) - 2026-06-29
+
+### Added
+
+- feature-transform r358: ProximityFill — exact nearest-seed value propagation (Voronoi region fill)
+- feature-transform r358: VoronoiTransform — exact nearest-feature (argmin) transform
+- add EDT-driven soft edge feathering filter (r303)
+
+### Other
+
+- measured-behaviour + YUV coverage for Bicubic/Area resampling
+- Resize gains Bicubic (Catmull-Rom) + Area resampling kernels
+- README r369: document the exact-Euclidean morphology family
+- distance-morphology r369: exact-Euclidean opening + closing
+- distance-morphology r369: DistanceOutline — exact-Euclidean boundary band
+- distance-morphology r369: exact-Euclidean dilate / erode
+- factor exact squared-Euclidean transform into shared edt_squared_2d driver
+- drago r352: full §4 fidelity — Ld_max (cd/m²) param + §4.1 exposure-independent log-average pre-scaling
+- add Bayer 16×16 ordered-dither matrix (BayerMatrix::M16)
+- list WeightedDistanceTransform in the lib.rs round-additions doc
+- add WeightedDistanceTransform (generalised continuous-seed DT)
+- add SrgbTransform — sRGB / power-law transfer-function transform
+- add §1 step 3 saturation exponent s to tone-mapping re-colour
+- refresh to current status, drop per-round changelog cruft
+- add serpentine scan order to error-diffusion dither (§1.3)
+- image-filter r288: SignedDistanceField (exact signed Euclidean DT)
+- r277 — ClampedCubic + NotAKnotCubic (§4.2 alternative spline boundaries) for Curves
+- r270 — MonotoneCubicBox (Fritsch-Carlson §2.2 box-region) for Curves
+- add Cardinal tension-parameterised spline to CurveInterpolation
+- drop release-plz.toml — use release-plz defaults across the workspace
+- r248 — ReinhardLocal (Reinhard 2002 §3 / dodging-and-burning local TMO)
+- r237 — ReinhardExtended (Reinhard 2002 §3.1 / unkeyed white-clamping)
+- r231 — ChordalCatmullRom (Yuksel 2011 / Barry-Goldman, α = 1) for Curves
+- r226 — CentripetalCatmullRom (Yuksel 2011 / Barry-Goldman) for Curves
+- r220 — DistanceTransform gains ChamferKind kernel selector (5-7-11 / L1 / L∞)
+- r215 — NaturalCubic interpolation (de Boor 1978 / Thomas 1949) for Curves
+- r209 — EuclideanDistanceTransform (Felzenszwalb–Huttenlocher exact-Euclidean DT) + parameter-name hygiene scrub
+- r205 — Niblack (1986) adaptive local-statistics threshold
+
 ### Added
 
 - r380: `Resize` gains two reconstruction kernels.
