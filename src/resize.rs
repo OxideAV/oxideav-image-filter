@@ -588,4 +588,114 @@ mod tests {
             assert_eq!(px, [10, 20, 30]);
         }
     }
+
+    #[test]
+    fn area_yuv420_subsamples_each_plane() {
+        // Area resize must drive every plane through the same subsampled
+        // dst dimensions as the other kernels. A flat 16×16 4:2:0 frame
+        // (Y=200, U=77, V=128) → 8×8 must stay flat with 4×4 chroma.
+        let y = vec![200u8; 16 * 16];
+        let u = vec![77u8; 8 * 8];
+        let v = vec![128u8; 8 * 8];
+        let input = VideoFrame {
+            pts: None,
+            planes: vec![
+                VideoPlane {
+                    stride: 16,
+                    data: y,
+                },
+                VideoPlane { stride: 8, data: u },
+                VideoPlane { stride: 8, data: v },
+            ],
+        };
+        let out = Resize::new(8, 8)
+            .with_interpolation(Interpolation::Area)
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Yuv420P,
+                    width: 16,
+                    height: 16,
+                },
+            )
+            .unwrap();
+        assert_eq!(out.planes[0].data.len(), 8 * 8);
+        assert_eq!(out.planes[1].data.len(), 4 * 4);
+        assert_eq!(out.planes[2].data.len(), 4 * 4);
+        assert!(out.planes[0].data.iter().all(|&b| b == 200));
+        assert!(out.planes[1].data.iter().all(|&b| b == 77));
+        assert!(out.planes[2].data.iter().all(|&b| b == 128));
+    }
+
+    /// Sum-of-absolute-differences of a plane against its own mean — a
+    /// cheap proxy for residual high-frequency energy / aliasing.
+    fn dispersion(data: &[u8]) -> u32 {
+        let mean = (data.iter().map(|&b| b as u32).sum::<u32>() / data.len() as u32) as i32;
+        data.iter().map(|&b| (b as i32 - mean).unsigned_abs()).sum()
+    }
+
+    #[test]
+    fn area_downscale_is_less_aliased_than_nearest() {
+        // 1-px vertical stripes are pure Nyquist-rate horizontal detail.
+        // Downscaling 8→3 with nearest point-samples individual stripes, so
+        // the output keeps full 0/255 contrast (aliasing — the stripe phase
+        // shows through). The area average integrates each ~2.67-px-wide
+        // footprint, which always spans both a black and a white stripe, so
+        // it collapses to near-uniform mid-grey. Area's residual dispersion
+        // must therefore be strictly lower.
+        let stripes = gray(8, 1, |x, _| if x % 2 == 0 { 0 } else { 255 });
+        let params = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 8,
+            height: 1,
+        };
+        let near = Resize::new(3, 1)
+            .with_interpolation(Interpolation::Nearest)
+            .apply(&stripes, params)
+            .unwrap();
+        let area = Resize::new(3, 1)
+            .with_interpolation(Interpolation::Area)
+            .apply(&stripes, params)
+            .unwrap();
+        assert!(
+            dispersion(&near.planes[0].data) > dispersion(&area.planes[0].data),
+            "nearest ({}) should alias more than area ({})",
+            dispersion(&near.planes[0].data),
+            dispersion(&area.planes[0].data)
+        );
+    }
+
+    #[test]
+    fn bicubic_upscale_is_sharper_than_bilinear() {
+        // On a single bright pixel surrounded by black, an upscaled
+        // bicubic reconstruction keeps a higher peak than bilinear because
+        // the cubic has a narrower main lobe (it concentrates more energy
+        // at the centre). Compare the brightest output sample.
+        let mut data = vec![0u8; 5 * 5];
+        data[2 * 5 + 2] = 255; // centre spike
+        let input = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 5, data }],
+        };
+        let params = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 5,
+            height: 5,
+        };
+        let bil = Resize::new(15, 15)
+            .with_interpolation(Interpolation::Bilinear)
+            .apply(&input, params)
+            .unwrap();
+        let bic = Resize::new(15, 15)
+            .with_interpolation(Interpolation::Bicubic)
+            .apply(&input, params)
+            .unwrap();
+        let peak = |d: &[u8]| *d.iter().max().unwrap();
+        assert!(
+            peak(&bic.planes[0].data) >= peak(&bil.planes[0].data),
+            "bicubic peak {} should be >= bilinear peak {}",
+            peak(&bic.planes[0].data),
+            peak(&bil.planes[0].data)
+        );
+    }
 }
