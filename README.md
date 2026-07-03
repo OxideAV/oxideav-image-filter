@@ -1,5 +1,7 @@
 # oxideav-image-filter
 
+[![CI](https://github.com/OxideAV/oxideav-image-filter/actions/workflows/ci.yml/badge.svg)](https://github.com/OxideAV/oxideav-image-filter/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/oxideav-image-filter.svg)](https://crates.io/crates/oxideav-image-filter) [![docs.rs](https://docs.rs/oxideav-image-filter/badge.svg)](https://docs.rs/oxideav-image-filter) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Pure-Rust single-frame image filters for the [oxideav](https://github.com/OxideAV/oxideav-workspace) framework — codec, container, and filter crates are implemented from the spec (no C codec libraries linked or wrapped, no `*-sys` crates).
 
 This crate specialises in **stateless per-frame effects** — there is no
