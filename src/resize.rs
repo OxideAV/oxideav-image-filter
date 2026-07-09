@@ -31,6 +31,62 @@ pub enum Interpolation {
     /// at the two ragged ends, so non-integer ratios are handled exactly.
     /// On upscale (footprint < 1 px) it degenerates to nearest-neighbour.
     Area,
+    /// Lanczos windowed-sinc resampling with lobe count `a` (`a = 2` and
+    /// `a = 3` are the usual choices; `a = 3` is the sharper default).
+    ///
+    /// The ideal band-limited reconstruction kernel is the normalised
+    /// cardinal sine `sinc(x) = sin(πx)/(πx)`, whose infinite support is
+    /// impractical. Lanczos truncates it with a second, wider sinc window
+    /// so the kernel has compact support `[−a, a]`:
+    ///
+    /// ```text
+    ///   L(x) = sinc(x) · sinc(x / a)     for |x| < a
+    ///        = 0                          otherwise
+    /// ```
+    ///
+    /// `L(0) = 1` and `L(k) = 0` at every non-zero integer `k`, so the
+    /// kernel *interpolates* the samples (an unscaled unit-scale pass
+    /// reproduces the input exactly at integer positions). Unlike the
+    /// point-sampling kernels above, this variant runs through the general
+    /// separable driver that **scales the kernel by the resampling ratio on
+    /// downscale** (`weight(x) = L(x / s) / s` for shrink factor `s > 1`),
+    /// so the reconstruction filter doubles as the anti-alias low-pass and
+    /// is alias-free below 0.5× the way [`Interpolation::Area`] is — while
+    /// keeping the sharper windowed-sinc frequency response on upscale.
+    /// Border taps clamp to the nearest in-bounds sample; the per-output
+    /// weights are renormalised to sum to 1 so flat input reproduces
+    /// exactly even against a clamped edge.
+    Lanczos {
+        /// Number of sinc lobes on each side of the centre (support
+        /// radius). Clamped to `1..=8`; `0` is treated as `1`.
+        a: u8,
+    },
+    /// Separable cubic convolution from the two-parameter Mitchell–Netravali
+    /// family `BC(B, C)`. `Mitchell = BC(1/3, 1/3)` is the balanced default
+    /// (a good blur/ring compromise for photographic resampling); the
+    /// uniform Catmull–Rom of [`Interpolation::Bicubic`] is `BC(0, 1/2)`.
+    ///
+    /// The piecewise cubic (support `[−2, 2]`) is
+    ///
+    /// ```text
+    ///   6·k(x) = (12−9B−6C)|x|³ + (−18+12B+6C)|x|²           + (6−2B)       , |x|<1
+    ///          = (−B−6C)|x|³    + (6B+30C)|x|²   + (−12B−48C)|x| + (8B+24C)  , 1≤|x|<2
+    ///          = 0                                                          , |x|≥2
+    /// ```
+    ///
+    /// with `B = C = 1/3`. Runs through the same anti-aliasing separable
+    /// driver as [`Interpolation::Lanczos`] (kernel scaled by the shrink
+    /// ratio on downscale), so it low-passes correctly when shrinking.
+    Mitchell,
+    /// Separable cubic B-spline reconstruction — the `BC(1, 0)` member of
+    /// the Mitchell–Netravali family (see [`Interpolation::Mitchell`] for
+    /// the shared piecewise form). This kernel is everywhere non-negative,
+    /// so it never rings or overshoots, at the cost of being the softest of
+    /// the cubics: `k(0) = 2/3`, `k(±1) = 1/6`, so it does **not**
+    /// interpolate the samples (it approximates them, blurring slightly).
+    /// The right choice when smoothness matters more than edge sharpness.
+    /// Runs through the anti-aliasing separable driver.
+    BSpline,
 }
 
 /// Rescale to `target_width × target_height`.
@@ -123,6 +179,14 @@ fn resize_plane(
         return resize_plane_area(src, sw, sh, dw, dh, bpp);
     }
 
+    // The windowed-sinc / parametric-cubic family runs through a general
+    // separable weighted-tap driver that scales its kernel by the shrink
+    // ratio on downscale (so the reconstruction filter doubles as the
+    // anti-alias low-pass) and renormalises the per-output weights.
+    if let Some(kernel) = ResampleKernel::from_interpolation(interp) {
+        return resize_plane_kernel(src, sw, sh, dw, dh, bpp, kernel);
+    }
+
     for y in 0..dh {
         let sy = (y as f32 + 0.5) * scale_y - 0.5;
         for x in 0..dw {
@@ -186,7 +250,12 @@ fn resize_plane(
                         out[y * dw * bpp + x * bpp + ch] = acc.round().clamp(0.0, 255.0) as u8;
                     }
                 }
-                Interpolation::Area => unreachable!("Area handled by resize_plane_area"),
+                Interpolation::Area
+                | Interpolation::Lanczos { .. }
+                | Interpolation::Mitchell
+                | Interpolation::BSpline => {
+                    unreachable!("handled by a dedicated separable driver above")
+                }
             }
         }
     }
@@ -274,6 +343,227 @@ fn resize_plane_area(
             for ch in 0..bpp {
                 let v = integrate_axis(lo, hi, |sy| mid[(sy * dw + x) * bpp + ch]);
                 out[(y * dw + x) * bpp + ch] = v.round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+
+    VideoPlane {
+        stride: dw * bpp,
+        data: out,
+    }
+}
+
+/// A separable reconstruction kernel `φ(x)` with compact support radius
+/// `support` (in source-pixel units at unit scale). The general driver
+/// evaluates `φ` per tap; downscale widening and weight normalisation are
+/// handled by the driver, not the kernel.
+#[derive(Clone, Copy)]
+struct ResampleKernel {
+    /// Half-width of the support in unit-scale source pixels (`φ(x) = 0`
+    /// for `|x| ≥ support`).
+    support: f32,
+    /// The kernel function evaluated at signed distance `x` (source-pixel
+    /// units, unit scale).
+    phi: fn(f32) -> f32,
+}
+
+impl ResampleKernel {
+    /// Map the public [`Interpolation`] selector onto a driver kernel, or
+    /// `None` for the variants handled by their own specialised path
+    /// (Nearest / Bilinear / Bicubic / Area).
+    fn from_interpolation(interp: Interpolation) -> Option<Self> {
+        match interp {
+            Interpolation::Lanczos { a } => {
+                let a = a.clamp(1, 8);
+                // A `fn` pointer cannot close over `a`, so route each
+                // supported lobe count to its own fixed-`a` evaluator.
+                Some(Self {
+                    support: a as f32,
+                    phi: match a {
+                        1 => |x| lanczos(x, 1.0),
+                        2 => |x| lanczos(x, 2.0),
+                        3 => |x| lanczos(x, 3.0),
+                        4 => |x| lanczos(x, 4.0),
+                        5 => |x| lanczos(x, 5.0),
+                        6 => |x| lanczos(x, 6.0),
+                        7 => |x| lanczos(x, 7.0),
+                        _ => |x| lanczos(x, 8.0),
+                    },
+                })
+            }
+            // Mitchell–Netravali BC(1/3, 1/3).
+            Interpolation::Mitchell => Some(Self {
+                support: 2.0,
+                phi: |x| mitchell_netravali(x, 1.0 / 3.0, 1.0 / 3.0),
+            }),
+            // Cubic B-spline BC(1, 0).
+            Interpolation::BSpline => Some(Self {
+                support: 2.0,
+                phi: |x| mitchell_netravali(x, 1.0, 0.0),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// Normalised cardinal sine `sinc(x) = sin(πx)/(πx)`, with the removable
+/// singularity `sinc(0) = 1` filled analytically.
+#[inline]
+fn sinc(x: f32) -> f32 {
+    if x.abs() < 1e-8 {
+        1.0
+    } else {
+        let px = std::f32::consts::PI * x;
+        px.sin() / px
+    }
+}
+
+/// Lanczos windowed sinc with `a` lobes: `L(x) = sinc(x)·sinc(x/a)` on
+/// `|x| < a`, zero outside. `L(0) = 1`, `L(k) = 0` at non-zero integers.
+#[inline]
+fn lanczos(x: f32, a: f32) -> f32 {
+    if x.abs() >= a {
+        0.0
+    } else {
+        sinc(x) * sinc(x / a)
+    }
+}
+
+/// The two-parameter Mitchell–Netravali cubic `BC(B, C)` (support `[−2, 2]`).
+///
+/// Derived from the piecewise cubic that is `C¹` at `|x| = 1` and `|x| = 2`
+/// and reproduces constants (partition of unity):
+///
+/// ```text
+///   6·k(x) = (12−9B−6C)|x|³ + (−18+12B+6C)|x|²          + (6−2B)      , |x|<1
+///          = (−B−6C)|x|³    + (6B+30C)|x|²  + (−12B−48C)|x| + (8B+24C) , 1≤|x|<2
+///          = 0                                                        , |x|≥2
+/// ```
+///
+/// `BC(0, 1/2)` is uniform Catmull–Rom, `BC(1/3, 1/3)` the balanced
+/// Mitchell kernel, `BC(1, 0)` the everywhere-non-negative cubic B-spline.
+#[inline]
+fn mitchell_netravali(x: f32, b: f32, c: f32) -> f32 {
+    let ax = x.abs();
+    let ax2 = ax * ax;
+    let ax3 = ax2 * ax;
+    let v = if ax < 1.0 {
+        (12.0 - 9.0 * b - 6.0 * c) * ax3 + (-18.0 + 12.0 * b + 6.0 * c) * ax2 + (6.0 - 2.0 * b)
+    } else if ax < 2.0 {
+        (-b - 6.0 * c) * ax3
+            + (6.0 * b + 30.0 * c) * ax2
+            + (-12.0 * b - 48.0 * c) * ax
+            + (8.0 * b + 24.0 * c)
+    } else {
+        0.0
+    };
+    v / 6.0
+}
+
+/// One axis of the general separable weighted-tap resampler: for each
+/// output index `k` build the list of `(source_index, weight)` taps whose
+/// kernel support overlaps `k`.
+///
+/// The kernel is centred on the continuous source position
+/// `c = (k + 0.5)·scale − 0.5` (the same half-pixel-centred mapping the
+/// point-sampling path uses). On **downscale** (`scale > 1`) the kernel is
+/// stretched by `scale` — `weight ∝ φ((i − c)/scale)` over a support of
+/// `support·scale` source pixels — so the reconstruction filter's cutoff
+/// drops to the output Nyquist and the pass low-passes the input before
+/// decimating (alias-free). On upscale (`scale ≤ 1`) the kernel keeps its
+/// native unit width. Out-of-range taps clamp to the border sample and the
+/// weights are renormalised to sum to 1, so a flat field always reproduces.
+fn axis_contributions(dst_len: usize, src_len: usize, scale: f32, k: &ResampleKernel) -> Contribs {
+    // Filter scale: widen on shrink, native on enlarge.
+    let filt = scale.max(1.0);
+    let radius = k.support * filt;
+    let mut per_out: Vec<Vec<(usize, f32)>> = Vec::with_capacity(dst_len);
+    for out in 0..dst_len {
+        let centre = (out as f32 + 0.5) * scale - 0.5;
+        let lo = (centre - radius).ceil() as isize;
+        let hi = (centre + radius).floor() as isize;
+        let mut taps: Vec<(usize, f32)> = Vec::new();
+        let mut wsum = 0.0f32;
+        let mut i = lo;
+        while i <= hi {
+            let w = (k.phi)((i as f32 - centre) / filt);
+            if w != 0.0 {
+                let si = i.clamp(0, src_len as isize - 1) as usize;
+                // Accumulate onto the clamped index so border taps fold
+                // their weight into the edge sample (partition-preserving).
+                if let Some(last) = taps.last_mut().filter(|t| t.0 == si) {
+                    last.1 += w;
+                } else {
+                    taps.push((si, w));
+                }
+                wsum += w;
+            }
+            i += 1;
+        }
+        if taps.is_empty() {
+            // Degenerate (all weights zero — e.g. a 1-px source): sample the
+            // nearest source pixel with unit weight.
+            let si = centre.round().clamp(0.0, src_len as f32 - 1.0) as usize;
+            taps.push((si, 1.0));
+        } else if wsum != 0.0 {
+            let inv = 1.0 / wsum;
+            for t in &mut taps {
+                t.1 *= inv;
+            }
+        }
+        per_out.push(taps);
+    }
+    Contribs { per_out }
+}
+
+/// Precomputed per-output-index tap lists for one axis.
+struct Contribs {
+    per_out: Vec<Vec<(usize, f32)>>,
+}
+
+/// General separable weighted-kernel resampler shared by the windowed-sinc
+/// (Lanczos) and parametric-cubic (Mitchell / B-spline) variants. A
+/// horizontal pass collapses the source columns onto `dw` weighted columns
+/// (f32 intermediate), then a vertical pass collapses the rows onto `dh`.
+fn resize_plane_kernel(
+    src: &VideoPlane,
+    sw: usize,
+    sh: usize,
+    dw: usize,
+    dh: usize,
+    bpp: usize,
+    kernel: ResampleKernel,
+) -> VideoPlane {
+    let scale_x = sw as f32 / dw as f32;
+    let scale_y = sh as f32 / dh as f32;
+    let cx = axis_contributions(dw, sw, scale_x, &kernel);
+    let cy = axis_contributions(dh, sh, scale_y, &kernel);
+
+    // Pass 1: horizontal — (sw × sh) → (dw × sh) in f32.
+    let mut mid = vec![0.0f32; dw * sh * bpp];
+    for sy in 0..sh {
+        let row = sy * src.stride;
+        for (x, taps) in cx.per_out.iter().enumerate() {
+            for ch in 0..bpp {
+                let mut acc = 0.0f32;
+                for &(sx, w) in taps {
+                    acc += w * src.data[row + sx * bpp + ch] as f32;
+                }
+                mid[(sy * dw + x) * bpp + ch] = acc;
+            }
+        }
+    }
+
+    // Pass 2: vertical — (dw × sh) → (dw × dh) in u8.
+    let mut out = vec![0u8; dw * dh * bpp];
+    for (y, taps) in cy.per_out.iter().enumerate() {
+        for x in 0..dw {
+            for ch in 0..bpp {
+                let mut acc = 0.0f32;
+                for &(sy, w) in taps {
+                    acc += w * mid[(sy * dw + x) * bpp + ch];
+                }
+                out[(y * dw + x) * bpp + ch] = acc.round().clamp(0.0, 255.0) as u8;
             }
         }
     }
@@ -663,6 +953,278 @@ mod tests {
             dispersion(&near.planes[0].data),
             dispersion(&area.planes[0].data)
         );
+    }
+
+    // ---- Windowed-sinc (Lanczos) + parametric-cubic (Mitchell / B-spline)
+
+    #[test]
+    fn sinc_and_lanczos_analytic_properties() {
+        // sinc(0) = 1, sinc(non-zero integer) = 0 — the interpolation
+        // (cardinal) property the whole reconstruction rests on.
+        assert!((sinc(0.0) - 1.0).abs() < 1e-6);
+        for k in 1..=5 {
+            assert!(sinc(k as f32).abs() < 1e-5, "sinc({k}) != 0");
+            assert!(sinc(-(k as f32)).abs() < 1e-5);
+        }
+        // Lanczos inherits it and is exactly zero at/after the last lobe.
+        for a in [1.0f32, 2.0, 3.0] {
+            assert!((lanczos(0.0, a) - 1.0).abs() < 1e-6);
+            assert_eq!(lanczos(a, a), 0.0);
+            assert_eq!(lanczos(a + 0.5, a), 0.0);
+            // Even symmetry.
+            assert!((lanczos(0.37, a) - lanczos(-0.37, a)).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn mitchell_family_values_and_partition_of_unity() {
+        // Cubic B-spline BC(1,0): k(0)=2/3, k(±1)=1/6, everywhere ≥ 0.
+        assert!((mitchell_netravali(0.0, 1.0, 0.0) - 2.0 / 3.0).abs() < 1e-6);
+        assert!((mitchell_netravali(1.0, 1.0, 0.0) - 1.0 / 6.0).abs() < 1e-6);
+        for n in -40..=40 {
+            let x = n as f32 / 10.0;
+            assert!(
+                mitchell_netravali(x, 1.0, 0.0) >= -1e-6,
+                "B-spline negative at {x}"
+            );
+        }
+        // Mitchell BC(1/3,1/3): k(0) = (6-2B)/6 = 8/9.
+        let b = 1.0 / 3.0;
+        assert!((mitchell_netravali(0.0, b, b) - 8.0 / 9.0).abs() < 1e-6);
+        // Any interpolating/approximating kernel with support 2 reproduces a
+        // constant only if its integer samples partition unity: for the
+        // continuous kernel the three integer taps k(f-1)+k(f)+k(f+1)+k(f+2)
+        // (over a unit cell) sum to 1 for every fractional offset f.
+        for (bb, cc) in [(0.0, 0.5), (1.0 / 3.0, 1.0 / 3.0), (1.0, 0.0)] {
+            for n in 0..=10 {
+                let f = n as f32 / 10.0;
+                let sum = mitchell_netravali(f + 1.0, bb, cc)
+                    + mitchell_netravali(f, bb, cc)
+                    + mitchell_netravali(f - 1.0, bb, cc)
+                    + mitchell_netravali(f - 2.0, bb, cc);
+                assert!((sum - 1.0).abs() < 1e-5, "BC({bb},{cc}) sum {sum} at f={f}");
+            }
+        }
+    }
+
+    #[test]
+    fn lanczos_interpolates_at_integer_upscale() {
+        // At an exact 1:1 "resize" Lanczos must reproduce the input (the
+        // kernel is zero at every non-zero integer offset, unit at zero).
+        let input = gray(6, 1, |x, _| (x * 40) as u8);
+        let out = Resize::new(6, 1)
+            .with_interpolation(Interpolation::Lanczos { a: 3 })
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 6,
+                    height: 1,
+                },
+            )
+            .unwrap();
+        assert_eq!(out.planes[0].data, input.planes[0].data);
+    }
+
+    #[test]
+    fn kernel_variants_flat_input_is_flat() {
+        for interp in [
+            Interpolation::Lanczos { a: 2 },
+            Interpolation::Lanczos { a: 3 },
+            Interpolation::Mitchell,
+            Interpolation::BSpline,
+        ] {
+            let input = gray(9, 7, |_, _| 173);
+            let out = Resize::new(4, 12)
+                .with_interpolation(interp)
+                .apply(
+                    &input,
+                    VideoStreamParams {
+                        format: PixelFormat::Gray8,
+                        width: 9,
+                        height: 7,
+                    },
+                )
+                .unwrap();
+            for b in &out.planes[0].data {
+                assert_eq!(*b, 173, "{interp:?} not flat");
+            }
+        }
+    }
+
+    #[test]
+    fn lanczos_downscale_is_less_aliased_than_nearest() {
+        // Same Nyquist-stripe aliasing probe as the Area test: the scaled
+        // (widened) sinc integrates several stripes on downscale, so its
+        // residual dispersion must be strictly below nearest's.
+        let stripes = gray(8, 1, |x, _| if x % 2 == 0 { 0 } else { 255 });
+        let params = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 8,
+            height: 1,
+        };
+        let near = Resize::new(3, 1)
+            .with_interpolation(Interpolation::Nearest)
+            .apply(&stripes, params)
+            .unwrap();
+        let lanc = Resize::new(3, 1)
+            .with_interpolation(Interpolation::Lanczos { a: 3 })
+            .apply(&stripes, params)
+            .unwrap();
+        assert!(
+            dispersion(&near.planes[0].data) > dispersion(&lanc.planes[0].data),
+            "nearest ({}) should alias more than lanczos ({})",
+            dispersion(&near.planes[0].data),
+            dispersion(&lanc.planes[0].data)
+        );
+    }
+
+    #[test]
+    fn lanczos_upscale_sharper_than_bspline() {
+        // On a centre spike, the windowed-sinc keeps a higher peak than the
+        // everywhere-positive B-spline (which is the softest cubic).
+        let mut data = vec![0u8; 5 * 5];
+        data[2 * 5 + 2] = 255;
+        let input = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 5, data }],
+        };
+        let params = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 5,
+            height: 5,
+        };
+        let peak = |interp| {
+            let o = Resize::new(15, 15)
+                .with_interpolation(interp)
+                .apply(&input, params)
+                .unwrap();
+            *o.planes[0].data.iter().max().unwrap()
+        };
+        assert!(
+            peak(Interpolation::Lanczos { a: 3 }) > peak(Interpolation::BSpline),
+            "lanczos should out-peak the softer b-spline"
+        );
+    }
+
+    #[test]
+    fn bspline_step_stays_monotone_no_ringing() {
+        // Because the B-spline kernel is everywhere non-negative, every
+        // output sample is a *convex combination* of source samples — so a
+        // monotone (step) input upscales to a monotone-non-decreasing output
+        // with no ringing dips/overshoots. The interpolating Lanczos, by
+        // contrast, has negative side-lobes and *does* ring at a hard step.
+        let input = gray(6, 1, |x, _| if x < 3 { 40 } else { 200 });
+        let params = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 6,
+            height: 1,
+        };
+        let bs = Resize::new(24, 1)
+            .with_interpolation(Interpolation::BSpline)
+            .apply(&input, params)
+            .unwrap();
+        let row = &bs.planes[0].data;
+        for w in row.windows(2) {
+            assert!(w[1] >= w[0], "b-spline step not monotone: {row:?}");
+        }
+        // Every B-spline sample stays inside the [40, 200] source envelope.
+        assert!(row.iter().all(|&b| (40..=200).contains(&b)));
+        // Lanczos should ring: at least one sample escapes the envelope.
+        let lz = Resize::new(24, 1)
+            .with_interpolation(Interpolation::Lanczos { a: 3 })
+            .apply(&input, params)
+            .unwrap();
+        assert!(
+            lz.planes[0].data.iter().any(|&b| !(40..=200).contains(&b)),
+            "lanczos should overshoot the step envelope"
+        );
+    }
+
+    #[test]
+    fn kernel_variants_yuv420_subsample_each_plane() {
+        for interp in [Interpolation::Lanczos { a: 3 }, Interpolation::Mitchell] {
+            let y = vec![200u8; 16 * 16];
+            let u = vec![77u8; 8 * 8];
+            let v = vec![128u8; 8 * 8];
+            let input = VideoFrame {
+                pts: None,
+                planes: vec![
+                    VideoPlane {
+                        stride: 16,
+                        data: y,
+                    },
+                    VideoPlane { stride: 8, data: u },
+                    VideoPlane { stride: 8, data: v },
+                ],
+            };
+            let out = Resize::new(8, 8)
+                .with_interpolation(interp)
+                .apply(
+                    &input,
+                    VideoStreamParams {
+                        format: PixelFormat::Yuv420P,
+                        width: 16,
+                        height: 16,
+                    },
+                )
+                .unwrap();
+            assert_eq!(out.planes[0].data.len(), 8 * 8, "{interp:?}");
+            assert_eq!(out.planes[1].data.len(), 4 * 4);
+            assert_eq!(out.planes[2].data.len(), 4 * 4);
+            assert!(out.planes[0].data.iter().all(|&b| b == 200));
+            assert!(out.planes[1].data.iter().all(|&b| b == 77));
+            assert!(out.planes[2].data.iter().all(|&b| b == 128));
+        }
+    }
+
+    #[test]
+    fn kernel_variants_rgb_channels_independent() {
+        for interp in [Interpolation::Lanczos { a: 2 }, Interpolation::BSpline] {
+            let mut data = Vec::new();
+            for _ in 0..(4 * 4) {
+                data.extend_from_slice(&[10, 20, 30]);
+            }
+            let input = VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane {
+                    stride: 4 * 3,
+                    data,
+                }],
+            };
+            let out = Resize::new(7, 3)
+                .with_interpolation(interp)
+                .apply(
+                    &input,
+                    VideoStreamParams {
+                        format: PixelFormat::Rgb24,
+                        width: 4,
+                        height: 4,
+                    },
+                )
+                .unwrap();
+            for px in out.planes[0].data.chunks_exact(3) {
+                assert_eq!(px, [10, 20, 30], "{interp:?} channel bleed");
+            }
+        }
+    }
+
+    #[test]
+    fn lanczos_a_is_clamped_not_panicking() {
+        // a = 0 folds to 1; absurd a folds to 8. Neither panics.
+        let input = gray(4, 4, |x, y| (x + y) as u8 * 20);
+        let params = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: 4,
+            height: 4,
+        };
+        for a in [0u8, 1, 8, 200] {
+            let out = Resize::new(6, 6)
+                .with_interpolation(Interpolation::Lanczos { a })
+                .apply(&input, params)
+                .unwrap();
+            assert_eq!(out.planes[0].data.len(), 36);
+        }
     }
 
     #[test]

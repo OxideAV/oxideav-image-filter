@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- r403: `Resize` gains the standard windowed-sinc and parametric-cubic
+  reconstruction kernels via a new general **separable weighted-tap
+  driver** that scales its kernel by the shrink ratio on downscale (so
+  the reconstruction filter doubles as the anti-alias low-pass —
+  alias-free below 0.5× the way `Area` is) and renormalises the
+  per-output weights so flat input reproduces exactly even against a
+  clamped border. `Interpolation::Lanczos { a }` is the windowed sinc
+  `L(x) = sinc(x)·sinc(x/a)` on `|x| < a` (`a` clamped `1..=8`; `a = 3`
+  the sharper default) — `L(0) = 1`, `L(k) = 0` at non-zero integers, so
+  it interpolates the samples and reproduces the input exactly at 1:1.
+  `Interpolation::Mitchell` is the balanced Mitchell–Netravali cubic
+  `BC(1/3, 1/3)` and `Interpolation::BSpline` the everywhere-non-negative
+  cubic B-spline `BC(1, 0)` (never rings/overshoots; the softest cubic,
+  `k(0) = 2/3`); both share the piecewise cubic derived from first
+  principles (`C¹` at `|x| = 1, 2`, partition of unity). All three
+  derived clean-room from textbook DSP (windowed-sinc + the two-parameter
+  cubic-convolution family). Verified by analytic-property tests
+  (sinc/Lanczos cardinal property + even symmetry, B-spline
+  non-negativity, per-family partition-of-unity), 1:1 exact
+  reproduction, flat-reproduction across all four new kernels,
+  downscale-anti-alias vs nearest, upscale-sharper-than-B-spline,
+  B-spline monotone-no-ringing vs Lanczos-rings-the-step, YUV 4:2:0
+  per-plane subsampling, RGB channel independence, and `a`-clamp
+  no-panic hardening.
+
 - r380: `Resize` gains two reconstruction kernels.
   `Interpolation::Bicubic` is a separable 4-tap cubic convolution using
   the uniform Catmull-Rom cubic of
