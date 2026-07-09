@@ -67,6 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has no left/right phase bias), and DC/mean preservation within
   tolerance for the low-pass (anti-aliasing) kernels on downscale.
 
+- r403: added a deterministic randomised `Resize` stress sweep — a small
+  in-crate LCG (no external dependency) drives 600 resamples over every
+  supported pixel format (Gray8 / Rgb24 / Rgba / Yuv420P / Yuv422P /
+  Yuv444P), every kernel, and a wide spread of source/target dimensions
+  (including 1-px axes and up/down flips), asserting no panic / no OOB /
+  correct output shape and plane count.
+
 - r380: `Resize` gains two reconstruction kernels.
   `Interpolation::Bicubic` is a separable 4-tap cubic convolution using
   the uniform Catmull-Rom cubic of

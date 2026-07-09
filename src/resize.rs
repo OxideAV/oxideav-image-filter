@@ -1455,6 +1455,82 @@ mod tests {
         }
     }
 
+    // ---- Randomised no-panic stress sweep (fuzz-lite, deterministic)
+
+    /// Build a valid multi-plane frame for `fmt` at `w × h`, filled from a
+    /// per-sample pattern, using the crate's own plane-layout helpers so the
+    /// plane count / strides / chroma subsampling always match what
+    /// `Resize::apply` expects.
+    fn build_frame(fmt: PixelFormat, w: u32, h: u32, mut next: impl FnMut() -> u8) -> VideoFrame {
+        let (cx, cy) = crate::blur::chroma_subsampling(fmt);
+        let n_planes = match fmt {
+            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => 3,
+            _ => 1,
+        };
+        let mut planes = Vec::with_capacity(n_planes);
+        for idx in 0..n_planes {
+            let (pw, ph) = crate::blur::plane_dims(w, h, fmt, idx, cx, cy);
+            let bpp = crate::blur::bytes_per_plane_pixel(fmt, idx);
+            let stride = pw as usize * bpp;
+            let mut data = vec![0u8; stride * ph as usize];
+            for b in &mut data {
+                *b = next();
+            }
+            planes.push(VideoPlane { stride, data });
+        }
+        VideoFrame { pts: None, planes }
+    }
+
+    #[test]
+    fn random_dims_formats_kernels_never_panic() {
+        // A small deterministic LCG drives thousands of resamples over every
+        // supported pixel format, every kernel, and a wide spread of
+        // source/target dimensions (including 1-px axes and up/down flips).
+        // Purely a robustness guard: no panic, no OOB, output-shape-correct.
+        let mut state: u32 = 0x1234_5678;
+        let mut rng = || {
+            // Numerical Recipes LCG constants (public-domain integer facts).
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            state
+        };
+        let formats = [
+            PixelFormat::Gray8,
+            PixelFormat::Rgb24,
+            PixelFormat::Rgba,
+            PixelFormat::Yuv420P,
+            PixelFormat::Yuv422P,
+            PixelFormat::Yuv444P,
+        ];
+        for _ in 0..600 {
+            let fmt = formats[(rng() as usize) % formats.len()];
+            let sw = 1 + (rng() % 17);
+            let sh = 1 + (rng() % 17);
+            let tw = 1 + (rng() % 23);
+            let th = 1 + (rng() % 23);
+            let interp = ALL_INTERP[(rng() as usize) % ALL_INTERP.len()];
+            let frame = build_frame(fmt, sw, sh, || (rng() & 0xff) as u8);
+            let out = Resize::new(tw, th)
+                .with_interpolation(interp)
+                .apply(
+                    &frame,
+                    VideoStreamParams {
+                        format: fmt,
+                        width: sw,
+                        height: sh,
+                    },
+                )
+                .unwrap_or_else(|e| panic!("resize {fmt:?} {sw}x{sh}->{tw}x{th} {interp:?}: {e}"));
+            // Output luma/first plane must be exactly tw×th×bpp.
+            let bpp0 = crate::blur::bytes_per_plane_pixel(fmt, 0);
+            assert_eq!(
+                out.planes[0].data.len(),
+                tw as usize * th as usize * bpp0,
+                "{fmt:?} {sw}x{sh}->{tw}x{th} {interp:?} plane0 size"
+            );
+            assert_eq!(out.planes.len(), frame.planes.len());
+        }
+    }
+
     #[test]
     fn bicubic_upscale_is_sharper_than_bilinear() {
         // On a single bright pixel surrounded by black, an upscaled
