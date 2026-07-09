@@ -38,6 +38,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (aliases `bspline`, `cubic-b-spline`); factory-alias coverage extended
   to all of them.
 
+### Fixed
+
+- r403: `Interpolation::Area` read one source pixel past the end of a
+  plane at extreme downscale (e.g. 64→1). The last-covered-pixel index
+  was computed as `(hi − 1e-6).floor()`, but near a large integer `hi`
+  the `1e-6` epsilon falls below the single-precision ulp so the
+  subtraction is a no-op and the index landed on `extent` instead of
+  `extent − 1`. Replaced with the exact `ceil(hi) − 1`
+  (`footprint` already clamps `hi ≤ extent`, so this is always
+  in-bounds). Caught by the new whole-kernel-matrix extreme-downscale
+  geometry test.
+
+### Changed
+
+- r403: hardened `Resize` geometry across the full kernel matrix
+  (Nearest / Bilinear / Bicubic / Area / Lanczos / Mitchell / BSpline)
+  with 1×1-source, single-row / single-column, extreme downscale-to-1px,
+  extreme upscale, and odd/prime-dimension tests — every kernel now has
+  no-panic + flat-preservation + correct-output-shape coverage on the
+  hostile-geometry edges.
+
 - r380: `Resize` gains two reconstruction kernels.
   `Interpolation::Bicubic` is a separable 4-tap cubic convolution using
   the uniform Catmull-Rom cubic of

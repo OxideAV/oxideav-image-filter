@@ -602,7 +602,15 @@ fn integrate_axis(lo: f32, hi: f32, sample: impl Fn(usize) -> f32) -> f32 {
         return sample(lo.floor() as usize);
     }
     let first = lo.floor() as usize;
-    let last = ((hi - 1e-6).floor() as usize).max(first);
+    // The last source pixel with non-zero overlap is the one whose left
+    // edge is strictly below `hi`: pixel `i` covers `[i, i+1)`, so it
+    // overlaps `[lo, hi)` iff `i < hi`. `ceil(hi) − 1` is that index for
+    // both integer and fractional `hi` — and it stays in-bounds because
+    // `footprint` clamps `hi ≤ extent`, giving `last ≤ extent − 1`. (An
+    // earlier `(hi − 1e-6).floor()` form silently read one pixel past the
+    // end at large scales: near `hi = 64` the `1e-6` is below the f32 ulp,
+    // so the subtraction is a no-op and `floor` returned `64`.)
+    let last = (hi.ceil() as usize).saturating_sub(1).max(first);
     let mut acc = 0.0f32;
     for i in first..=last {
         let pl = (i as f32).max(lo);
@@ -1224,6 +1232,120 @@ mod tests {
                 .apply(&input, params)
                 .unwrap();
             assert_eq!(out.planes[0].data.len(), 36);
+        }
+    }
+
+    // ---- Geometry-edge + hostile-dimension hardening (whole kernel matrix)
+
+    /// Every reconstruction kernel the crate ships, for matrix sweeps.
+    const ALL_INTERP: [Interpolation; 7] = [
+        Interpolation::Nearest,
+        Interpolation::Bilinear,
+        Interpolation::Bicubic,
+        Interpolation::Area,
+        Interpolation::Lanczos { a: 3 },
+        Interpolation::Mitchell,
+        Interpolation::BSpline,
+    ];
+
+    fn gray_params(w: u32, h: u32) -> VideoStreamParams {
+        VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn one_by_one_source_upscales_to_flat_for_every_kernel() {
+        // A 1×1 source has no neighbours — every kernel must fall back to the
+        // single sample and paint a flat output (no panic, no OOB).
+        let input = gray(1, 1, |_, _| 137);
+        for interp in ALL_INTERP {
+            let out = Resize::new(9, 7)
+                .with_interpolation(interp)
+                .apply(&input, gray_params(1, 1))
+                .unwrap();
+            assert_eq!(out.planes[0].data.len(), 63, "{interp:?}");
+            assert!(
+                out.planes[0].data.iter().all(|&b| b == 137),
+                "{interp:?} 1×1 upscale not flat"
+            );
+        }
+    }
+
+    #[test]
+    fn single_row_and_column_geometry_for_every_kernel() {
+        for interp in ALL_INTERP {
+            // 1×N (single row) upscaled horizontally.
+            let row = gray(4, 1, |x, _| (x * 50) as u8);
+            let o = Resize::new(11, 1)
+                .with_interpolation(interp)
+                .apply(&row, gray_params(4, 1))
+                .unwrap();
+            assert_eq!(o.planes[0].data.len(), 11, "{interp:?} row len");
+            assert_eq!(o.planes[0].stride, 11);
+            // N×1 (single column).
+            let col = gray(1, 4, |_, y| (y * 50) as u8);
+            let o2 = Resize::new(1, 11)
+                .with_interpolation(interp)
+                .apply(&col, gray_params(1, 4))
+                .unwrap();
+            assert_eq!(o2.planes[0].data.len(), 11, "{interp:?} col len");
+            assert_eq!(o2.planes[0].stride, 1);
+        }
+    }
+
+    #[test]
+    fn extreme_downscale_to_one_pixel_for_every_kernel() {
+        // 64→1: the single output pixel must be a valid sample (no panic,
+        // no divide-by-zero in the footprint / weight normalisation), and a
+        // flat field must survive.
+        let flat = gray(64, 64, |_, _| 91);
+        for interp in ALL_INTERP {
+            let o = Resize::new(1, 1)
+                .with_interpolation(interp)
+                .apply(&flat, gray_params(64, 64))
+                .unwrap();
+            assert_eq!(o.planes[0].data.len(), 1, "{interp:?}");
+            assert_eq!(o.planes[0].data[0], 91, "{interp:?} 64→1 not flat");
+        }
+    }
+
+    #[test]
+    fn extreme_upscale_flat_preserved_for_every_kernel() {
+        let flat = gray(3, 2, |_, _| 200);
+        for interp in ALL_INTERP {
+            let o = Resize::new(97, 61)
+                .with_interpolation(interp)
+                .apply(&flat, gray_params(3, 2))
+                .unwrap();
+            assert_eq!(o.planes[0].data.len(), 97 * 61, "{interp:?}");
+            assert!(
+                o.planes[0].data.iter().all(|&b| b == 200),
+                "{interp:?} extreme upscale not flat"
+            );
+        }
+    }
+
+    #[test]
+    fn odd_prime_dimensions_no_panic_and_bounded() {
+        // Odd/prime source and target dims exercise the fractional-footprint
+        // and ceil/floor tap-range math off any power-of-two happy path.
+        let input = gray(7, 13, |x, y| ((x * 17 + y * 31) % 256) as u8);
+        for interp in ALL_INTERP {
+            for (tw, th) in [(5u32, 11u32), (23, 3), (13, 7), (1, 29)] {
+                let o = Resize::new(tw, th)
+                    .with_interpolation(interp)
+                    .apply(&input, gray_params(7, 13))
+                    .unwrap();
+                assert_eq!(
+                    o.planes[0].data.len(),
+                    (tw * th) as usize,
+                    "{interp:?} {tw}×{th}"
+                );
+                assert_eq!(o.planes[0].stride, tw as usize, "{interp:?} stride");
+            }
         }
     }
 
