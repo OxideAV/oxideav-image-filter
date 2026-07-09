@@ -54,7 +54,7 @@ directly.
 
 ### Resize
 
-Rescale to arbitrary dimensions with four reconstruction kernels:
+Rescale to arbitrary dimensions with seven reconstruction kernels:
 
 ```rust
 use oxideav_image_filter::{Interpolation, ImageFilter, Resize};
@@ -83,12 +83,35 @@ let half = Resize::new(input.width / 2, input.height / 2)
   the whole shrinking footprint and is alias-free by construction.
   Separable two-pass (horizontal then vertical). On upscale (footprint
   < 1 px) it degenerates to nearest-neighbour.
+- **`Lanczos { a }`** — windowed-sinc reconstruction
+  `L(x) = sinc(x)·sinc(x/a)` on `|x| < a` (`a` lobes, clamped `1..=8`;
+  `a = 3` the sharper default). `L(0) = 1`, `L(k) = 0` at non-zero
+  integers, so it interpolates the samples (a 1:1 pass reproduces the
+  input exactly). Runs through a general separable weighted-tap driver
+  that **scales the kernel by the shrink ratio on downscale**, so the
+  reconstruction filter doubles as the anti-alias low-pass — alias-free
+  below ~0.5 scale the way `Area` is, while keeping the sharper
+  windowed-sinc response on upscale. Per-output weights renormalise to
+  sum to 1 so flat input reproduces exactly even against a clamped edge.
+  Derived from first principles (windowed sinc); it rings slightly at
+  hard edges (the sinc's negative side-lobes).
+- **`Mitchell`** — the balanced Mitchell–Netravali cubic `BC(1/3, 1/3)`
+  (the uniform Catmull-Rom of `Bicubic` is `BC(0, 1/2)`); a good
+  blur/ring compromise for photographic resampling. Same anti-aliasing
+  separable driver as `Lanczos`.
+- **`BSpline`** — the everywhere-non-negative cubic B-spline `BC(1, 0)`
+  of the same Mitchell–Netravali family. Never rings or overshoots (a
+  monotone step stays monotone) at the cost of being the softest cubic —
+  `k(0) = 2/3`, so it *approximates* rather than interpolates the
+  samples. Same anti-aliasing separable driver.
 
 For planar YUV the chroma planes are resized to the matching subsampled
 output dimensions (e.g. 4:2:0 halves both chroma axes). Pipeline JSON
 selects the kernel via `"interpolation"`: `nearest` / `bilinear` /
 `bicubic` (aliases `cubic`, `catmull-rom`) / `area` (aliases `box`,
-`average`).
+`average`) / `lanczos` (3-lobe; also `lanczos2` / `lanczos3`) /
+`mitchell` (alias `mitchell-netravali`) / `b-spline` (aliases `bspline`,
+`cubic-b-spline`).
 
 ### Geometric
 
