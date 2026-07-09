@@ -1235,6 +1235,112 @@ mod tests {
         }
     }
 
+    // ---- Kernel-correctness contracts (separability + symmetry)
+
+    #[test]
+    fn separable_driver_does_not_cross_axes() {
+        // A source that varies only along x (constant down every column)
+        // must, after a separable resample, still be constant down every
+        // column — the vertical pass may not smear horizontal structure and
+        // vice-versa. Proves the two 1-D passes are truly axis-independent.
+        for interp in [
+            Interpolation::Lanczos { a: 3 },
+            Interpolation::Mitchell,
+            Interpolation::BSpline,
+        ] {
+            // varies only in x
+            let vx = gray(8, 6, |x, _| (x * 30) as u8);
+            let ox = Resize::new(5, 9)
+                .with_interpolation(interp)
+                .apply(&vx, gray_params(8, 6))
+                .unwrap();
+            let (ow, oh) = (5usize, 9usize);
+            for x in 0..ow {
+                let col0 = ox.planes[0].data[x];
+                for y in 1..oh {
+                    assert_eq!(
+                        ox.planes[0].data[y * ow + x],
+                        col0,
+                        "{interp:?} leaked x-structure into y at col {x}"
+                    );
+                }
+            }
+            // varies only in y
+            let vy = gray(6, 8, |_, y| (y * 30) as u8);
+            let oy = Resize::new(9, 5)
+                .with_interpolation(interp)
+                .apply(&vy, gray_params(6, 8))
+                .unwrap();
+            let (ow, oh) = (9usize, 5usize);
+            for y in 0..oh {
+                let row0 = oy.planes[0].data[y * ow];
+                for x in 1..ow {
+                    assert_eq!(
+                        oy.planes[0].data[y * ow + x],
+                        row0,
+                        "{interp:?} leaked y-structure into x at row {y}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn resample_preserves_mirror_symmetry() {
+        // A horizontally-symmetric input resized to a different width must
+        // stay horizontally symmetric — the half-pixel-centred sampling has
+        // no left/right phase bias. (Tested for every kernel, up and down.)
+        let sym = gray(9, 1, |x, _| {
+            let d = (x as i32 - 4).unsigned_abs();
+            (d * 40) as u8
+        });
+        for interp in ALL_INTERP {
+            for tw in [5u32, 15, 21] {
+                let o = Resize::new(tw, 1)
+                    .with_interpolation(interp)
+                    .apply(&sym, gray_params(9, 1))
+                    .unwrap();
+                let row = &o.planes[0].data;
+                let n = row.len();
+                for i in 0..n / 2 {
+                    assert_eq!(
+                        row[i],
+                        row[n - 1 - i],
+                        "{interp:?} broke mirror symmetry at width {tw}: {row:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn downscale_preserves_mean_within_tolerance() {
+        // The anti-aliasing kernels (Area + the scaled-kernel family) are
+        // low-pass, so downscaling a gradient must preserve its DC (mean)
+        // component closely — a point-sampling kernel that dropped taps
+        // would drift. 32→7 on a linear ramp.
+        let ramp = gray(32, 1, |x, _| (x * 8) as u8); // mean ≈ 124
+        let params = gray_params(32, 1);
+        let src_mean = ramp.planes[0].data.iter().map(|&b| b as u32).sum::<u32>() / 32;
+        for interp in [
+            Interpolation::Area,
+            Interpolation::Lanczos { a: 3 },
+            Interpolation::Mitchell,
+            Interpolation::BSpline,
+        ] {
+            let o = Resize::new(7, 1)
+                .with_interpolation(interp)
+                .apply(&ramp, params)
+                .unwrap();
+            let out_mean = o.planes[0].data.iter().map(|&b| b as u32).sum::<u32>() / 7;
+            let drift = (out_mean as i32 - src_mean as i32).abs();
+            assert!(
+                drift <= 6,
+                "{interp:?} mean drift {drift} (src {src_mean}, out {out_mean})"
+            );
+        }
+    }
+
     // ---- Geometry-edge + hostile-dimension hardening (whole kernel matrix)
 
     /// Every reconstruction kernel the crate ships, for matrix sweeps.

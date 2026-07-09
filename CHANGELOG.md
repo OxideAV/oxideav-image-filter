@@ -59,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no-panic + flat-preservation + correct-output-shape coverage on the
   hostile-geometry edges.
 
+- r403: added `Resize` kernel-correctness contract tests — separability
+  (a source varying only along one axis stays constant along the other
+  after the two-pass resample, proving the passes are axis-independent),
+  mirror-symmetry preservation (a symmetric input stays symmetric under
+  every kernel up and down, confirming the half-pixel-centred sampling
+  has no left/right phase bias), and DC/mean preservation within
+  tolerance for the low-pass (anti-aliasing) kernels on downscale.
+
 - r380: `Resize` gains two reconstruction kernels.
   `Interpolation::Bicubic` is a separable 4-tap cubic convolution using
   the uniform Catmull-Rom cubic of
