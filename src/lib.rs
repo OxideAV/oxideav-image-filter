@@ -145,7 +145,11 @@
 //! - [`Resize`](resize::Resize) — rescale to arbitrary dimensions with
 //!   [`Interpolation`](resize::Interpolation) = Nearest / Bilinear /
 //!   Bicubic (separable Catmull-Rom 4-tap cubic) / Area (alias-free
-//!   coverage-weighted box for downscale).
+//!   coverage-weighted box for downscale) / Lanczos (windowed sinc,
+//!   `a` lobes) / Mitchell (Mitchell-Netravali cubic) / BSpline
+//!   (everywhere-non-negative cubic B-spline). The last three run
+//!   through a separable weighted-tap driver that scales its kernel on
+//!   downscale so it doubles as the anti-alias low-pass.
 //! - [`Roll`](roll::Roll) — circular pixel shift `(dx, dy)`; rows /
 //!   columns wrap around the borders. documented CLI: `-roll +X+Y`.
 //! - [`Rotate`](rotate::Rotate) — arbitrary-angle rotation with bilinear

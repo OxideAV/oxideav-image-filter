@@ -32,7 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   downscale-anti-alias vs nearest, upscale-sharper-than-B-spline,
   B-spline monotone-no-ringing vs Lanczos-rings-the-step, YUV 4:2:0
   per-plane subsampling, RGB channel independence, and `a`-clamp
-  no-panic hardening.
+  no-panic hardening. Pipeline JSON `"interpolation"` accepts `lanczos`
+  (3-lobe default) / `lanczos2` / `lanczos3` (and `lanczos-2` /
+  `lanczos-3`), `mitchell` (alias `mitchell-netravali`), and `b-spline`
+  (aliases `bspline`, `cubic-b-spline`); factory-alias coverage extended
+  to all of them.
 
 - r380: `Resize` gains two reconstruction kernels.
   `Interpolation::Bicubic` is a separable 4-tap cubic convolution using

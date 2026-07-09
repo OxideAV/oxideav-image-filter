@@ -885,10 +885,18 @@ fn make_resize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
         None | Some("bilinear") => Interpolation::Bilinear,
         Some("bicubic") | Some("cubic") | Some("catmull-rom") => Interpolation::Bicubic,
         Some("area") | Some("box") | Some("average") => Interpolation::Area,
+        // Windowed-sinc: bare `lanczos` defaults to the sharper 3-lobe
+        // kernel; `lanczos2` / `lanczos3` pin the lobe count explicitly.
+        Some("lanczos") | Some("lanczos3") | Some("lanczos-3") => Interpolation::Lanczos { a: 3 },
+        Some("lanczos2") | Some("lanczos-2") => Interpolation::Lanczos { a: 2 },
+        // Parametric cubics.
+        Some("mitchell") | Some("mitchell-netravali") => Interpolation::Mitchell,
+        Some("b-spline") | Some("bspline") | Some("cubic-b-spline") => Interpolation::BSpline,
         Some(other) => {
             return Err(Error::invalid(format!(
                 "job: filter 'resize': unknown interpolation '{other}' \
-                 (expected 'nearest', 'bilinear', 'bicubic', or 'area')"
+                 (expected 'nearest', 'bilinear', 'bicubic', 'area', \
+                 'lanczos' / 'lanczos2' / 'lanczos3', 'mitchell', or 'b-spline')"
             )));
         }
     };
@@ -9384,6 +9392,16 @@ mod tests {
             "area",
             "box",
             "average",
+            "lanczos",
+            "lanczos2",
+            "lanczos-2",
+            "lanczos3",
+            "lanczos-3",
+            "mitchell",
+            "mitchell-netravali",
+            "b-spline",
+            "bspline",
+            "cubic-b-spline",
         ] {
             let f = c
                 .filters
