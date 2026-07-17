@@ -199,6 +199,8 @@ impl TwoInputImageFilter for HaldClut {
 
 /// Build an identity Hald CLUT image of level `L` in `Rgb24` /
 /// `Rgba`. Exposed for tests + downstream identity-pipeline scaffolding.
+// Internal test-support LUT builder, not part of the stable filter API.
+#[doc(hidden)]
 pub fn build_identity_hald(l: u32, has_alpha: bool) -> (VideoFrame, u32) {
     let l = l.max(2);
     let side = l * l;

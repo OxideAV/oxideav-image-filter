@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Marked internal test-support surface `#[doc(hidden)]`
+  (`hald_clut::build_identity_hald` and the crate-root
+  `__oxideav_entry` re-export) so semver tooling tracks only the
+  stable filter API; no behavioural change.
+
 ### Added
 
 - r403: `Resize` gains the standard windowed-sinc and parametric-cubic

@@ -930,7 +930,10 @@ pub use posterize_channels::PosterizeChannels;
 pub use prewitt::{Prewitt, PrewittMagnitude};
 pub use quantize::Quantize;
 pub use radial_blur::RadialBlur;
-pub use registry::{__oxideav_entry, register};
+pub use registry::register;
+// Internal: `oxideav_core::register!` dispatch shim re-export, not user-facing API.
+#[doc(hidden)]
+pub use registry::__oxideav_entry;
 pub use reinhard::Reinhard;
 pub use reinhard_extended::ReinhardExtended;
 pub use reinhard_local::ReinhardLocal;
