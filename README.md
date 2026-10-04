@@ -28,14 +28,21 @@ Separable Gaussian blur with configurable radius + sigma and an optional
 plane selector:
 
 ```rust
-use oxideav_image_filter::{Blur, ImageFilter, Planes};
+# use oxideav_core::{PixelFormat, VideoFrame, VideoPlane};
+# let input_frame = VideoFrame { pts: Some(0), planes: vec![VideoPlane { stride: 64 * 3, data: vec![0; 64 * 64 * 3] }] };
+use oxideav_image_filter::{Blur, ImageFilter, Planes, VideoStreamParams};
+
+// Stream shape (format / width / height) comes from the stream's
+// CodecParameters, not from the frame.
+let params = VideoStreamParams { format: PixelFormat::Rgb24, width: 64, height: 64 };
 
 // Blur all planes with radius 3, sigma 1.5 (default).
 let f = Blur::new(3).with_sigma(1.5);
-let out = f.apply(&input_frame)?;
+let out = f.apply(&input_frame, params)?;
 
 // Blur only the luma plane — leave chroma untouched.
 let f = Blur::new(5).with_sigma(2.0).with_planes(Planes::Luma);
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ### Edge
@@ -43,9 +50,13 @@ let f = Blur::new(5).with_sigma(2.0).with_planes(Planes::Luma);
 3×3 Sobel edge-magnitude; output is a `Gray8` frame of the same size:
 
 ```rust
-use oxideav_image_filter::{Edge, ImageFilter};
+# use oxideav_core::{PixelFormat, VideoFrame, VideoPlane};
+# let input_frame = VideoFrame { pts: Some(0), planes: vec![VideoPlane { stride: 64 * 3, data: vec![0; 64 * 64 * 3] }] };
+use oxideav_image_filter::{Edge, ImageFilter, VideoStreamParams};
 
-let edges = Edge::new().apply(&input_frame)?;
+let params = VideoStreamParams { format: PixelFormat::Rgb24, width: 64, height: 64 };
+let edges = Edge::new().apply(&input_frame, params)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 For `Rgb24` / `Rgba` input the filter first computes a luma proxy
@@ -57,11 +68,15 @@ directly.
 Rescale to arbitrary dimensions with seven reconstruction kernels:
 
 ```rust
-use oxideav_image_filter::{Interpolation, ImageFilter, Resize};
+# use oxideav_core::{PixelFormat, VideoFrame, VideoPlane};
+# let input = VideoFrame { pts: Some(0), planes: vec![VideoPlane { stride: 64 * 3, data: vec![0; 64 * 64 * 3] }] };
+use oxideav_image_filter::{Interpolation, ImageFilter, Resize, VideoStreamParams};
 
-let half = Resize::new(input.width / 2, input.height / 2)
+let params = VideoStreamParams { format: PixelFormat::Rgb24, width: 64, height: 64 };
+let half = Resize::new(params.width / 2, params.height / 2)
     .with_interpolation(Interpolation::Bilinear)
-    .apply(&input)?;
+    .apply(&input, params)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 - **`Nearest`** — point sample; fast, blocky, ideal for pixel art.
