@@ -78,6 +78,12 @@ impl PixelFilter for Cyanotype {
         crate::layout::PACKED_8BIT
     }
 
+    /// Each output pixel is a function of the input pixel at the same
+    /// position only, so `Pal8` is taken through the palette route.
+    fn is_pointwise(&self) -> bool {
+        true
+    }
+
     /// Grey input is toned into packed RGB; colour layouts keep theirs.
     fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
         match input {
@@ -297,6 +303,9 @@ mod tests {
 
     #[test]
     fn rejects_yuv() {
+        // Every 8-bit layout outside the native set is taken through
+        // the packed-RGB hop; a deep layout never is (no silent
+        // narrowing) and is refused with a typed error.
         let input = VideoFrame {
             pts: None,
             planes: vec![
@@ -318,7 +327,7 @@ mod tests {
             .apply(
                 &input,
                 VideoStreamParams {
-                    format: PixelFormat::Yuv420P,
+                    format: PixelFormat::Yuv420P10Le,
                     width: 4,
                     height: 4,
                 },

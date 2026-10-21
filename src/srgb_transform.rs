@@ -178,6 +178,12 @@ impl PixelFilter for SrgbTransform {
         crate::layout::PACKED_8BIT
     }
 
+    /// Each output pixel is a function of the input pixel at the same
+    /// position only, so `Pal8` is taken through the palette route.
+    fn is_pointwise(&self) -> bool {
+        true
+    }
+
     fn apply_pixels(
         &self,
         input: &VideoFrame,
@@ -457,6 +463,9 @@ mod tests {
 
     #[test]
     fn rejects_yuv() {
+        // Every 8-bit layout outside the native set is taken through
+        // the packed-RGB hop; a deep layout never is (no silent
+        // narrowing) and is refused with a typed error.
         let frame = VideoFrame {
             pts: None,
             planes: vec![
@@ -478,7 +487,7 @@ mod tests {
             .apply(
                 &frame,
                 VideoStreamParams {
-                    format: PixelFormat::Yuv420P,
+                    format: PixelFormat::Yuv420P10Le,
                     width: 4,
                     height: 4,
                 },

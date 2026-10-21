@@ -302,6 +302,9 @@ mod tests {
 
     #[test]
     fn rejects_alpha_on_rgb24() {
+        // Every 8-bit layout outside the native set is taken through
+        // the packed-RGB hop; a deep layout never is (no silent
+        // narrowing) and is refused with a typed error.
         let input = VideoFrame {
             pts: None,
             planes: vec![VideoPlane {
@@ -313,7 +316,7 @@ mod tests {
             .apply(
                 &input,
                 VideoStreamParams {
-                    format: PixelFormat::Rgb24,
+                    format: PixelFormat::Rgb48Le,
                     width: 1,
                     height: 1,
                 },
@@ -322,11 +325,14 @@ mod tests {
         // `Alpha` declares `Rgba` only; the wrapper's refusal names the
         // layout it was handed.
         assert!(matches!(err, Error::Unsupported(_)));
-        assert!(format!("{err}").contains("Rgb24"));
+        assert!(format!("{err}").contains("Rgb48Le"));
     }
 
     #[test]
     fn rejects_red_on_yuv() {
+        // Every 8-bit layout outside the native set is taken through
+        // the packed-RGB hop; a deep layout never is (no silent
+        // narrowing) and is refused with a typed error.
         let input = VideoFrame {
             pts: None,
             planes: vec![
@@ -348,7 +354,7 @@ mod tests {
             .apply(
                 &input,
                 VideoStreamParams {
-                    format: PixelFormat::Yuv420P,
+                    format: PixelFormat::Yuv420P10Le,
                     width: 2,
                     height: 2,
                 },

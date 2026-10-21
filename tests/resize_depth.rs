@@ -1,7 +1,9 @@
 //! Resize on layouts beyond 8-bit packed: 16-bit words stay 16-bit and
 //! clamp at their own full scale, subsampled chroma planes resample on
 //! their own grid, odd sizes are exact, float samples are not clamped,
-//! semi-planar pairs resample as pairs, and `Pal8` is nearest-only.
+//! semi-planar pairs resample as pairs, and `Pal8` keeps its indices
+//! under the nearest kernel while the interpolating kernels take it
+//! through the packed-RGB hop.
 
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{ImageFilter, Interpolation, Resize, VideoStreamParams};
@@ -261,7 +263,9 @@ fn semi_planar_pairs_and_deep_packed_pixels_resample_per_component() {
 
 #[test]
 fn pal8_is_nearest_only_and_keeps_its_table() {
-    let input = picture(PixelFormat::Pal8, 4, 2, |_, x, _, _| (x % 3) as u32, 1)
+    // Columns 1 and 2 share the transparent entry so a bilinear output
+    // column lands fully inside it.
+    let input = picture(PixelFormat::Pal8, 4, 2, |_, x, _, _| [0u32, 2, 2, 1][x], 1)
         .with_palette(vec![0, 0, 0, 255, 0, 0, 0, 0, 255])
         .with_palette_alpha(vec![255, 255, 0]);
     let out = Resize::new(8, 2)
@@ -273,19 +277,30 @@ fn pal8_is_nearest_only_and_keeps_its_table() {
     assert_eq!(out.palette(), input.palette());
     assert_eq!(out.palette_alpha(), input.palette_alpha());
 
-    let err = Resize::new(8, 2)
-        .with_interpolation(Interpolation::Bilinear)
-        .apply(&input, params(PixelFormat::Pal8, 4, 2))
-        .unwrap_err();
-    assert!(matches!(err, Error::Unsupported(_)));
-    assert!(err.to_string().contains("Pal8"));
-    assert!(!Resize::new(1, 1)
-        .accepted_pixel_formats()
-        .contains(&PixelFormat::Pal8));
+    // An interpolating kernel cannot average indices: Pal8 takes the
+    // packed-RGB hop instead — the palette is expanded (alpha from the
+    // palette-alpha record), the Rgba picture is resampled, and the
+    // output is Rgba, labelled as such.
+    let r = Resize::new(8, 2).with_interpolation(Interpolation::Bilinear);
+    assert_eq!(
+        r.output_pixel_format(PixelFormat::Pal8),
+        Some(PixelFormat::Rgba)
+    );
+    let out = r.apply(&input, params(PixelFormat::Pal8, 4, 2)).unwrap();
+    assert_eq!(out.image_plane_count(), 1);
+    assert_eq!(out.planes[0].stride, 8 * 4);
+    assert!(out.palette().is_none());
+    // Entry 2 is transparent: a column inside the index-2 run is alpha 0.
+    assert!(out.planes[0].data.chunks_exact(4).any(|px| px[3] == 0));
+    let nearest = Resize::new(1, 1).with_interpolation(Interpolation::Nearest);
+    assert_eq!(
+        nearest.output_pixel_format(PixelFormat::Pal8),
+        Some(PixelFormat::Pal8)
+    );
     assert!(Resize::new(1, 1)
-        .with_interpolation(Interpolation::Nearest)
         .accepted_pixel_formats()
         .contains(&PixelFormat::Pal8));
+    let _ = Error::Unsupported(String::new());
 }
 
 #[test]

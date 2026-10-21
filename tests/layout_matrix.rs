@@ -47,8 +47,9 @@ fn picture(fmt: PixelFormat, w: u32, h: u32, seed: u8) -> VideoFrame {
 /// Significant-bits record that is valid for `fmt` (at or below the
 /// nominal depth of every plane).
 fn sig_bits(fmt: PixelFormat) -> Vec<u8> {
-    let bits = match sample_kind(fmt) {
-        Some(SampleKind::U16 { bits }) => bits.saturating_sub(1).max(1),
+    let bits = match (fmt, sample_kind(fmt)) {
+        (PixelFormat::MonoBlack | PixelFormat::MonoWhite, _) => 1,
+        (_, Some(SampleKind::U16 { bits })) => bits.saturating_sub(1).max(1),
         _ => 7,
     };
     vec![bits; fmt.plane_count()]
@@ -143,18 +144,36 @@ fn check_geometry(
     );
     let (w, h) = if free_extent {
         let p0 = &out.planes[0];
-        let pb = fmt.plane_row_bytes(0, 1).unwrap();
         assert!(
-            p0.stride > 0 && p0.stride % pb == 0,
-            "{name} on {in_fmt:?}: plane 0 stride {}",
-            p0.stride
-        );
-        let w = (p0.stride / pb) as u32;
-        assert!(
-            p0.data.len() % p0.stride == 0,
+            p0.stride > 0 && p0.data.len() % p0.stride == 0,
             "{name} on {in_fmt:?}: plane 0 ragged"
         );
-        (w, (p0.data.len() / p0.stride) as u32)
+        let rows = (p0.data.len() / p0.stride) as u32;
+        let w = match fmt {
+            // Two pixels per 4-byte macropixel.
+            PixelFormat::Yuyv422 | PixelFormat::Uyvy422 => {
+                assert_eq!(
+                    p0.stride % 4,
+                    0,
+                    "{name} on {in_fmt:?}: macropixel stride {}",
+                    p0.stride
+                );
+                (p0.stride / 2) as u32
+            }
+            // Eight pixels per byte: the extent is not recoverable from a
+            // row; row consistency was checked above.
+            PixelFormat::MonoBlack | PixelFormat::MonoWhite => return,
+            _ => {
+                let pb = fmt.plane_row_bytes(0, 1).unwrap();
+                assert!(
+                    p0.stride % pb == 0,
+                    "{name} on {in_fmt:?}: plane 0 stride {}",
+                    p0.stride
+                );
+                (p0.stride / pb) as u32
+            }
+        };
+        (w, rows)
     } else {
         (w, h)
     };
@@ -286,7 +305,10 @@ fn cell_single(name: &str, f: &dyn ImageFilter, fmt: PixelFormat, w: u32, h: u32
             } else {
                 clean
             };
-            let out = f.apply(&clean, params(fmt, w, h)).unwrap();
+            let Ok(out) = f.apply(&clean, params(fmt, w, h)) else {
+                // Same picture, same typed geometry refusal as above.
+                return true;
+            };
             if fmt == PixelFormat::Pal8 {
                 assert!(
                     out.blobs().is_empty() && out.layer().is_none(),
@@ -299,6 +321,21 @@ fn cell_single(name: &str, f: &dyn ImageFilter, fmt: PixelFormat, w: u32, h: u32
                     "{name} on {fmt:?}: records appeared"
                 );
             }
+            true
+        }
+        // The packed-RGB hop converts through `oxideav-pixfmt`, which
+        // takes packed 4:2:2 at even widths and 4:1:1 at widths that are
+        // multiples of 4 only — on the way in and on the way back, so a
+        // filter whose output extent breaks the rule (a 3-wide crop)
+        // refuses with a typed InvalidData. That is the contract (never
+        // a panic).
+        (true, Err(Error::InvalidData(msg)))
+            if matches!(
+                fmt,
+                PixelFormat::Yuyv422 | PixelFormat::Uyvy422 | PixelFormat::Yuv411P
+            ) =>
+        {
+            assert!(msg.contains("pixfmt"), "{name} on {fmt:?}: {msg}");
             true
         }
         (true, Err(e)) => panic!("{name} declares {fmt:?} but failed on {w}x{h}: {e}"),
@@ -468,4 +505,75 @@ fn malformed_frames_are_typed_refusals_everywhere() {
             );
         }
     }
+}
+
+/// A filter that declares itself pointwise must produce, for every
+/// pixel, exactly what it produces for that pixel alone — and its
+/// `Pal8` route must recolour each palette entry the same way.
+#[test]
+fn pointwise_filters_are_pointwise_and_recolour_palettes_entrywise() {
+    let mut checked = 0usize;
+    for entry in all_single() {
+        let f = entry.filter.as_ref();
+        if !f.is_pointwise() {
+            continue;
+        }
+        assert!(
+            f.accepted_pixel_formats().contains(&PixelFormat::Pal8),
+            "{}",
+            entry.name
+        );
+        checked += 1;
+        let (w, h) = (3u32, 2u32);
+        let input = picture(PixelFormat::Rgba, w, h, 11);
+        let whole = f.apply(&input, params(PixelFormat::Rgba, w, h)).unwrap();
+        for i in 0..(w * h) as usize {
+            let px = &input.planes[0].data[4 * i..4 * i + 4];
+            let one = VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane {
+                    stride: 4,
+                    data: px.to_vec(),
+                }],
+            };
+            let alone = f.apply(&one, params(PixelFormat::Rgba, 1, 1)).unwrap();
+            assert_eq!(
+                &whole.planes[0].data[4 * i..4 * i + 4],
+                &alone.planes[0].data[..4],
+                "{}: pixel {i} depends on its neighbours",
+                entry.name
+            );
+        }
+        // Palette route: entry k of the output table == the filter on
+        // entry k as a lone Rgba pixel.
+        let pal = tagged(PixelFormat::Pal8, w, h, 11);
+        let out = f.apply(&pal, params(PixelFormat::Pal8, w, h)).unwrap();
+        assert_eq!(
+            out.planes[0].data, pal.planes[0].data,
+            "{}: indices changed",
+            entry.name
+        );
+        let (rgb, alpha) = palette();
+        let out_rgb = out.palette().unwrap();
+        for k in 0..4 {
+            let one = VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane {
+                    stride: 4,
+                    data: vec![rgb[3 * k], rgb[3 * k + 1], rgb[3 * k + 2], alpha[k]],
+                }],
+            };
+            let alone = f.apply(&one, params(PixelFormat::Rgba, 1, 1)).unwrap();
+            assert_eq!(
+                &out_rgb[3 * k..3 * k + 3],
+                &alone.planes[0].data[..3],
+                "{} entry {k}",
+                entry.name
+            );
+            let a = out.palette_alpha().map(|a| a[k]).unwrap_or(255);
+            assert_eq!(a, alone.planes[0].data[3], "{} entry {k} alpha", entry.name);
+        }
+    }
+    eprintln!("pointwise filters checked: {checked}");
+    assert!(checked >= 30);
 }

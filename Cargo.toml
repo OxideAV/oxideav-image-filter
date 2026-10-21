@@ -15,4 +15,5 @@ categories = ["multimedia::video"]
 
 [dependencies]
 oxideav-core = "0.1"
+oxideav-pixfmt = "0.1"
 serde_json = "1"

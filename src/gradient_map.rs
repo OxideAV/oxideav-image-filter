@@ -168,6 +168,12 @@ impl PixelFilter for GradientMap {
         crate::layout::PACKED_8BIT
     }
 
+    /// Each output pixel is a function of the input pixel at the same
+    /// position only, so `Pal8` is taken through the palette route.
+    fn is_pointwise(&self) -> bool {
+        true
+    }
+
     /// Grey input is mapped onto the RGB ramp; colour layouts keep theirs.
     fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
         match input {
@@ -395,6 +401,9 @@ mod tests {
 
     #[test]
     fn rejects_yuv420p() {
+        // Every 8-bit layout outside the native set is taken through
+        // the packed-RGB hop; a deep layout never is (no silent
+        // narrowing) and is refused with a typed error.
         let g = GradientMap::duotone([0, 0, 0], [255, 0, 0]);
         let input = VideoFrame {
             pts: None,
@@ -417,7 +426,7 @@ mod tests {
             .apply(
                 &input,
                 VideoStreamParams {
-                    format: PixelFormat::Yuv420P,
+                    format: PixelFormat::Yuv420P10Le,
                     width: 4,
                     height: 4,
                 },

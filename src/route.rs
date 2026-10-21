@@ -5,9 +5,29 @@
 //! [`crate::ImageFilter::apply`] on a [`crate::PixelFilter`] is exactly
 //! [`apply_single`]; [`crate::TwoInputImageFilter::apply_two`] on a
 //! [`crate::TwoInputPixelFilter`] is exactly [`apply_pair`].
+//!
+//! # The packed-RGB hop
+//!
+//! A filter whose native paths are packed 8-bit (`Rgba` / `Rgb24` /
+//! `Gray8`) still takes every other **8-bit** layout `oxideav-pixfmt`
+//! can convert — the planar and semi-planar YUV(A) families (limited or
+//! full range, the frame's colour signal honoured), `Bgr24` / `Bgra` /
+//! `Argb` / `Abgr`, `Ya8`, `Yuyv422` / `Uyvy422`, `Cmyk`, bit-packed
+//! mono, and `Pal8` for a non-pointwise filter: the picture is
+//! converted to the first of `Rgba`, `Rgb24`, `Gray8` the filter takes,
+//! filtered, and — when the filter keeps that layout and the way back
+//! exists — converted back to the source layout, so the output label
+//! is the input label. A filter that changes layout (an edge detector
+//! emitting `Gray8`) or a `Pal8` source (quantising back would be a
+//! lossy decision, not a filter) leaves the output in the hop layout,
+//! and the registry label says so. Deep layouts (10/12/14/16-bit words,
+//! float) never take the hop: that would narrow samples silently, and
+//! the filter refuses them with a typed error instead.
 
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
+use oxideav_pixfmt::{convert_with, supports, ConvertContext, ConvertOptions, FrameInfo};
 
+use crate::layout::SampleKind;
 use crate::{layout, side_channels, PixelFilter, TwoInputPixelFilter, VideoStreamParams};
 
 /// How a filter reaches a picture in `input` layout.
@@ -18,6 +38,30 @@ pub(crate) enum Route {
     /// `Pal8` through a pointwise filter: the palette is filtered as a
     /// one-row `Rgba` picture and the index plane is untouched.
     Palette,
+    /// Convert to `via`, filter, and convert back to the source layout
+    /// when `back` (see the module docs).
+    Hop { via: PixelFormat, back: bool },
+}
+
+/// The hop layouts in preference order: alpha-carrying first so a
+/// `Bgra` / `Yuva420P` / `Ya8` source keeps its alpha, grey last.
+const HOP_TARGETS: [PixelFormat; 3] = [PixelFormat::Rgba, PixelFormat::Rgb24, PixelFormat::Gray8];
+
+/// The hop a filter takes for an 8-bit layout outside its native set,
+/// if any.
+fn hop_for<F: PixelFilter + ?Sized>(f: &F, fmt: PixelFormat) -> Option<Route> {
+    // Only 8-bit storage hops: a 16-bit word or a float would be
+    // narrowed on the way in.
+    match layout::sample_kind(fmt) {
+        Some(SampleKind::U8) | None => {}
+        Some(SampleKind::U16 { .. }) | Some(SampleKind::F32) => return None,
+    }
+    let accepted = f.accepted_formats();
+    let via = HOP_TARGETS
+        .into_iter()
+        .find(|t| accepted.contains(t) && supports(fmt, *t))?;
+    let back = fmt != PixelFormat::Pal8 && f.output_format(via) == via && supports(via, fmt);
+    Some(Route::Hop { via, back })
 }
 
 /// Short type name of a filter for error messages
@@ -50,6 +94,9 @@ pub(crate) fn route_single<F: PixelFilter + ?Sized>(
     {
         return Ok(Route::Palette);
     }
+    if let Some(hop) = hop_for(f, fmt) {
+        return Ok(hop);
+    }
     Err(refusal(short_name::<F>(), fmt, accepted))
 }
 
@@ -72,6 +119,7 @@ pub(crate) fn output_single<F: PixelFilter + ?Sized>(
     match route_single(f, input).ok()? {
         Route::Native => Some(f.output_format(input)),
         Route::Palette => Some(PixelFormat::Pal8),
+        Route::Hop { via, back } => Some(if back { input } else { f.output_format(via) }),
     }
 }
 
@@ -96,7 +144,67 @@ pub(crate) fn apply_single<F: PixelFilter + ?Sized>(
             Ok(out)
         }
         Route::Palette => apply_palette(f, input, &pixels, params),
+        Route::Hop { via, back } => apply_hop(f, input, params, via, back),
     }
+}
+
+/// Extent of a frame from its first plane (filters emit tight strides).
+fn extent_of(frame: &VideoFrame, fmt: PixelFormat) -> Option<(u32, u32)> {
+    let p0 = frame.planes.first()?;
+    let pb = fmt.plane_row_bytes(0, 1)?;
+    if pb == 0 || p0.stride == 0 || p0.stride % pb != 0 || p0.data.len() % p0.stride != 0 {
+        return None;
+    }
+    Some(((p0.stride / pb) as u32, (p0.data.len() / p0.stride) as u32))
+}
+
+/// The packed-RGB hop (module docs). The conversion sees the original
+/// frame so its colour-signal and significant-bits records steer the
+/// matrix / range; the result is stripped of whatever records the
+/// converter emits and the input's records are carried under the usual
+/// ruling.
+fn apply_hop<F: PixelFilter + ?Sized>(
+    f: &F,
+    input: &VideoFrame,
+    params: VideoStreamParams,
+    via: PixelFormat,
+    back: bool,
+) -> Result<VideoFrame, Error> {
+    let opts = ConvertOptions::default();
+    let ctx = ConvertContext::new().with_signal(input.color_signal().unwrap_or_default());
+    let info = FrameInfo::new(params.format, params.width, params.height);
+    let hopped = convert_with(input, info, via, &opts, &ctx)?;
+    let hopped = side_channels::image_only(&hopped).into_owned();
+    let via_params = VideoStreamParams {
+        format: via,
+        ..params
+    };
+    let filtered = f.apply_pixels(&hopped, via_params)?;
+    let mut out = if back {
+        let (w, h) = extent_of(&filtered, via).ok_or_else(|| {
+            Error::invalid(format!(
+                "oxideav-image-filter: {}: hop output has no readable extent",
+                short_name::<F>()
+            ))
+        })?;
+        let returned = convert_with(
+            &filtered,
+            FrameInfo::new(via, w, h),
+            params.format,
+            &opts,
+            &ctx,
+        )?;
+        side_channels::image_only(&returned).into_owned()
+    } else {
+        filtered
+    };
+    let out_fmt = if back {
+        params.format
+    } else {
+        f.output_format(via)
+    };
+    side_channels::carry(input, &mut out, params.format, out_fmt);
+    Ok(out)
 }
 
 /// The pointwise palette route: filter the palette entries as a single

@@ -555,6 +555,9 @@ mod tests {
 
     #[test]
     fn rejects_rgb_input() {
+        // Every 8-bit layout outside the native set is taken through
+        // the packed-RGB hop; a deep layout never is (no silent
+        // narrowing) and is refused with a typed error.
         let input = VideoFrame {
             pts: None,
             planes: vec![VideoPlane {
@@ -566,7 +569,7 @@ mod tests {
             .apply(
                 &input,
                 VideoStreamParams {
-                    format: PixelFormat::Rgb24,
+                    format: PixelFormat::Rgb48Le,
                     width: 4,
                     height: 4,
                 },
@@ -577,6 +580,9 @@ mod tests {
 
     #[test]
     fn rejects_yuv_input() {
+        // Every 8-bit layout outside the native set is taken through
+        // the packed-RGB hop; a deep layout never is (no silent
+        // narrowing) and is refused with a typed error.
         let input = VideoFrame {
             pts: None,
             planes: vec![
@@ -598,7 +604,7 @@ mod tests {
             .apply(
                 &input,
                 VideoStreamParams {
-                    format: PixelFormat::Yuv420P,
+                    format: PixelFormat::Yuv420P10Le,
                     width: 4,
                     height: 4,
                 },

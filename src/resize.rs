@@ -6,8 +6,10 @@
 //! ceil(H/sy)` to `ceil(W'/sx) × ceil(H'/sy)`, never through the luma
 //! grid — and quantised back to the plane's own depth: 8-bit to
 //! `0..=255`, a 10/12/14/16-bit word to `0..=2^bits − 1`, a binary32
-//! sample left unclamped. `Pal8` is taken by [`Interpolation::Nearest`]
-//! only (indices are identifiers, not magnitudes).
+//! sample left unclamped. `Pal8` keeps its indices under
+//! [`Interpolation::Nearest`] (indices are identifiers, not
+//! magnitudes); the interpolating kernels take it through the
+//! packed-RGB hop and emit `Rgba`.
 
 use crate::layout::{self, PlaneGeometry, SampleKind};
 use crate::{PixelFilter, VideoStreamParams};
@@ -127,7 +129,8 @@ impl Resize {
 impl PixelFilter for Resize {
     /// Every byte-addressable layout for the nearest-neighbour kernel;
     /// every byte-addressable layout but `Pal8` for the interpolating
-    /// kernels (a palette index cannot be averaged).
+    /// kernels (a palette index cannot be averaged — `Pal8` then takes
+    /// the packed-RGB hop and the output is `Rgba`).
     fn accepted_formats(&self) -> &'static [PixelFormat] {
         if self.interp == Interpolation::Nearest {
             layout::BYTE_ADDRESSABLE

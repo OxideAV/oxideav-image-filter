@@ -277,6 +277,9 @@ mod tests {
 
     #[test]
     fn rejects_yuv420p() {
+        // Every 8-bit layout outside the native set is taken through
+        // the packed-RGB hop; a deep layout never is (no silent
+        // narrowing) and is refused with a typed error.
         let input = VideoFrame {
             pts: None,
             planes: vec![
@@ -295,7 +298,7 @@ mod tests {
             ],
         };
         let p = VideoStreamParams {
-            format: PixelFormat::Yuv420P,
+            format: PixelFormat::Yuv420P10Le,
             width: 4,
             height: 4,
         };

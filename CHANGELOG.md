@@ -28,7 +28,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PixelFilter::is_pointwise()` + the **palette route**: a pointwise
   filter that takes `Rgba` takes `Pal8` by recolouring the palette as a
   one-row `Rgba` picture (alpha from the palette-alpha record) and
-  leaving the index plane untouched.
+  leaving the index plane untouched. 36 filters declare pointwise
+  (negate, gamma, levels, curves, the colour grades, the tone curves,
+  the global tone mappers without a log-average pre-pass, …); the
+  matrix proves each one against its own 1×1 result pixel by pixel and
+  palette entry by palette entry.
+- **The packed-RGB hop** (`oxideav-pixfmt`, new dependency): a filter
+  whose native paths are packed 8-bit takes every other 8-bit layout
+  pixfmt converts — planar / semi-planar YUV(A) at either range (the
+  frame's colour signal honoured), `Bgr24` / `Bgra` / `Argb` / `Abgr`,
+  `Ya8`, `Yuyv422` / `Uyvy422`, `Cmyk`, bit-packed mono, `Pal8` for a
+  non-pointwise filter — by converting to the first of `Rgba` / `Rgb24`
+  / `Gray8` it takes, filtering, and converting back when it keeps that
+  layout; a layout-changing filter or a `Pal8` source leaves the output
+  in the hop layout and the registry label says so. Deep layouts
+  (10/12/14/16-bit words, float) never take the hop: they are refused
+  with a typed error rather than narrowed. Packed 4:2:2 / 4:1:1 need
+  the widths pixfmt needs (even / ×4) on both legs; otherwise a typed
+  `InvalidData`.
 - `layout` module: named layout sets (`PACKED_8BIT`, `PACKED_RGB`,
   `LEGACY`, `CLASSIC`, `BYTE_ADDRESSABLE`, `ALL`), `SampleKind` /
   `sample_kind()`, core-derived `PlaneGeometry`, `validate_frame()`.
@@ -49,10 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   4:4:0 and 4:1:1 likewise; `Nv12` pairs and packed deep pixels per
   component) and quantised back to the plane's own full scale — 255,
   `2^bits − 1` for 10/12/14/16-bit words, no clamp for float. The old
-  `clamp(0.0, 255.0)` narrowing is gone from every kernel. `Pal8` is
-  taken by `Interpolation::Nearest` only (indices are identifiers); the
-  interpolating kernels refuse it with a typed error, and the
-  declaration follows the kernel (`layout::BYTE_ADDRESSABLE_SAMPLED`).
+  `clamp(0.0, 255.0)` narrowing is gone from every kernel. `Pal8` keeps
+  its indices (and table) under `Interpolation::Nearest`; the
+  interpolating kernels declare `layout::BYTE_ADDRESSABLE_SAMPLED` and
+  take `Pal8` through the packed-RGB hop, emitting `Rgba`.
 - **`YuvJ420P` / `YuvJ422P` / `YuvJ444P`** are taken by every filter
   that takes the limited-range trio (identical storage; the range is
   the label's): 64 filters widened.

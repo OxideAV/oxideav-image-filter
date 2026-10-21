@@ -1038,6 +1038,13 @@ pub trait ImageFilter: Send {
         let _ = input;
         None
     }
+
+    /// `true` when every output pixel depends only on the input pixel at
+    /// the same position (see [`PixelFilter::is_pointwise`]); such a
+    /// filter takes `Pal8` through the palette route.
+    fn is_pointwise(&self) -> bool {
+        false
+    }
 }
 
 /// A filter that combines two video frames — `src` (foreground) and
@@ -1144,6 +1151,10 @@ impl<T: PixelFilter> ImageFilter for T {
 
     fn output_pixel_format(&self, input: PixelFormat) -> Option<PixelFormat> {
         route::output_single(self, input)
+    }
+
+    fn is_pointwise(&self) -> bool {
+        PixelFilter::is_pointwise(self)
     }
 }
 

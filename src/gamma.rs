@@ -42,6 +42,12 @@ impl PixelFilter for Gamma {
         crate::layout::CLASSIC
     }
 
+    /// Each output pixel is a function of the input pixel at the same
+    /// position only, so `Pal8` is taken through the palette route.
+    fn is_pointwise(&self) -> bool {
+        true
+    }
+
     fn apply_pixels(
         &self,
         input: &VideoFrame,
