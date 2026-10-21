@@ -514,7 +514,12 @@ impl Dither {
                 // distance between output buckets — wider gaps with
                 // more levels would otherwise wash out the dither.
                 for y in 0..height {
-                    let row = &mut data[y * row_stride..y * row_stride + step * width + x_offset];
+                    // The channel's last sample sits at `step * (width - 1)
+                    // + x_offset`, inside the `step * width` bytes of the
+                    // row: slicing `x_offset` bytes further ran one past a
+                    // tightly-strided last row for every channel but the
+                    // first.
+                    let row = &mut data[y * row_stride..y * row_stride + step * width];
                     for x in 0..width {
                         let t = bayer_threshold_q8(matrix, x, y);
                         // Bias = (t - 127) / (levels - 1), keeps the
@@ -640,6 +645,41 @@ impl PixelFilter for Dither {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordered_dither_on_tight_packed_rows_touches_every_channel() {
+        // A tightly-strided Rgb24 / Rgba picture: the last row's green,
+        // blue and alpha channels must be reachable without slicing
+        // past the buffer.
+        for (fmt, bpp) in [(PixelFormat::Rgb24, 3usize), (PixelFormat::Rgba, 4)] {
+            let (w, h) = (5usize, 3usize);
+            let input = VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane {
+                    stride: w * bpp,
+                    data: (0..w * h * bpp).map(|i| (i * 37 % 256) as u8).collect(),
+                }],
+            };
+            let out = Dither::ordered(BayerMatrix::M4)
+                .with_levels(2)
+                .apply(
+                    &input,
+                    VideoStreamParams {
+                        format: fmt,
+                        width: w as u32,
+                        height: h as u32,
+                    },
+                )
+                .unwrap();
+            assert_eq!(out.planes[0].data.len(), w * h * bpp);
+            // Two-level quantisation: every colour byte is 0 or 255.
+            for px in out.planes[0].data.chunks_exact(bpp) {
+                for &c in &px[..3] {
+                    assert!(c == 0 || c == 255, "{fmt:?}: {px:?}");
+                }
+            }
+        }
+    }
     use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 

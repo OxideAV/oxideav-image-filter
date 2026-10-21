@@ -157,9 +157,14 @@ impl PixelFilter for Shade {
         crate::layout::CLASSIC
     }
 
-    /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    /// The relief is a single `Gray8` plane unless colour pass-through
+    /// (`with_color(true)`) modulates the input, which keeps its layout.
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if self.gray_only {
+            oxideav_core::PixelFormat::Gray8
+        } else {
+            input
+        }
     }
 
     fn apply_pixels(

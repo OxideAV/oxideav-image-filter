@@ -39,344 +39,289 @@ use crate::{
 /// Also wired into [`oxideav_meta::register_all`] via the
 /// [`oxideav_core::register!`] macro below.
 pub fn register(ctx: &mut RuntimeContext) {
-    ctx.filters.register("blur", Box::new(make_blur));
-    ctx.filters.register("edge", Box::new(make_edge));
-    ctx.filters.register("resize", Box::new(make_resize));
-    ctx.filters.register("sharpen", Box::new(make_sharpen));
-    ctx.filters.register("gamma", Box::new(make_gamma));
-    ctx.filters
-        .register("brightness-contrast", Box::new(make_brightness_contrast));
-    ctx.filters
-        .register("brightness", Box::new(make_brightness));
-    ctx.filters.register("contrast", Box::new(make_contrast));
+    register_into(&mut |name, factory| ctx.filters.register(name, factory));
+}
+
+/// Every factory name this crate registers, in registration order
+/// (aliases included). The names [`register`] installs — the registry
+/// itself does not enumerate, so the truthfulness tests and the fuzz
+/// target read the inventory from here.
+#[doc(hidden)]
+pub fn registered_names() -> Vec<String> {
+    let mut names = Vec::new();
+    register_into(&mut |name, _| names.push(name.to_string()));
+    names
+}
+
+/// Hand every `(name, factory)` pair to `sink`.
+fn register_into(sink: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
+    sink("blur", Box::new(make_blur));
+    sink("edge", Box::new(make_edge));
+    sink("resize", Box::new(make_resize));
+    sink("sharpen", Box::new(make_sharpen));
+    sink("gamma", Box::new(make_gamma));
+    sink("brightness-contrast", Box::new(make_brightness_contrast));
+    sink("brightness", Box::new(make_brightness));
+    sink("contrast", Box::new(make_contrast));
 
     // Round-next factories.
-    ctx.filters.register("unsharp", Box::new(make_unsharp));
-    ctx.filters.register("threshold", Box::new(make_threshold));
-    ctx.filters.register("level", Box::new(make_level));
-    ctx.filters.register("normalize", Box::new(make_normalize));
-    ctx.filters.register("posterize", Box::new(make_posterize));
-    ctx.filters.register("solarize", Box::new(make_solarize));
-    ctx.filters.register("flip", Box::new(make_flip));
-    ctx.filters.register("flop", Box::new(make_flop));
-    ctx.filters.register("rotate", Box::new(make_rotate));
-    ctx.filters.register("crop", Box::new(make_crop));
-    ctx.filters.register("negate", Box::new(make_negate));
-    ctx.filters.register("sepia", Box::new(make_sepia));
-    ctx.filters.register("modulate", Box::new(make_modulate));
-    ctx.filters.register("grayscale", Box::new(make_grayscale));
-    ctx.filters
-        .register("motion-blur", Box::new(make_motion_blur));
-    ctx.filters.register("emboss", Box::new(make_emboss));
+    sink("unsharp", Box::new(make_unsharp));
+    sink("threshold", Box::new(make_threshold));
+    sink("level", Box::new(make_level));
+    sink("normalize", Box::new(make_normalize));
+    sink("posterize", Box::new(make_posterize));
+    sink("solarize", Box::new(make_solarize));
+    sink("flip", Box::new(make_flip));
+    sink("flop", Box::new(make_flop));
+    sink("rotate", Box::new(make_rotate));
+    sink("crop", Box::new(make_crop));
+    sink("negate", Box::new(make_negate));
+    sink("sepia", Box::new(make_sepia));
+    sink("modulate", Box::new(make_modulate));
+    sink("grayscale", Box::new(make_grayscale));
+    sink("motion-blur", Box::new(make_motion_blur));
+    sink("emboss", Box::new(make_emboss));
 
     // Round-after-next factories.
-    ctx.filters.register("vignette", Box::new(make_vignette));
-    ctx.filters.register("colorize", Box::new(make_colorize));
-    ctx.filters.register("equalize", Box::new(make_equalize));
-    ctx.filters
-        .register("auto-gamma", Box::new(make_auto_gamma));
+    sink("vignette", Box::new(make_vignette));
+    sink("colorize", Box::new(make_colorize));
+    sink("equalize", Box::new(make_equalize));
+    sink("auto-gamma", Box::new(make_auto_gamma));
 
     // Round-after-after-next factories.
-    ctx.filters.register("tint", Box::new(make_tint));
-    ctx.filters
-        .register("sigmoidal-contrast", Box::new(make_sigmoidal_contrast));
-    ctx.filters.register("implode", Box::new(make_implode));
-    ctx.filters.register("swirl", Box::new(make_swirl));
-    ctx.filters.register("despeckle", Box::new(make_despeckle));
+    sink("tint", Box::new(make_tint));
+    sink("sigmoidal-contrast", Box::new(make_sigmoidal_contrast));
+    sink("implode", Box::new(make_implode));
+    sink("swirl", Box::new(make_swirl));
+    sink("despeckle", Box::new(make_despeckle));
 
     // r6 factories (wave / spread / charcoal / convolve / polar).
-    ctx.filters.register("wave", Box::new(make_wave));
-    ctx.filters.register("spread", Box::new(make_spread));
-    ctx.filters.register("charcoal", Box::new(make_charcoal));
-    ctx.filters.register("convolve", Box::new(make_convolve));
-    ctx.filters.register("polar", Box::new(make_polar));
-    ctx.filters.register("depolar", Box::new(make_depolar));
+    sink("wave", Box::new(make_wave));
+    sink("spread", Box::new(make_spread));
+    sink("charcoal", Box::new(make_charcoal));
+    sink("convolve", Box::new(make_convolve));
+    sink("polar", Box::new(make_polar));
+    sink("depolar", Box::new(make_depolar));
 
     // r7 factories (morphology dilate / erode / open / close).
-    ctx.filters
-        .register("morphology-dilate", Box::new(make_morphology_dilate));
-    ctx.filters
-        .register("morphology-erode", Box::new(make_morphology_erode));
-    ctx.filters
-        .register("morphology-open", Box::new(make_morphology_open));
-    ctx.filters
-        .register("morphology-close", Box::new(make_morphology_close));
+    sink("morphology-dilate", Box::new(make_morphology_dilate));
+    sink("morphology-erode", Box::new(make_morphology_erode));
+    sink("morphology-open", Box::new(make_morphology_open));
+    sink("morphology-close", Box::new(make_morphology_close));
 
     // r7 factory (perspective).
-    ctx.filters
-        .register("perspective", Box::new(make_perspective));
+    sink("perspective", Box::new(make_perspective));
 
     // r7 factory (distort).
-    ctx.filters.register("distort", Box::new(make_distort));
+    sink("distort", Box::new(make_distort));
 
     // r7 factory (tilt-shift).
-    ctx.filters
-        .register("tilt-shift", Box::new(make_tilt_shift));
+    sink("tilt-shift", Box::new(make_tilt_shift));
 
     // r10 factories: geometric re-windowing + channel ops + morphology
     // edge / gradient operators.
-    ctx.filters.register("roll", Box::new(make_roll));
-    ctx.filters.register("shave", Box::new(make_shave));
-    ctx.filters.register("extent", Box::new(make_extent));
-    ctx.filters.register("trim", Box::new(make_trim));
-    ctx.filters
-        .register("channel-extract", Box::new(make_channel_extract));
-    ctx.filters
-        .register("morphology-edgein", Box::new(make_morphology_edgein));
-    ctx.filters
-        .register("morphology-edgeout", Box::new(make_morphology_edgeout));
-    ctx.filters.register(
+    sink("roll", Box::new(make_roll));
+    sink("shave", Box::new(make_shave));
+    sink("extent", Box::new(make_extent));
+    sink("trim", Box::new(make_trim));
+    sink("channel-extract", Box::new(make_channel_extract));
+    sink("morphology-edgein", Box::new(make_morphology_edgein));
+    sink("morphology-edgeout", Box::new(make_morphology_edgeout));
+    sink(
         "morphology-edge-magnitude",
         Box::new(make_morphology_edge_magnitude),
     );
 
     // r11 factories: per-pixel arithmetic + windowed statistic + 2-D
     // affine / SRT geometric warps.
-    ctx.filters.register("evaluate", Box::new(make_evaluate));
-    ctx.filters.register("cycle", Box::new(make_cycle));
-    ctx.filters.register("statistic", Box::new(make_statistic));
-    ctx.filters.register("affine", Box::new(make_affine));
-    ctx.filters.register("srt", Box::new(make_srt));
+    sink("evaluate", Box::new(make_evaluate));
+    sink("cycle", Box::new(make_cycle));
+    sink("statistic", Box::new(make_statistic));
+    sink("affine", Box::new(make_affine));
+    sink("srt", Box::new(make_srt));
 
     // r12 factories: tonal range/clamp + colour matrix + maths-fn map +
     // Laplacian / Canny edges.
-    ctx.filters.register("clamp", Box::new(make_clamp));
-    ctx.filters
-        .register("auto-level", Box::new(make_auto_level));
-    ctx.filters
-        .register("contrast-stretch", Box::new(make_contrast_stretch));
-    ctx.filters
-        .register("linear-stretch", Box::new(make_linear_stretch));
-    ctx.filters
-        .register("color-matrix", Box::new(make_color_matrix));
-    ctx.filters.register("recolor", Box::new(make_color_matrix));
-    ctx.filters.register("function", Box::new(make_function));
-    ctx.filters.register("laplacian", Box::new(make_laplacian));
-    ctx.filters.register("canny", Box::new(make_canny));
+    sink("clamp", Box::new(make_clamp));
+    sink("auto-level", Box::new(make_auto_level));
+    sink("contrast-stretch", Box::new(make_contrast_stretch));
+    sink("linear-stretch", Box::new(make_linear_stretch));
+    sink("color-matrix", Box::new(make_color_matrix));
+    sink("recolor", Box::new(make_color_matrix));
+    sink("function", Box::new(make_function));
+    sink("laplacian", Box::new(make_laplacian));
+    sink("canny", Box::new(make_canny));
 
     // r13 factories: blue-shift / picture frame / shade relief / oil
     // paint / palette quantizer + two-input CLUT family.
-    ctx.filters
-        .register("blue-shift", Box::new(make_blue_shift));
-    ctx.filters.register("frame", Box::new(make_frame));
-    ctx.filters.register("shade", Box::new(make_shade));
-    ctx.filters.register("paint", Box::new(make_paint));
-    ctx.filters.register("quantize", Box::new(make_quantize));
-    ctx.filters.register("clut", Box::new(make_clut));
-    ctx.filters.register("hald-clut", Box::new(make_hald_clut));
+    sink("blue-shift", Box::new(make_blue_shift));
+    sink("frame", Box::new(make_frame));
+    sink("shade", Box::new(make_shade));
+    sink("paint", Box::new(make_paint));
+    sink("quantize", Box::new(make_quantize));
+    sink("clut", Box::new(make_clut));
+    sink("hald-clut", Box::new(make_hald_clut));
 
     // r14 factories: pencil sketch / auto-deskew / Hough lines /
     // inverse-barrel + two-input Stegano / Stereo.
-    ctx.filters.register("sketch", Box::new(make_sketch));
-    ctx.filters.register("deskew", Box::new(make_deskew));
-    ctx.filters
-        .register("hough-lines", Box::new(make_hough_lines));
-    ctx.filters
-        .register("barrel-inverse", Box::new(make_barrel_inverse));
-    ctx.filters.register("stegano", Box::new(make_stegano));
-    ctx.filters.register("stereo", Box::new(make_stereo));
+    sink("sketch", Box::new(make_sketch));
+    sink("deskew", Box::new(make_deskew));
+    sink("hough-lines", Box::new(make_hough_lines));
+    sink("barrel-inverse", Box::new(make_barrel_inverse));
+    sink("stegano", Box::new(make_stegano));
+    sink("stereo", Box::new(make_stereo));
 
     // r15 factories: HSL hue rotation / soft cosine vignette / chromatic
     // aberration / pixelate mosaic / channel mixer / adaptive threshold.
-    ctx.filters
-        .register("hsl-rotate", Box::new(make_hsl_rotate));
-    ctx.filters
-        .register("vignette-soft", Box::new(make_vignette_soft));
-    ctx.filters
-        .register("chromatic-aberration", Box::new(make_chromatic_aberration));
-    ctx.filters.register("pixelate", Box::new(make_pixelate));
-    ctx.filters.register("mosaic", Box::new(make_pixelate));
-    ctx.filters
-        .register("channel-mixer", Box::new(make_channel_mixer));
-    ctx.filters
-        .register("adaptive-threshold", Box::new(make_adaptive_threshold));
+    sink("hsl-rotate", Box::new(make_hsl_rotate));
+    sink("vignette-soft", Box::new(make_vignette_soft));
+    sink("chromatic-aberration", Box::new(make_chromatic_aberration));
+    sink("pixelate", Box::new(make_pixelate));
+    sink("mosaic", Box::new(make_pixelate));
+    sink("channel-mixer", Box::new(make_channel_mixer));
+    sink("adaptive-threshold", Box::new(make_adaptive_threshold));
 
     // r16 factories: bilateral blur / canvas / gradient-radial /
     // gradient-conic / gravity-translate / color-balance / hsl-shift.
-    ctx.filters
-        .register("bilateral-blur", Box::new(make_bilateral_blur));
-    ctx.filters.register("canvas", Box::new(make_canvas));
-    ctx.filters
-        .register("gradient-radial", Box::new(make_gradient_radial));
-    ctx.filters
-        .register("radial-gradient", Box::new(make_gradient_radial));
-    ctx.filters
-        .register("gradient-conic", Box::new(make_gradient_conic));
-    ctx.filters
-        .register("conic-gradient", Box::new(make_gradient_conic));
-    ctx.filters
-        .register("gravity-translate", Box::new(make_gravity_translate));
-    ctx.filters
-        .register("gravity", Box::new(make_gravity_translate));
-    ctx.filters
-        .register("color-balance", Box::new(make_color_balance));
-    ctx.filters.register("hsl-shift", Box::new(make_hsl_shift));
+    sink("bilateral-blur", Box::new(make_bilateral_blur));
+    sink("canvas", Box::new(make_canvas));
+    sink("gradient-radial", Box::new(make_gradient_radial));
+    sink("radial-gradient", Box::new(make_gradient_radial));
+    sink("gradient-conic", Box::new(make_gradient_conic));
+    sink("conic-gradient", Box::new(make_gradient_conic));
+    sink("gravity-translate", Box::new(make_gravity_translate));
+    sink("gravity", Box::new(make_gravity_translate));
+    sink("color-balance", Box::new(make_color_balance));
+    sink("hsl-shift", Box::new(make_hsl_shift));
 
     // r17 factories: exposure / temperature / vibrance / bw-mix /
     // clarity / shadow-highlight / bordered-frame.
-    ctx.filters.register("exposure", Box::new(make_exposure));
-    ctx.filters
-        .register("temperature", Box::new(make_temperature));
-    ctx.filters.register("vibrance", Box::new(make_vibrance));
-    ctx.filters.register("bw-mix", Box::new(make_bw_mix));
-    ctx.filters
-        .register("black-and-white", Box::new(make_bw_mix));
-    ctx.filters.register("clarity", Box::new(make_clarity));
-    ctx.filters
-        .register("shadow-highlight", Box::new(make_shadow_highlight));
-    ctx.filters
-        .register("bordered-frame", Box::new(make_bordered_frame));
-    ctx.filters
-        .register("border", Box::new(make_bordered_frame));
+    sink("exposure", Box::new(make_exposure));
+    sink("temperature", Box::new(make_temperature));
+    sink("vibrance", Box::new(make_vibrance));
+    sink("bw-mix", Box::new(make_bw_mix));
+    sink("black-and-white", Box::new(make_bw_mix));
+    sink("clarity", Box::new(make_clarity));
+    sink("shadow-highlight", Box::new(make_shadow_highlight));
+    sink("bordered-frame", Box::new(make_bordered_frame));
+    sink("border", Box::new(make_bordered_frame));
 
     // r18 factories: HoughCircles / AutoTrim / DropShadow / InnerShadow
     // / Bloom / EdgeDetect (multi-kernel) + two-input Difference.
-    ctx.filters
-        .register("hough-circles", Box::new(make_hough_circles));
-    ctx.filters.register("auto-trim", Box::new(make_auto_trim));
-    ctx.filters
-        .register("drop-shadow", Box::new(make_drop_shadow));
-    ctx.filters
-        .register("inner-shadow", Box::new(make_inner_shadow));
-    ctx.filters.register("bloom", Box::new(make_bloom));
-    ctx.filters.register("glow", Box::new(make_bloom));
-    ctx.filters
-        .register("edge-detect", Box::new(make_edge_detect));
-    ctx.filters
-        .register("edge-multi", Box::new(make_edge_detect));
-    ctx.filters
-        .register("difference", Box::new(make_difference));
+    sink("hough-circles", Box::new(make_hough_circles));
+    sink("auto-trim", Box::new(make_auto_trim));
+    sink("drop-shadow", Box::new(make_drop_shadow));
+    sink("inner-shadow", Box::new(make_inner_shadow));
+    sink("bloom", Box::new(make_bloom));
+    sink("glow", Box::new(make_bloom));
+    sink("edge-detect", Box::new(make_edge_detect));
+    sink("edge-multi", Box::new(make_edge_detect));
+    sink("difference", Box::new(make_difference));
 
     // r19 factories: Heatmap (false-colour) / SplitTone / FloodFill /
     // PosterizeChannels (per-channel) / Toon (cel-shading) + two-input
     // Watermark.
-    ctx.filters.register("heatmap", Box::new(make_heatmap));
-    ctx.filters.register("false-color", Box::new(make_heatmap));
-    ctx.filters
-        .register("split-tone", Box::new(make_split_tone));
-    ctx.filters
-        .register("flood-fill", Box::new(make_flood_fill));
-    ctx.filters
-        .register("posterize-channels", Box::new(make_posterize_channels));
-    ctx.filters.register("toon", Box::new(make_toon));
-    ctx.filters.register("cartoon", Box::new(make_toon));
-    ctx.filters.register("watermark", Box::new(make_watermark));
+    sink("heatmap", Box::new(make_heatmap));
+    sink("false-color", Box::new(make_heatmap));
+    sink("split-tone", Box::new(make_split_tone));
+    sink("flood-fill", Box::new(make_flood_fill));
+    sink("posterize-channels", Box::new(make_posterize_channels));
+    sink("toon", Box::new(make_toon));
+    sink("cartoon", Box::new(make_toon));
+    sink("watermark", Box::new(make_watermark));
 
     // r20 factories: Crystallize / Halftone / GradientMap (+ alias) /
     // SelectiveColor (+ alias) / CrossProcess (+ alias) / OtsuThreshold
     // (+ alias).
-    ctx.filters
-        .register("crystallize", Box::new(make_crystallize));
-    ctx.filters.register("halftone", Box::new(make_halftone));
-    ctx.filters
-        .register("gradient-map", Box::new(make_gradient_map));
-    ctx.filters.register("duotone", Box::new(make_gradient_map));
-    ctx.filters
-        .register("selective-color", Box::new(make_selective_color));
-    ctx.filters
-        .register("selective-colour", Box::new(make_selective_color));
-    ctx.filters
-        .register("cross-process", Box::new(make_cross_process));
-    ctx.filters
-        .register("crossprocess", Box::new(make_cross_process));
-    ctx.filters
-        .register("otsu-threshold", Box::new(make_otsu_threshold));
-    ctx.filters.register("otsu", Box::new(make_otsu_threshold));
-    ctx.filters.register("comic", Box::new(make_comic));
-    ctx.filters.register("manga", Box::new(make_comic));
+    sink("crystallize", Box::new(make_crystallize));
+    sink("halftone", Box::new(make_halftone));
+    sink("gradient-map", Box::new(make_gradient_map));
+    sink("duotone", Box::new(make_gradient_map));
+    sink("selective-color", Box::new(make_selective_color));
+    sink("selective-colour", Box::new(make_selective_color));
+    sink("cross-process", Box::new(make_cross_process));
+    sink("crossprocess", Box::new(make_cross_process));
+    sink("otsu-threshold", Box::new(make_otsu_threshold));
+    sink("otsu", Box::new(make_otsu_threshold));
+    sink("comic", Box::new(make_comic));
+    sink("manga", Box::new(make_comic));
 
     // r21 factories: Kuwahara / AnisotropicBlur / ZoomBlur / RadialBlur /
     // EmbossDirectional + two-input DisplacementMap.
-    ctx.filters.register("kuwahara", Box::new(make_kuwahara));
-    ctx.filters
-        .register("anisotropic-blur", Box::new(make_anisotropic_blur));
-    ctx.filters
-        .register("anisotropic", Box::new(make_anisotropic_blur));
-    ctx.filters.register("zoom-blur", Box::new(make_zoom_blur));
-    ctx.filters
-        .register("radial-blur", Box::new(make_radial_blur));
-    ctx.filters
-        .register("spin-blur", Box::new(make_radial_blur));
-    ctx.filters
-        .register("emboss-directional", Box::new(make_emboss_directional));
-    ctx.filters
-        .register("displacement-map", Box::new(make_displacement_map));
+    sink("kuwahara", Box::new(make_kuwahara));
+    sink("anisotropic-blur", Box::new(make_anisotropic_blur));
+    sink("anisotropic", Box::new(make_anisotropic_blur));
+    sink("zoom-blur", Box::new(make_zoom_blur));
+    sink("radial-blur", Box::new(make_radial_blur));
+    sink("spin-blur", Box::new(make_radial_blur));
+    sink("emboss-directional", Box::new(make_emboss_directional));
+    sink("displacement-map", Box::new(make_displacement_map));
 
     // r22 factories: tone-mapping (Reinhard / Hable / Drago) + Curves +
     // DistanceTransform + Cyanotype vintage emulation.
-    ctx.filters.register("reinhard", Box::new(make_reinhard));
-    ctx.filters
-        .register("tonemap-reinhard", Box::new(make_reinhard));
+    sink("reinhard", Box::new(make_reinhard));
+    sink("tonemap-reinhard", Box::new(make_reinhard));
     // r237: unkeyed white-clamping variant of the Reinhard operator
     // (docs/image/filter/tone-mapping-operators.md §5.1).
-    ctx.filters
-        .register("reinhard-extended", Box::new(make_reinhard_extended));
-    ctx.filters.register(
+    sink("reinhard-extended", Box::new(make_reinhard_extended));
+    sink(
         "tonemap-reinhard-extended",
         Box::new(make_reinhard_extended),
     );
     // r248: local "dodging-and-burning" variant of the Reinhard
     // operator (docs/image/filter/tone-mapping-operators.md §3).
-    ctx.filters
-        .register("reinhard-local", Box::new(make_reinhard_local));
-    ctx.filters
-        .register("tonemap-reinhard-local", Box::new(make_reinhard_local));
-    ctx.filters
-        .register("dodge-and-burn", Box::new(make_reinhard_local));
-    ctx.filters.register("hable", Box::new(make_hable));
-    ctx.filters.register("tonemap-hable", Box::new(make_hable));
-    ctx.filters.register("uncharted2", Box::new(make_hable));
-    ctx.filters.register("drago", Box::new(make_drago));
-    ctx.filters.register("tonemap-drago", Box::new(make_drago));
-    ctx.filters.register("curves", Box::new(make_curves));
-    ctx.filters
-        .register("distance-transform", Box::new(make_distance_transform));
-    ctx.filters
-        .register("distance", Box::new(make_distance_transform));
-    ctx.filters.register("cyanotype", Box::new(make_cyanotype));
-    ctx.filters.register("blueprint", Box::new(make_cyanotype));
+    sink("reinhard-local", Box::new(make_reinhard_local));
+    sink("tonemap-reinhard-local", Box::new(make_reinhard_local));
+    sink("dodge-and-burn", Box::new(make_reinhard_local));
+    sink("hable", Box::new(make_hable));
+    sink("tonemap-hable", Box::new(make_hable));
+    sink("uncharted2", Box::new(make_hable));
+    sink("drago", Box::new(make_drago));
+    sink("tonemap-drago", Box::new(make_drago));
+    sink("curves", Box::new(make_curves));
+    sink("distance-transform", Box::new(make_distance_transform));
+    sink("distance", Box::new(make_distance_transform));
+    sink("cyanotype", Box::new(make_cyanotype));
+    sink("blueprint", Box::new(make_cyanotype));
 
     // r23 factories: MaxRGB / MinRGB channel-collapse (HSV-V).
-    ctx.filters.register("max-rgb", Box::new(make_max_rgb));
-    ctx.filters.register("hsv-value", Box::new(make_max_rgb));
-    ctx.filters.register("min-rgb", Box::new(make_min_rgb));
-    ctx.filters.register("roberts", Box::new(make_roberts));
-    ctx.filters
-        .register("roberts-cross", Box::new(make_roberts));
+    sink("max-rgb", Box::new(make_max_rgb));
+    sink("hsv-value", Box::new(make_max_rgb));
+    sink("min-rgb", Box::new(make_min_rgb));
+    sink("roberts", Box::new(make_roberts));
+    sink("roberts-cross", Box::new(make_roberts));
 
     // r101 factory: Prewitt 3×3 first-derivative edge operator.
-    ctx.filters.register("prewitt", Box::new(make_prewitt));
+    sink("prewitt", Box::new(make_prewitt));
 
     // r105 factory: Scharr 3×3 first-derivative edge operator.
-    ctx.filters.register("scharr", Box::new(make_scharr));
+    sink("scharr", Box::new(make_scharr));
 
     // r174 factory: Frei–Chen 3×3 orthonormal-basis edge / line
     // detector. Two-name registration so `frei-chen` / `freichen` both
     // work as factory aliases.
-    ctx.filters.register("frei-chen", Box::new(make_frei_chen));
-    ctx.filters.register("freichen", Box::new(make_frei_chen));
+    sink("frei-chen", Box::new(make_frei_chen));
+    sink("freichen", Box::new(make_frei_chen));
 
     // r181 factory: Marr–Hildreth Laplacian-of-Gaussian edge /
     // zero-crossing detector. Three aliases so `laplacian-of-gaussian`
     // / `log` / `marr-hildreth` all resolve to the same factory.
-    ctx.filters
-        .register("laplacian-of-gaussian", Box::new(make_log));
-    ctx.filters.register("log", Box::new(make_log));
-    ctx.filters.register("marr-hildreth", Box::new(make_log));
+    sink("laplacian-of-gaussian", Box::new(make_log));
+    sink("log", Box::new(make_log));
+    sink("marr-hildreth", Box::new(make_log));
 
     // r198 factory: oriented Gabor filter (Gabor 1946; Daugman 1985).
     // Three aliases so `gabor` / `gabor-filter` / `gabor-wavelet` all
     // resolve to the same factory.
-    ctx.filters.register("gabor", Box::new(make_gabor));
-    ctx.filters.register("gabor-filter", Box::new(make_gabor));
-    ctx.filters.register("gabor-wavelet", Box::new(make_gabor));
+    sink("gabor", Box::new(make_gabor));
+    sink("gabor-filter", Box::new(make_gabor));
+    sink("gabor-wavelet", Box::new(make_gabor));
 
     // r205 factory: Niblack 1986 adaptive local-statistics threshold.
     // Two aliases so `niblack` / `niblack-threshold` resolve to the
     // same factory.
-    ctx.filters.register("niblack", Box::new(make_niblack));
-    ctx.filters
-        .register("niblack-threshold", Box::new(make_niblack));
+    sink("niblack", Box::new(make_niblack));
+    sink("niblack-threshold", Box::new(make_niblack));
 
     // r209 factory: exact-Euclidean Distance Transform
     // (Felzenszwalb–Huttenlocher 2012, separable lower-envelope of
@@ -384,31 +329,29 @@ pub fn register(ctx: &mut RuntimeContext) {
     // `distance-transform` factory already registered above). Three
     // aliases so `edt` / `euclidean-distance` /
     // `euclidean-distance-transform` resolve to the same factory.
-    ctx.filters.register(
+    sink(
         "euclidean-distance-transform",
         Box::new(make_euclidean_distance_transform),
     );
-    ctx.filters.register(
+    sink(
         "euclidean-distance",
         Box::new(make_euclidean_distance_transform),
     );
-    ctx.filters
-        .register("edt", Box::new(make_euclidean_distance_transform));
+    sink("edt", Box::new(make_euclidean_distance_transform));
 
     // Weighted (generalised) distance transform: the continuous-seed
     // form `D_f(p) = min_q(‖p − q‖² + f(q))` of distance-transform.md
     // §1, seeding every pixel with a finite cost derived from its
     // intensity rather than the binary 0/∞ mask the EDT uses.
-    ctx.filters.register(
+    sink(
         "weighted-distance-transform",
         Box::new(make_weighted_distance_transform),
     );
-    ctx.filters.register(
+    sink(
         "weighted-distance",
         Box::new(make_weighted_distance_transform),
     );
-    ctx.filters
-        .register("wdt", Box::new(make_weighted_distance_transform));
+    sink("wdt", Box::new(make_weighted_distance_transform));
 
     // Signed distance field: the difference of two exact-Euclidean
     // transforms (FG-distance minus BG-distance) so foreground pixels
@@ -416,130 +359,94 @@ pub fn register(ctx: &mut RuntimeContext) {
     // a neutral midpoint on render. Three aliases so `sdf` /
     // `signed-distance` / `signed-distance-field` resolve to the same
     // factory.
-    ctx.filters.register(
+    sink(
         "signed-distance-field",
         Box::new(make_signed_distance_field),
     );
-    ctx.filters
-        .register("signed-distance", Box::new(make_signed_distance_field));
-    ctx.filters
-        .register("sdf", Box::new(make_signed_distance_field));
+    sink("signed-distance", Box::new(make_signed_distance_field));
+    sink("sdf", Box::new(make_signed_distance_field));
 
     // r303 factory: edge feathering — a soft coverage falloff at a
     // shape boundary driven by the exact Euclidean inner-distance
     // transform (distance-transform.md §1 names feathering; §2 is the
     // exact transform reused here). Three aliases.
-    ctx.filters.register("feather", Box::new(make_feather));
-    ctx.filters.register("feather-edge", Box::new(make_feather));
-    ctx.filters.register("soft-edge", Box::new(make_feather));
+    sink("feather", Box::new(make_feather));
+    sink("feather-edge", Box::new(make_feather));
+    sink("soft-edge", Box::new(make_feather));
 
     // r358 factory: exact nearest-feature (Voronoi) transform — labels
     // every pixel with its nearest foreground site, the argmin
     // counterpart of the exact-Euclidean distance the EDT computes
     // (distance-transform.md §2.3 already tracks v[k]). Three aliases.
-    ctx.filters
-        .register("voronoi", Box::new(make_voronoi_transform));
-    ctx.filters
-        .register("voronoi-transform", Box::new(make_voronoi_transform));
-    ctx.filters
-        .register("nearest-feature", Box::new(make_voronoi_transform));
+    sink("voronoi", Box::new(make_voronoi_transform));
+    sink("voronoi-transform", Box::new(make_voronoi_transform));
+    sink("nearest-feature", Box::new(make_voronoi_transform));
 
     // r358 factory: nearest-seed value propagation (Voronoi region
     // fill) — paints every pixel with its nearest seed's source value;
     // exact nearest-neighbour region-grow / sparse inpainting on the
     // same feature transform. Three aliases.
-    ctx.filters
-        .register("proximity-fill", Box::new(make_proximity_fill));
-    ctx.filters
-        .register("voronoi-fill", Box::new(make_proximity_fill));
-    ctx.filters
-        .register("nearest-fill", Box::new(make_proximity_fill));
+    sink("proximity-fill", Box::new(make_proximity_fill));
+    sink("voronoi-fill", Box::new(make_proximity_fill));
+    sink("nearest-fill", Box::new(make_proximity_fill));
 
     // r369 factory: exact-Euclidean binary morphology (dilate / erode).
     // Dilation = { p : D_FG(p) ≤ r² }, erosion = { p : D_BG(p) > r² },
     // both pure thresholds of the §1 nearest-feature distance computed by
     // the §2.4 separable transform — a true Euclidean disc, not a 3×3
     // octagon. The op is selected by the alias (or a `op` JSON field).
-    ctx.filters
-        .register("distance-dilate", Box::new(make_distance_dilate));
-    ctx.filters
-        .register("euclidean-dilate", Box::new(make_distance_dilate));
-    ctx.filters
-        .register("distance-erode", Box::new(make_distance_erode));
-    ctx.filters
-        .register("euclidean-erode", Box::new(make_distance_erode));
+    sink("distance-dilate", Box::new(make_distance_dilate));
+    sink("euclidean-dilate", Box::new(make_distance_dilate));
+    sink("distance-erode", Box::new(make_distance_erode));
+    sink("euclidean-erode", Box::new(make_distance_erode));
 
     // r369 factory: exact-Euclidean opening (erode∘dilate) and closing
     // (dilate∘erode) — the two morphology primitives composed on the
     // intermediate binary mask. Opening clears small foreground specks;
     // closing fills small background holes.
-    ctx.filters
-        .register("distance-open", Box::new(make_distance_open));
-    ctx.filters
-        .register("euclidean-open", Box::new(make_distance_open));
-    ctx.filters
-        .register("distance-close", Box::new(make_distance_close));
-    ctx.filters
-        .register("euclidean-close", Box::new(make_distance_close));
+    sink("distance-open", Box::new(make_distance_open));
+    sink("euclidean-open", Box::new(make_distance_open));
+    sink("distance-close", Box::new(make_distance_close));
+    sink("euclidean-close", Box::new(make_distance_close));
 
     // r369 factory: exact-Euclidean boundary band (outline / stroke) —
     // the band { −inner ≤ s(p) ≤ outer } around the shape contour, i.e.
     // the set difference dilate(outer) − erode(inner). Two exact §2.4
     // transforms; Gray8 binary mask out.
-    ctx.filters
-        .register("distance-outline", Box::new(make_distance_outline));
-    ctx.filters
-        .register("euclidean-outline", Box::new(make_distance_outline));
-    ctx.filters
-        .register("distance-stroke", Box::new(make_distance_outline));
+    sink("distance-outline", Box::new(make_distance_outline));
+    sink("euclidean-outline", Box::new(make_distance_outline));
+    sink("distance-stroke", Box::new(make_distance_outline));
 
     // r324 factory: sRGB / power-law transfer-function transform
     // (tone-mapping-operators.md §5.2) exposed as a standalone LUT.
     // Decode (display → linear, EOTF) and encode (linear → display, OETF)
     // each get explicit aliases; the generic name reads direction + curve
     // from JSON.
-    ctx.filters
-        .register("srgb-decode", Box::new(make_srgb_decode));
-    ctx.filters
-        .register("linearize", Box::new(make_srgb_decode));
-    ctx.filters
-        .register("srgb-to-linear", Box::new(make_srgb_decode));
-    ctx.filters
-        .register("srgb-encode", Box::new(make_srgb_encode));
-    ctx.filters
-        .register("delinearize", Box::new(make_srgb_encode));
-    ctx.filters
-        .register("linear-to-srgb", Box::new(make_srgb_encode));
-    ctx.filters
-        .register("srgb-transform", Box::new(make_srgb_decode));
+    sink("srgb-decode", Box::new(make_srgb_decode));
+    sink("linearize", Box::new(make_srgb_decode));
+    sink("srgb-to-linear", Box::new(make_srgb_decode));
+    sink("srgb-encode", Box::new(make_srgb_encode));
+    sink("delinearize", Box::new(make_srgb_encode));
+    sink("linear-to-srgb", Box::new(make_srgb_encode));
+    sink("srgb-transform", Box::new(make_srgb_decode));
 
     // r186 factory: classic bit-depth-reduction dither (Bayer ordered
     // + the Floyd–Steinberg / Jarvis–Judice–Ninke / Stucki /
     // Sierra-3 / Sierra-2 / Sierra-Lite / Atkinson error-diffusion
     // family). Per-kernel + per-mode names so a pipeline can pick one
     // without packing it into a JSON param.
-    ctx.filters.register("dither", Box::new(make_dither));
-    ctx.filters
-        .register("dither-floyd-steinberg", Box::new(make_dither_fs));
-    ctx.filters.register("dither-fs", Box::new(make_dither_fs));
-    ctx.filters
-        .register("dither-jjn", Box::new(make_dither_jjn));
-    ctx.filters
-        .register("dither-jarvis", Box::new(make_dither_jjn));
-    ctx.filters
-        .register("dither-stucki", Box::new(make_dither_stucki));
-    ctx.filters
-        .register("dither-sierra3", Box::new(make_dither_sierra3));
-    ctx.filters
-        .register("dither-sierra2", Box::new(make_dither_sierra2));
-    ctx.filters
-        .register("dither-sierra-lite", Box::new(make_dither_sierra_lite));
-    ctx.filters
-        .register("dither-atkinson", Box::new(make_dither_atkinson));
-    ctx.filters
-        .register("dither-bayer", Box::new(make_dither_bayer));
-    ctx.filters
-        .register("ordered-dither", Box::new(make_dither_bayer));
+    sink("dither", Box::new(make_dither));
+    sink("dither-floyd-steinberg", Box::new(make_dither_fs));
+    sink("dither-fs", Box::new(make_dither_fs));
+    sink("dither-jjn", Box::new(make_dither_jjn));
+    sink("dither-jarvis", Box::new(make_dither_jjn));
+    sink("dither-stucki", Box::new(make_dither_stucki));
+    sink("dither-sierra3", Box::new(make_dither_sierra3));
+    sink("dither-sierra2", Box::new(make_dither_sierra2));
+    sink("dither-sierra-lite", Box::new(make_dither_sierra_lite));
+    sink("dither-atkinson", Box::new(make_dither_atkinson));
+    sink("dither-bayer", Box::new(make_dither_bayer));
+    sink("ordered-dither", Box::new(make_dither_bayer));
 
     // r8 factories: Porter–Duff and arithmetic composite operators
     // (two-input). Mirrors the documented `-compose <op>` CLI family. r11
@@ -564,7 +471,7 @@ pub fn register(ctx: &mut RuntimeContext) {
         CompositeOp::ColorBurn,
     ] {
         let name = format!("composite-{}", op.name());
-        ctx.filters.register(
+        sink(
             &name,
             Box::new(move |params, inputs| make_composite(op, params, inputs)),
         );
@@ -587,7 +494,19 @@ struct ImageFilterAdapter {
 }
 
 impl ImageFilterAdapter {
-    fn new(inner: Box<dyn ImageFilter>, in_port: PortSpec, out_port: PortSpec) -> Self {
+    fn new(inner: Box<dyn ImageFilter>, in_port: PortSpec, mut out_port: PortSpec) -> Self {
+        // The filter's own declaration is authoritative for the output
+        // layout: a factory that mirrored the input port for a filter
+        // that collapses to Gray8 (or widens grey to RGB) would label the
+        // port wrongly. Extent stays the factory's (resize / crop know
+        // their target size).
+        if let (PortParams::Video { format: inf, .. }, PortParams::Video { format: outf, .. }) =
+            (&in_port.params, &mut out_port.params)
+        {
+            if let Some(declared) = inner.output_pixel_format(*inf) {
+                *outf = declared;
+            }
+        }
         let params = match &in_port.params {
             PortParams::Video {
                 format,
@@ -668,8 +587,15 @@ impl TwoInputImageFilterAdapter {
         inner: Box<dyn TwoInputImageFilter>,
         src_port: PortSpec,
         dst_port: PortSpec,
-        out_port: PortSpec,
+        mut out_port: PortSpec,
     ) -> Self {
+        if let (PortParams::Video { format: inf, .. }, PortParams::Video { format: outf, .. }) =
+            (&src_port.params, &mut out_port.params)
+        {
+            if let Some(declared) = inner.output_pixel_format(*inf) {
+                *outf = declared;
+            }
+        }
         // The two input ports must agree on shape — pick `src`'s
         // params as the canonical pair (the factory layer enforces
         // the match before we get here).

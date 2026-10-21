@@ -56,6 +56,16 @@ impl PixelFilter for Grayscale {
         crate::layout::PACKED_8BIT
     }
 
+    /// `with_output_gray8(true)` collapses to a single `Gray8` plane;
+    /// otherwise the neutral-colour result keeps the input layout.
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if self.output_gray8 {
+            oxideav_core::PixelFormat::Gray8
+        } else {
+            input
+        }
+    }
+
     fn apply_pixels(
         &self,
         input: &VideoFrame,

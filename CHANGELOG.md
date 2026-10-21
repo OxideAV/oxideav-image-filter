@@ -56,6 +56,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`YuvJ420P` / `YuvJ422P` / `YuvJ444P`** are taken by every filter
   that takes the limited-range trio (identical storage; the range is
   the label's): 64 filters widened.
+- **Registry truthfulness.** The one- and two-input adapters label
+  their output port with the filter's own `output_pixel_format()`
+  declaration, so a factory can no longer mirror the input port for a
+  filter that collapses to `Gray8` or widens grey to RGB.
+  `registry::registered_names()` (`#[doc(hidden)]`) enumerates every
+  factory name; `tests/registry_truth.rs` builds all 242 names on
+  seven probe layouts, pushes a record-carrying picture and checks the
+  emitted planes against the declared port (format and extent; the
+  content-dependent extents of `trim` / `auto-trim` / `deskew` are
+  checked for plane consistency).
 - Filter × layout matrix (`tests/layout_matrix.rs`): every filter type
   (139 single-input entries, 8 two-input) over all 70 `PixelFormat`
   layouts on a picture carrying all six side-channel records, at an
@@ -79,6 +89,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ChannelExtract` declare their `Gray8` output, `Heatmap` /
   `Cyanotype` / `GradientMap` their packed-RGB widening of grey input,
   `ChannelExtract` its per-channel layouts.
+- Ordered (Bayer) dither on a tightly-strided `Rgb24` / `Rgba` picture
+  sliced one byte past the last row for every channel but the first —
+  an index panic through the `dither-bayer` / `ordered-dither`
+  factories. Found by the registry truthfulness test.
+- `Grayscale` and `Shade` declare their mode-dependent output layout
+  (`with_output_gray8` / `with_color`).
 - A 0×0 picture, a missing plane or a short plane is a typed
   `Error::InvalidData` from every filter (several filters used to pass
   an empty picture through; a short plane could index out of bounds).
