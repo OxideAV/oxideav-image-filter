@@ -82,8 +82,23 @@ impl PixelFilter for ChannelExtract {
     /// need planar YUV.
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
         use oxideav_core::PixelFormat as P;
-        const Y: &[P] = &[P::Gray8, P::Yuv420P, P::Yuv422P, P::Yuv444P];
-        const UV: &[P] = &[P::Yuv420P, P::Yuv422P, P::Yuv444P];
+        const Y: &[P] = &[
+            P::Gray8,
+            P::Yuv420P,
+            P::Yuv422P,
+            P::Yuv444P,
+            P::YuvJ420P,
+            P::YuvJ422P,
+            P::YuvJ444P,
+        ];
+        const UV: &[P] = &[
+            P::Yuv420P,
+            P::Yuv422P,
+            P::Yuv444P,
+            P::YuvJ420P,
+            P::YuvJ422P,
+            P::YuvJ444P,
+        ];
         match self.channel {
             Channel::Red => crate::layout::PACKED_8BIT,
             Channel::Green | Channel::Blue => crate::layout::PACKED_RGB,
@@ -124,15 +139,33 @@ impl PixelFilter for ChannelExtract {
             (PixelFormat::Rgba, Channel::Green) => (0, 1),
             (PixelFormat::Rgba, Channel::Blue) => (0, 2),
             (PixelFormat::Rgba, Channel::Alpha) => (0, 3),
-            (PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P, Channel::Y) => {
-                (0, 0)
-            }
-            (PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P, Channel::U) => {
-                (1, 0)
-            }
-            (PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P, Channel::V) => {
-                (2, 0)
-            }
+            (
+                PixelFormat::Yuv420P
+                | PixelFormat::Yuv422P
+                | PixelFormat::Yuv444P
+                | PixelFormat::YuvJ420P
+                | PixelFormat::YuvJ422P
+                | PixelFormat::YuvJ444P,
+                Channel::Y,
+            ) => (0, 0),
+            (
+                PixelFormat::Yuv420P
+                | PixelFormat::Yuv422P
+                | PixelFormat::Yuv444P
+                | PixelFormat::YuvJ420P
+                | PixelFormat::YuvJ422P
+                | PixelFormat::YuvJ444P,
+                Channel::U,
+            ) => (1, 0),
+            (
+                PixelFormat::Yuv420P
+                | PixelFormat::Yuv422P
+                | PixelFormat::Yuv444P
+                | PixelFormat::YuvJ420P
+                | PixelFormat::YuvJ422P
+                | PixelFormat::YuvJ444P,
+                Channel::V,
+            ) => (2, 0),
             (fmt, ch) => {
                 return Err(Error::unsupported(format!(
                     "oxideav-image-filter: ChannelExtract: format {fmt:?} has no {ch:?} channel"

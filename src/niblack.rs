@@ -232,7 +232,7 @@ fn box_sum_i64(src: &[i64], w: usize, h: usize, radius: usize) -> Vec<i64> {
 
 impl PixelFilter for Niblack {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.

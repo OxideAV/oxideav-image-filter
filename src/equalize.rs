@@ -30,7 +30,7 @@ impl Equalize {
 
 impl PixelFilter for Equalize {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -53,7 +53,10 @@ impl PixelFilter for Equalize {
             PixelFormat::Gray8
             | PixelFormat::Yuv420P
             | PixelFormat::Yuv422P
-            | PixelFormat::Yuv444P => {
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let lut = build_channel_lut(&out.planes[0].data, out.planes[0].stride, w, h, 1, 0);
                 let plane = &mut out.planes[0];
                 let stride = plane.stride;

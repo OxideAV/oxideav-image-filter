@@ -85,7 +85,7 @@ impl Function {
 
 impl PixelFilter for Function {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(

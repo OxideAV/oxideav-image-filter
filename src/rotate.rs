@@ -16,7 +16,7 @@
 //! source coordinate and sample it with bilinear interpolation.
 //! Out-of-bounds samples become the configured background colour.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Rotate a frame by `degrees` around its centre. Positive values
@@ -53,8 +53,16 @@ impl Rotate {
 }
 
 impl PixelFilter for Rotate {
+    /// A quarter turn (a multiple of 90°) moves whole sample positions
+    /// and takes every byte-addressable layout; an arbitrary angle
+    /// resamples bilinearly and fills the corners with an 8-bit
+    /// background colour, so it takes the classic 8-bit layouts.
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        if snap_quarter(self.degrees).is_some() {
+            crate::layout::BYTE_ADDRESSABLE
+        } else {
+            crate::layout::CLASSIC
+        }
     }
 
     fn apply_pixels(
@@ -62,13 +70,6 @@ impl PixelFilter for Rotate {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Rotate does not yet handle {:?}",
-                params.format
-            )));
-        }
-
         // Fast-path multiples of 90°: use exact axis-aligned remaps
         // so we don't accumulate bilinear drift from f32 sin/cos.
         if let Some(out) = quarter_turn(input, params, self.degrees) {
@@ -126,11 +127,7 @@ impl PixelFilter for Rotate {
 /// the matching axis-aligned remap (identity / 90° CW / 180° / 270° CW),
 /// remembering that "positive degrees = clockwise" is our convention.
 fn quarter_turn(input: &VideoFrame, params: VideoStreamParams, degrees: f32) -> Option<VideoFrame> {
-    // Collapse to [0, 360) and snap within 0.001° of a multiple of 90°.
-    let mut d = degrees.rem_euclid(360.0);
-    let snaps = [0.0f32, 90.0, 180.0, 270.0, 360.0];
-    let snapped = snaps.iter().copied().find(|s| (d - *s).abs() < 1e-3)?;
-    d = if snapped == 360.0 { 0.0 } else { snapped };
+    let d = snap_quarter(degrees)?;
 
     let (cx, cy) = crate::blur::chroma_subsampling(params.format);
     let bpp_of = |idx| crate::blur::bytes_per_plane_pixel(params.format, idx);
@@ -226,6 +223,16 @@ fn regrid_nearest(
     }
 }
 
+/// `degrees` collapsed to `[0, 360)` and snapped (within 0.001°) to a
+/// multiple of 90° — `0.0`, `90.0`, `180.0` or `270.0` — or `None` when
+/// the angle is not a quarter turn.
+fn snap_quarter(degrees: f32) -> Option<f32> {
+    let d = degrees.rem_euclid(360.0);
+    let snaps = [0.0f32, 90.0, 180.0, 270.0, 360.0];
+    let snapped = snaps.iter().copied().find(|s| (d - *s).abs() < 1e-3)?;
+    Some(if snapped == 360.0 { 0.0 } else { snapped })
+}
+
 /// Size of the axis-aligned bounding box around a rotated `sw × sh` rect.
 /// Rounded up so we never lose a pixel; minimum of 1 in each dim. Values
 /// within 1e-4 of an integer snap to that integer — this keeps multiples
@@ -257,7 +264,12 @@ fn plane_fill(fmt: PixelFormat, plane_idx: usize, bg: &[u8; 4]) -> Vec<u8> {
         PixelFormat::Gray8 => vec![bg[0]],
         PixelFormat::Rgb24 => vec![bg[0], bg[1], bg[2]],
         PixelFormat::Rgba => vec![bg[0], bg[1], bg[2], bg[3]],
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => {
             // Plane 0 = Y, 1 = Cb, 2 = Cr.
             vec![bg[plane_idx.min(2)]]
         }
@@ -273,7 +285,12 @@ fn resolve_background(fmt: PixelFormat, override_: Option<[u8; 4]>) -> [u8; 4] {
         PixelFormat::Rgba => [0, 0, 0, 0], // transparent
         // Opaque-black default for the rest. For YUV the tuple is
         // (Y=0, Cb=128, Cr=128) — neutral chroma + black luma.
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => [0, 128, 128, 0],
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => [0, 128, 128, 0],
         _ => [0, 0, 0, 255],
     }
 }

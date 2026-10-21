@@ -44,7 +44,7 @@ impl LinearStretch {
 
 impl PixelFilter for LinearStretch {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -73,7 +73,10 @@ impl PixelFilter for LinearStretch {
             PixelFormat::Gray8
             | PixelFormat::Yuv420P
             | PixelFormat::Yuv422P
-            | PixelFormat::Yuv444P => {
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let p = &mut out.planes[0];
                 let stride = p.stride;
                 let mut hist = [0u32; 256];

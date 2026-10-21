@@ -577,7 +577,7 @@ impl Dither {
 
 impl PixelFilter for Dither {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -621,7 +621,12 @@ impl PixelFilter for Dither {
                     self.dither_channel(&mut plane.data, w, h, stride, 4, ch);
                 }
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let plane = &mut out.planes[0];
                 let stride = plane.stride;
                 self.dither_channel(&mut plane.data, w, h, stride, 1, 0);

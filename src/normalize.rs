@@ -54,7 +54,7 @@ impl Normalize {
 
 impl PixelFilter for Normalize {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -88,7 +88,13 @@ fn scan_range(
     let mut total: u32 = 0;
 
     match params.format {
-        PixelFormat::Gray8 | PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+        PixelFormat::Gray8
+        | PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => {
             let p = &frame.planes[0];
             for y in 0..h {
                 for v in &p.data[y * p.stride..y * p.stride + w] {

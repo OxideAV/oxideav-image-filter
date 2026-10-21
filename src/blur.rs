@@ -46,7 +46,7 @@ impl Blur {
 
 impl PixelFilter for Blur {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -140,25 +140,19 @@ fn blur_plane(plane: &VideoPlane, w: u32, h: u32, bpp: usize, kernel: &[f32]) ->
 }
 
 pub(crate) fn bytes_per_plane_pixel(fmt: PixelFormat, plane_idx: usize) -> usize {
-    match fmt {
-        PixelFormat::Gray8 => 1,
-        PixelFormat::Rgb24 => 3,
-        PixelFormat::Rgba => 4,
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
-            // All three YUV planar formats use 1 byte per sample per plane.
-            let _ = plane_idx;
-            1
-        }
-        _ => 1,
-    }
+    // Bytes one sample position of the plane occupies, from the format's
+    // own row rule (3 for `Rgb24`, 2 for a 16-bit word, 2 for an `Nv12`
+    // chroma pair, …). Side-channel entries and out-of-range planes
+    // never reach here; fall back to one byte.
+    fmt.plane_row_bytes(plane_idx, 1).unwrap_or(1)
 }
 
 pub(crate) fn chroma_subsampling(fmt: PixelFormat) -> (u32, u32) {
-    match fmt {
-        PixelFormat::Yuv420P => (2, 2),
-        PixelFormat::Yuv422P => (2, 1),
-        PixelFormat::Yuv444P => (1, 1),
-        _ => (1, 1),
+    // Divisors (`1 << shift`) of the format's chroma grid; `(1, 1)` for
+    // every layout without a distinct chroma grid.
+    match fmt.chroma_subsampling() {
+        Some((sx, sy)) => (1 << sx, 1 << sy),
+        None => (1, 1),
     }
 }
 
@@ -167,15 +161,14 @@ pub(crate) fn plane_dims(
     h: u32,
     fmt: PixelFormat,
     plane_idx: usize,
-    cx: u32,
-    cy: u32,
+    _cx: u32,
+    _cy: u32,
 ) -> (u32, u32) {
-    match fmt {
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P if plane_idx > 0 => {
-            (w.div_ceil(cx), h.div_ceil(cy))
-        }
-        _ => (w, h),
-    }
+    // The plane's extent from the format's own geometry rule
+    // (`ceil(w / sx) × ceil(h / sy)` on the chroma planes of a
+    // subsampled layout, full size everywhere else — alpha planes
+    // included).
+    fmt.plane_dimensions(plane_idx, w, h).unwrap_or((w, h))
 }
 
 #[cfg(test)]

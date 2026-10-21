@@ -74,7 +74,7 @@ impl CrossProcess {
 
 impl PixelFilter for CrossProcess {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -104,7 +104,12 @@ impl PixelFilter for CrossProcess {
                 apply_tone_lut(&mut out, &g_lut, params.format, params.width, params.height);
                 Ok(out)
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let mut out = input.clone();
                 apply_tone_lut(&mut out, &g_lut, params.format, params.width, params.height);
                 Ok(out)

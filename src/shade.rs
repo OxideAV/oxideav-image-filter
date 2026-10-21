@@ -91,7 +91,13 @@ fn build_height_field(input: &VideoFrame, params: VideoStreamParams) -> Vec<u8> 
     let p = &input.planes[0];
     let mut field = vec![0u8; w * h];
     match params.format {
-        PixelFormat::Gray8 | PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+        PixelFormat::Gray8
+        | PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => {
             for y in 0..h {
                 let row = &p.data[y * p.stride..y * p.stride + w];
                 field[y * w..y * w + w].copy_from_slice(row);
@@ -148,7 +154,7 @@ fn shade_intensity_map(field: &[u8], w: usize, h: usize, az_deg: f32, el_deg: f3
 
 impl PixelFilter for Shade {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
@@ -169,6 +175,9 @@ impl PixelFilter for Shade {
                 | PixelFormat::Yuv420P
                 | PixelFormat::Yuv422P
                 | PixelFormat::Yuv444P
+                | PixelFormat::YuvJ420P
+                | PixelFormat::YuvJ422P
+                | PixelFormat::YuvJ444P
         );
         if !supported {
             return Err(Error::unsupported(format!(
@@ -235,7 +244,12 @@ impl PixelFilter for Shade {
                     }
                 }
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let dst = &mut out.planes[0];
                 let dst_stride = dst.stride;
                 for y in 0..h {

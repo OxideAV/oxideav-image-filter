@@ -104,7 +104,7 @@ impl Roberts {
 
 impl PixelFilter for Roberts {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.

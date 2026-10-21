@@ -31,7 +31,7 @@ impl Negate {
 
 impl PixelFilter for Negate {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -88,7 +88,12 @@ impl PixelFilter for Negate {
                     }
                 }
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let y_plane = &mut out.planes[0];
                 let stride = y_plane.stride;
                 let w = params.width as usize;

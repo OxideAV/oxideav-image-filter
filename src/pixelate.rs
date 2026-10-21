@@ -95,7 +95,7 @@ fn pixelate_plane(src: &VideoPlane, w: usize, h: usize, bpp: usize, block: usize
 
 impl PixelFilter for Pixelate {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -146,7 +146,12 @@ impl PixelFilter for Pixelate {
                     }],
                 })
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 // Pixelate the Y plane; pass chroma through.
                 if input.planes.len() < 3 {
                     return Err(Error::invalid(

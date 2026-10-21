@@ -967,7 +967,7 @@ impl Curves {
 
 impl PixelFilter for Curves {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -1031,7 +1031,12 @@ impl PixelFilter for Curves {
                     planes: vec![VideoPlane { stride, data: out }],
                 })
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 // Master curve on luma only — chroma planes pass-through.
                 let master = self.master.build_lut(self.interpolation);
                 let w = params.width as usize;

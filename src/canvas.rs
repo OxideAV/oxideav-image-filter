@@ -41,7 +41,7 @@ impl Canvas {
 
 impl PixelFilter for Canvas {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -83,13 +83,17 @@ impl PixelFilter for Canvas {
                     planes: vec![VideoPlane { stride, data }],
                 })
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
-                let (cw, ch) = match params.format {
-                    PixelFormat::Yuv420P => (w.div_ceil(2), h.div_ceil(2)),
-                    PixelFormat::Yuv422P => (w.div_ceil(2), h),
-                    PixelFormat::Yuv444P => (w, h),
-                    _ => unreachable!(),
-                };
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
+                let (cw, ch) = params
+                    .format
+                    .plane_dimensions(1, params.width, params.height)
+                    .map(|(cw, ch)| (cw as usize, ch as usize))
+                    .unwrap_or((w, h));
                 Ok(VideoFrame {
                     pts: input.pts,
                     planes: vec![

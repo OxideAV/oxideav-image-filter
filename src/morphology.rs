@@ -110,7 +110,7 @@ impl Morphology {
 
 impl PixelFilter for Morphology {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -177,7 +177,7 @@ pub struct MorphologyChain {
 
 impl PixelFilter for MorphologyChain {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -256,7 +256,7 @@ impl MorphologyEdge {
 
 impl PixelFilter for MorphologyEdge {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(

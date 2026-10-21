@@ -79,7 +79,7 @@ impl Statistic {
 
 impl PixelFilter for Statistic {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -106,7 +106,12 @@ impl PixelFilter for Statistic {
             PixelFormat::Gray8 => (1, 1),
             PixelFormat::Rgb24 => (3, 3),
             PixelFormat::Rgba => (4, 3),
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => (1, 1),
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => (1, 1),
             _ => unreachable!(),
         };
 

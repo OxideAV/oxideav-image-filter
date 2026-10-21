@@ -81,7 +81,12 @@ fn to_luma(input: &VideoFrame, w: usize, h: usize, format: PixelFormat) -> Resul
             }
             Ok(out)
         }
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => {
             let src = &input.planes[0];
             let mut out = vec![0u8; w * h];
             for y in 0..h {
@@ -148,7 +153,7 @@ fn local_mean(src: &[u8], w: usize, h: usize, radius: usize) -> Vec<u16> {
 
 impl PixelFilter for AdaptiveThreshold {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.

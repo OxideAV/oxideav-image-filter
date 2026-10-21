@@ -78,7 +78,7 @@ impl Heatmap {
 
 impl PixelFilter for Heatmap {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     /// False colour is packed RGB: `Rgba` keeps its alpha, every other
@@ -163,7 +163,12 @@ impl PixelFilter for Heatmap {
                     }],
                 })
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let p = &input.planes[0];
                 let mut data = vec![0u8; 3 * w * h];
                 for y in 0..h {

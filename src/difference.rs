@@ -37,7 +37,7 @@ impl Difference {
 
 impl TwoInputPixelFilter for Difference {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_two_pixels(
@@ -50,9 +50,12 @@ impl TwoInputPixelFilter for Difference {
             PixelFormat::Gray8 | PixelFormat::Rgb24 | PixelFormat::Rgba => {
                 diff_packed(src, dst, params)
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
-                diff_planar_yuv(src, dst, params)
-            }
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => diff_planar_yuv(src, dst, params),
             other => Err(Error::unsupported(format!(
                 "oxideav-image-filter: Difference does not yet handle {other:?}"
             ))),
@@ -109,16 +112,11 @@ fn diff_planar_yuv(
             "oxideav-image-filter: Difference requires 3 YUV planes on src/dst",
         ));
     }
-    let (xsub, ysub) = match params.format {
-        PixelFormat::Yuv420P => (2, 2),
-        PixelFormat::Yuv422P => (2, 1),
-        PixelFormat::Yuv444P => (1, 1),
-        _ => unreachable!(),
-    };
+    let (xsub, ysub) = crate::blur::chroma_subsampling(params.format);
     let w = params.width as usize;
     let h = params.height as usize;
-    let cw = w.div_ceil(xsub);
-    let ch = h.div_ceil(ysub);
+    let cw = w.div_ceil(xsub as usize);
+    let ch = h.div_ceil(ysub as usize);
     let mut planes = Vec::with_capacity(3);
     for i in 0..3 {
         let (pw, ph) = if i == 0 { (w, h) } else { (cw, ch) };

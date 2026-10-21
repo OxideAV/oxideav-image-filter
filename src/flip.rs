@@ -1,7 +1,7 @@
 //! Mirror a frame vertically — top row becomes bottom row. The documented CLI
 //! calls this `-flip` (flop is the horizontal cousin, see [`Flop`](crate::Flop)).
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Vertical flip — reverses the order of rows in every plane.
@@ -21,8 +21,11 @@ impl Flip {
 }
 
 impl PixelFilter for Flip {
+    /// Moves whole sample positions, so every byte-addressable layout
+    /// (any depth, any chroma siting, palette indices included) is taken
+    /// natively.
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::BYTE_ADDRESSABLE
     }
 
     fn apply_pixels(
@@ -30,13 +33,6 @@ impl PixelFilter for Flip {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Flip does not yet handle {:?}",
-                params.format
-            )));
-        }
-
         let (cx, cy) = crate::blur::chroma_subsampling(params.format);
         let mut new_planes: Vec<VideoPlane> = Vec::with_capacity(input.planes.len());
         for (idx, plane) in input.planes.iter().enumerate() {

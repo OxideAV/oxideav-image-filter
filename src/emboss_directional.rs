@@ -65,7 +65,7 @@ impl EmbossDirectional {
 
 impl PixelFilter for EmbossDirectional {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -91,9 +91,12 @@ impl PixelFilter for EmbossDirectional {
             PixelFormat::Gray8 => emboss_packed(input, params, 1, &kernel),
             PixelFormat::Rgb24 => emboss_packed(input, params, 3, &kernel),
             PixelFormat::Rgba => emboss_packed(input, params, 4, &kernel),
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
-                emboss_yuv_luma(input, params, &kernel)
-            }
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => emboss_yuv_luma(input, params, &kernel),
             other => Err(Error::unsupported(format!(
                 "oxideav-image-filter: EmbossDirectional does not yet handle {other:?}"
             ))),

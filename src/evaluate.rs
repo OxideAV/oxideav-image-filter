@@ -123,7 +123,7 @@ impl Evaluate {
 
 impl PixelFilter for Evaluate {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -176,7 +176,12 @@ impl PixelFilter for Evaluate {
                     }
                 }
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let y_plane = &mut out.planes[0];
                 let stride = y_plane.stride;
                 for y in 0..h {

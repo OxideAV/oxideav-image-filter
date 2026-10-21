@@ -19,7 +19,7 @@
 //! shifts as a single rigid block.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Wrap-around translation of every pixel by `(dx, dy)`.
@@ -41,8 +41,11 @@ impl Roll {
 }
 
 impl PixelFilter for Roll {
+    /// Moves whole sample positions, so every byte-addressable layout
+    /// (any depth, any chroma siting, palette indices included) is taken
+    /// natively.
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::BYTE_ADDRESSABLE
     }
 
     fn apply_pixels(
@@ -50,12 +53,6 @@ impl PixelFilter for Roll {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Roll does not yet handle {:?}",
-                params.format
-            )));
-        }
         if params.width == 0 || params.height == 0 {
             return Ok(input.clone());
         }
@@ -65,16 +62,14 @@ impl PixelFilter for Roll {
         for (idx, plane) in input.planes.iter().enumerate() {
             let (pw, ph) = plane_dims(params.width, params.height, params.format, idx, cx, cy);
             let bpp = bytes_per_plane_pixel(params.format, idx);
-            // Scale offsets to this plane's grid for chroma planes; the
-            // Y / packed plane stays at full resolution.
-            let (pdx, pdy) = if idx > 0 {
-                (
-                    scale_offset(self.dx, cx as i32),
-                    scale_offset(self.dy, cy as i32),
-                )
-            } else {
-                (self.dx, self.dy)
-            };
+            // Scale offsets to this plane's grid: a subsampled chroma
+            // plane moves by the offset over its divisor on that axis;
+            // the luma / packed / full-resolution alpha planes (and the
+            // full-width axis of a 4:4:0 or 4:2:2 plane) move by the
+            // offset itself.
+            let fx = if pw == params.width { 1 } else { cx as i32 };
+            let fy = if ph == params.height { 1 } else { cy as i32 };
+            let (pdx, pdy) = (scale_offset(self.dx, fx), scale_offset(self.dy, fy));
             new_planes.push(roll_plane(plane, pw, ph, bpp, pdx, pdy));
         }
 

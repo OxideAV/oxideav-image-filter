@@ -4,7 +4,7 @@
 //! `(x, y, w, h)` rectangle. Clean-room from the obvious definition:
 //! the output pixel `(i, j)` is the input pixel `(x + i, y + j)`.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Crop a rectangular region out of a frame.
@@ -36,8 +36,11 @@ impl Crop {
 }
 
 impl PixelFilter for Crop {
+    /// Moves whole sample positions, so every byte-addressable layout
+    /// (any depth, any chroma siting, palette indices included) is taken
+    /// natively.
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::BYTE_ADDRESSABLE
     }
 
     fn apply_pixels(
@@ -45,13 +48,6 @@ impl PixelFilter for Crop {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Crop does not yet handle {:?}",
-                params.format
-            )));
-        }
-
         if self.width == 0 || self.height == 0 {
             return Err(Error::invalid(
                 "oxideav-image-filter: Crop width/height must be > 0",
@@ -104,14 +100,15 @@ fn plane_rect(
     chroma: (u32, u32),
     rect: (u32, u32, u32, u32),
 ) -> (u32, u32, u32, u32) {
-    use oxideav_core::PixelFormat;
     let (cx, cy) = chroma;
     let (x, y, w, h) = rect;
-    match fmt {
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P if idx > 0 => {
-            (x / cx, y / cy, w.div_ceil(cx), h.div_ceil(cy))
-        }
-        _ => (x, y, w, h),
+    // Planes 1 and 2 of a subsampled layout live on the chroma grid;
+    // every other plane (luma, packed, a full-resolution alpha plane)
+    // is at picture resolution.
+    if fmt.chroma_subsampling().is_some() && (idx == 1 || idx == 2) {
+        (x / cx, y / cy, w.div_ceil(cx), h.div_ceil(cy))
+    } else {
+        (x, y, w, h)
     }
 }
 

@@ -49,7 +49,7 @@ impl Unsharp {
 
 impl PixelFilter for Unsharp {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -66,7 +66,12 @@ impl PixelFilter for Unsharp {
 
         // Match Sharpen's policy: YUV touches only luma.
         let planes_selector = match params.format {
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => Planes::Luma,
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => Planes::Luma,
             _ => Planes::All,
         };
 

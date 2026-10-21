@@ -33,7 +33,7 @@ impl AutoLevel {
 
 impl PixelFilter for AutoLevel {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -54,7 +54,10 @@ impl PixelFilter for AutoLevel {
             PixelFormat::Gray8
             | PixelFormat::Yuv420P
             | PixelFormat::Yuv422P
-            | PixelFormat::Yuv444P => {
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let lut = single_channel_lut(&out.planes[0].data, out.planes[0].stride, w, h);
                 let p = &mut out.planes[0];
                 let stride = p.stride;

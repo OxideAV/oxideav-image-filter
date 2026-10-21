@@ -65,7 +65,12 @@ pub(crate) fn apply_tone_lut(
                 }
             }
         }
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => {
             let p = &mut frame.planes[0];
             let stride = p.stride;
             for y in 0..h {

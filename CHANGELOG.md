@@ -32,6 +32,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `layout` module: named layout sets (`PACKED_8BIT`, `PACKED_RGB`,
   `LEGACY`, `CLASSIC`, `BYTE_ADDRESSABLE`, `ALL`), `SampleKind` /
   `sample_kind()`, core-derived `PlaneGeometry`, `validate_frame()`.
+- **Geometry on every byte-addressable layout.** `Flip`, `Flop`, `Crop`
+  (and `Shave`), `Roll` and quarter-turn `Rotate` take all 66
+  byte-addressable layouts natively — 10/12/14/16-bit words move as
+  words, `Pal8` indices move with their palette and palette-alpha
+  records riding along, `Nv12` chroma pairs move as pairs, `Yuva*`
+  alpha planes move at picture resolution, 4:4:0 / 4:1:1 / 4:2:2 chroma
+  on their own grids. The shared plane helpers derive extent and
+  bytes-per-position from `PixelFormat` itself. Arbitrary-angle
+  `Rotate` keeps the classic 8-bit layouts (it fills corners with an
+  8-bit colour).
+- **`YuvJ420P` / `YuvJ422P` / `YuvJ444P`** are taken by every filter
+  that takes the limited-range trio (identical storage; the range is
+  the label's): 64 filters widened.
 - Filter × layout matrix (`tests/layout_matrix.rs`): every filter type
   (139 single-input entries, 8 two-input) over all 70 `PixelFormat`
   layouts on a picture carrying all six side-channel records, at an

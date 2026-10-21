@@ -47,7 +47,7 @@ impl Laplacian {
 
 impl PixelFilter for Laplacian {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
@@ -119,7 +119,12 @@ pub(crate) fn build_luma_plane(
                 }
             }
         }
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => {
             let src = &f.planes[0];
             for y in 0..h {
                 out[y * w..y * w + w]

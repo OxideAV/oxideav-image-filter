@@ -46,7 +46,7 @@ impl ContrastStretch {
 
 impl PixelFilter for ContrastStretch {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -67,7 +67,10 @@ impl PixelFilter for ContrastStretch {
             PixelFormat::Gray8
             | PixelFormat::Yuv420P
             | PixelFormat::Yuv422P
-            | PixelFormat::Yuv444P => {
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 let p = &mut out.planes[0];
                 let stride = p.stride;
                 let lut = stretch_lut_single(&p.data, stride, w, h, self.black_pct, self.white_pct);

@@ -52,7 +52,7 @@ impl Trim {
 
 impl PixelFilter for Trim {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -97,7 +97,12 @@ fn compute_bbox(
         PixelFormat::Rgb24 => 3,
         PixelFormat::Rgba => 4,
         // Planar YUV — operate on the Y plane only for bbox detection.
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => 1,
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => 1,
         other => {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Trim cannot bbox {other:?}"

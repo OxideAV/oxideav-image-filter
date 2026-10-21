@@ -1247,6 +1247,9 @@ pub(crate) fn is_supported_format(format: PixelFormat) -> bool {
             | PixelFormat::Yuv420P
             | PixelFormat::Yuv422P
             | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P
     )
 }
 

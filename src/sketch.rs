@@ -70,7 +70,7 @@ impl Sketch {
 
 impl PixelFilter for Sketch {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
@@ -142,7 +142,12 @@ fn build_luma(f: &VideoFrame, params: VideoStreamParams) -> Result<Vec<u8>, Erro
                 }
             }
         }
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => {
             for y in 0..h {
                 out[y * w..y * w + w]
                     .copy_from_slice(&src.data[y * src.stride..y * src.stride + w]);

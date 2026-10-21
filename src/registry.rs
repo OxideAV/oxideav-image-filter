@@ -2336,19 +2336,17 @@ fn make_channel_extract(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn S
     // grid (width / cx, height / cy). Compute the size up-front so the
     // port spec is accurate at construction.
     let (out_w, out_h) = match (&in_port.params, channel) {
-        (PortParams::Video { width, height, .. }, Channel::U | Channel::V)
-            if matches!(
-                extract_video_format(&in_port.params),
-                Some(PixelFormat::Yuv420P) | Some(PixelFormat::Yuv422P)
-            ) =>
-        {
-            let (cx, cy) = match extract_video_format(&in_port.params).unwrap() {
-                PixelFormat::Yuv420P => (2u32, 2u32),
-                PixelFormat::Yuv422P => (2, 1),
-                _ => (1, 1),
-            };
-            (width.div_ceil(cx), height.div_ceil(cy))
-        }
+        (
+            PortParams::Video {
+                width,
+                height,
+                format,
+                ..
+            },
+            Channel::U | Channel::V,
+        ) => format
+            .plane_dimensions(1, *width, *height)
+            .unwrap_or((*width, *height)),
         (PortParams::Video { width, height, .. }, _) => (*width, *height),
         _ => (0, 0),
     };
@@ -2369,17 +2367,6 @@ fn make_channel_extract(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn S
         in_port,
         out_port,
     )))
-}
-
-/// Helper: pull the pixel format out of a port's params, or return
-/// `None` if the port isn't a video port. Used by the channel-extract
-/// factory to size the output grid for chroma channels.
-fn extract_video_format(params: &PortParams) -> Option<PixelFormat> {
-    if let PortParams::Video { format, .. } = params {
-        Some(*format)
-    } else {
-        None
-    }
 }
 
 fn make_morphology_edgein(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {

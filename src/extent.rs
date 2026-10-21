@@ -67,7 +67,7 @@ impl Extent {
 
 impl PixelFilter for Extent {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -122,7 +122,12 @@ fn plane_fill(fmt: PixelFormat, idx: usize, bg: &[u8; 4]) -> Vec<u8> {
         PixelFormat::Gray8 => vec![bg[0]],
         PixelFormat::Rgb24 => vec![bg[0], bg[1], bg[2]],
         PixelFormat::Rgba => vec![bg[0], bg[1], bg[2], bg[3]],
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => {
             if idx == 0 {
                 vec![bg[0]]
             } else {

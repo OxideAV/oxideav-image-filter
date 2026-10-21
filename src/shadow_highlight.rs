@@ -80,7 +80,7 @@ impl ShadowHighlight {
 
 impl PixelFilter for ShadowHighlight {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -147,7 +147,12 @@ impl PixelFilter for ShadowHighlight {
                     planes: vec![VideoPlane { stride, data: out }],
                 })
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 // Apply only to luma; chroma pass-through.
                 if input.planes.len() < 3 {
                     return Err(Error::invalid(

@@ -99,7 +99,7 @@ fn rec601(r: u8, g: u8, b: u8) -> u8 {
 
 impl PixelFilter for OtsuThreshold {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
@@ -145,7 +145,12 @@ impl PixelFilter for OtsuThreshold {
                     }
                 }
             }
-            PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+            PixelFormat::Yuv420P
+            | PixelFormat::Yuv422P
+            | PixelFormat::Yuv444P
+            | PixelFormat::YuvJ420P
+            | PixelFormat::YuvJ422P
+            | PixelFormat::YuvJ444P => {
                 for y in 0..h {
                     grey[y * w..(y + 1) * w]
                         .copy_from_slice(&src.data[y * src.stride..y * src.stride + w]);

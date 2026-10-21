@@ -74,7 +74,7 @@ impl Charcoal {
 
 impl PixelFilter for Charcoal {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
@@ -190,7 +190,12 @@ fn build_luma_plane(f: &VideoFrame, params: VideoStreamParams) -> Result<Vec<u8>
                 }
             }
         }
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => {
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => {
             let src = &f.planes[0];
             for y in 0..h {
                 out[y * w..y * w + w]

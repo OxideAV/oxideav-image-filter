@@ -53,7 +53,7 @@ impl AutoTrim {
 
 impl PixelFilter for AutoTrim {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::LEGACY
+        crate::layout::CLASSIC
     }
 
     fn apply_pixels(
@@ -92,7 +92,12 @@ fn detect_background(input: &VideoFrame, params: VideoStreamParams) -> Result<[u
         PixelFormat::Gray8 => 1,
         PixelFormat::Rgb24 => 3,
         PixelFormat::Rgba => 4,
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => 1,
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => 1,
         other => {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: AutoTrim cannot detect bg on {other:?}"
@@ -157,7 +162,12 @@ fn compute_bbox(
         PixelFormat::Gray8 => 1,
         PixelFormat::Rgb24 => 3,
         PixelFormat::Rgba => 4,
-        PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P => 1,
+        PixelFormat::Yuv420P
+        | PixelFormat::Yuv422P
+        | PixelFormat::Yuv444P
+        | PixelFormat::YuvJ420P
+        | PixelFormat::YuvJ422P
+        | PixelFormat::YuvJ444P => 1,
         other => {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: AutoTrim cannot bbox {other:?}"
