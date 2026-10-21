@@ -105,10 +105,7 @@ fn ten_bit_ringing_clamps_at_1023_not_255() {
         .unwrap();
     let y = u16s(&out.planes[0]);
     assert!(y.iter().all(|&v| v <= 1023));
-    assert!(
-        y.contains(&1023),
-        "the high plateau reaches full scale"
-    );
+    assert!(y.contains(&1023), "the high plateau reaches full scale");
     assert!(y.iter().any(|&v| v > 600), "values well above 255 are kept");
     // The flat chroma planes are untouched by the luma step.
     assert!(u16s(&out.planes[1]).iter().all(|&v| v == 512));
