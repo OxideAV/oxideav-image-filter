@@ -1,2 +1,9 @@
 /target
-Cargo.lock
+
+# Library crate: no Cargo.lock in git.
+/Cargo.lock
+
+# Exception: the fuzz subcrate is binary-shaped (cargo-fuzz targets
+# compile to executables), so its Cargo.lock IS committed for
+# reproducible fuzz builds.
+!fuzz/Cargo.lock

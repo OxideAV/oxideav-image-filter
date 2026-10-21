@@ -108,9 +108,12 @@ impl TwoInputPixelFilter for Clut {
             ));
         }
         let n = palette.len();
-        // Avoid division-by-zero when n == 1: every lookup snaps to that
-        // single CLUT entry.
+        // The scale maps 0..=255 onto 0..=n-1; `denom` is floored at 1 so
+        // a single-entry CLUT does not divide by zero, and the lookup is
+        // clamped to the last entry (`n - 1`, which is 0 for that CLUT —
+        // clamping to `denom` instead reached one past the table).
         let denom = (n - 1).max(1) as u32;
+        let last = (n - 1) as u32;
 
         let w = params.width as usize;
         let h = params.height as usize;
@@ -125,7 +128,7 @@ impl TwoInputPixelFilter for Clut {
                 let base = x * bpp;
                 match bpp {
                     1 => {
-                        let idx = (src_row[base] as u32 * denom / 255).min(denom) as usize;
+                        let idx = (src_row[base] as u32 * denom / 255).min(last) as usize;
                         // Project the CLUT sample to luma via the same
                         // luma proxy used elsewhere in the crate.
                         let p = palette[idx];
@@ -133,17 +136,17 @@ impl TwoInputPixelFilter for Clut {
                             ((p[0] as u32 * 77 + p[1] as u32 * 150 + p[2] as u32 * 29) >> 8) as u8;
                     }
                     3 => {
-                        let r = (src_row[base] as u32 * denom / 255).min(denom) as usize;
-                        let g = (src_row[base + 1] as u32 * denom / 255).min(denom) as usize;
-                        let b = (src_row[base + 2] as u32 * denom / 255).min(denom) as usize;
+                        let r = (src_row[base] as u32 * denom / 255).min(last) as usize;
+                        let g = (src_row[base + 1] as u32 * denom / 255).min(last) as usize;
+                        let b = (src_row[base + 2] as u32 * denom / 255).min(last) as usize;
                         dst_row[base] = palette[r][0];
                         dst_row[base + 1] = palette[g][1];
                         dst_row[base + 2] = palette[b][2];
                     }
                     4 => {
-                        let r = (src_row[base] as u32 * denom / 255).min(denom) as usize;
-                        let g = (src_row[base + 1] as u32 * denom / 255).min(denom) as usize;
-                        let b = (src_row[base + 2] as u32 * denom / 255).min(denom) as usize;
+                        let r = (src_row[base] as u32 * denom / 255).min(last) as usize;
+                        let g = (src_row[base + 1] as u32 * denom / 255).min(last) as usize;
+                        let b = (src_row[base + 2] as u32 * denom / 255).min(last) as usize;
                         dst_row[base] = palette[r][0];
                         dst_row[base + 1] = palette[g][1];
                         dst_row[base + 2] = palette[b][2];
@@ -169,6 +172,54 @@ impl TwoInputPixelFilter for Clut {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_entry_clut_maps_every_sample_to_that_entry() {
+        // A 1×1 CLUT: every lookup index must clamp to entry 0 (the
+        // old clamp to `denom` reached entry 1 of a one-entry table).
+        let p = VideoStreamParams {
+            format: PixelFormat::Rgba,
+            width: 1,
+            height: 1,
+        };
+        let clut = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 4,
+                data: vec![9, 8, 7, 255],
+            }],
+        };
+        for v in [0u8, 1, 127, 254, 255] {
+            let src = VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane {
+                    stride: 4,
+                    data: vec![v, v, v, 33],
+                }],
+            };
+            let out = Clut::new().apply_two(&src, &clut, p).unwrap();
+            assert_eq!(out.planes[0].data, vec![9, 8, 7, 33]);
+        }
+        let gray = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            ..p
+        };
+        let clut = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 1,
+                data: vec![200],
+            }],
+        };
+        let src = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 1,
+                data: vec![255],
+            }],
+        };
+        assert!(Clut::new().apply_two(&src, &clut, gray).is_ok());
+    }
     use crate::TwoInputImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {

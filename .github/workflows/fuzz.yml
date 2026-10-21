@@ -1,0 +1,19 @@
+name: Fuzz
+
+# Thin shim around the OxideAV org-level reusable fuzz workflow. Targets
+# are auto-discovered from fuzz/fuzz_targets/*.rs and share the time
+# budget: `filters` (every filter type over arbitrary layouts, plane
+# shapes and side-channel records) and `registry` (every factory name
+# with arbitrary parameters and frames).
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    uses: OxideAV/.github/.github/workflows/crate-fuzz.yml@master
+    with:
+      time_budget_seconds: 1800
+    secrets: inherit

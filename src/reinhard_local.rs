@@ -136,9 +136,12 @@ impl ReinhardLocal {
 
     /// Override the number of pyramid scales. `0` falls back to `1`
     /// (a single-scale evaluation — equivalent to global-Reinhard at
-    /// `s_0`).
+    /// `s_0`); the count is capped at 16 — with the 1.6 ratio the 16th
+    /// centre radius is already thousands of pixels, wider than any
+    /// picture, and every further scale is the same constant field
+    /// (an unbounded count only multiplied memory by the picture size).
     pub fn with_scales(mut self, scales: u32) -> Self {
-        self.scales = scales.max(1);
+        self.scales = scales.clamp(1, 16);
         self
     }
 
@@ -198,7 +201,11 @@ fn blur_field(src: &[f32], w: usize, h: usize, sigma: f32) -> Vec<f32> {
     // Truncate the kernel at 3 sigma (>= 99.7 % of mass) for a
     // reasonable cost / accuracy trade. Always at least radius 1 so a
     // sigma << 1 still produces a non-degenerate kernel.
-    let radius = ((3.0 * sigma).ceil() as usize).max(1);
+    // The kernel never needs to reach further than the picture: taps
+    // beyond the border clamp to the edge sample, so a radius past
+    // `max(w, h)` only repeats that sample (and a geometric scale ladder
+    // would otherwise ask for kernels of billions of taps).
+    let radius = ((3.0 * sigma).ceil() as usize).max(1).min(w.max(h).max(1));
     let k = gauss_kernel(radius, sigma);
     let mut tmp = vec![0f32; w * h];
     // Horizontal pass.
@@ -406,6 +413,34 @@ impl PixelFilter for ReinhardLocal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scale_count_and_kernel_radius_are_bounded_by_the_picture() {
+        // A huge scale request on a tiny picture must neither allocate
+        // a geometric ladder of giant kernels nor keep an unbounded
+        // stack of fields (fuzz finding through the `levels` factory
+        // key).
+        let f = ReinhardLocal::new(0.18).with_scales(1_000_000);
+        assert_eq!(f.scales, 16);
+        let input = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 9,
+                data: (0..27).map(|i| (i * 9) as u8).collect(),
+            }],
+        };
+        let out = f
+            .apply(
+                &input,
+                VideoStreamParams {
+                    format: PixelFormat::Rgb24,
+                    width: 3,
+                    height: 3,
+                },
+            )
+            .unwrap();
+        assert_eq!(out.planes[0].data.len(), 27);
+    }
     use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {

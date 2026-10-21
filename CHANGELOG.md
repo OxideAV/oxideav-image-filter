@@ -83,6 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emitted planes against the declared port (format and extent; the
   content-dependent extents of `trim` / `auto-trim` / `deskew` are
   checked for plane consistency).
+- **Fuzz sub-crate** (`fuzz/`, daily `Fuzz` workflow): `filters` drives
+  every catalogued filter over an arbitrary layout, extent, plane shape
+  (short / over-long / padded / thin / missing / extra) and side-channel
+  run (blobs well-formed or raw, palette, alpha table, significant
+  bits, colour signal, layer identity, zero-stride records), asserting
+  the call returns and an `Ok` output carries the input's blobs with
+  the declared plane count; `registry` builds every factory name with
+  arbitrary JSON on an arbitrary port and pushes arbitrary frames on
+  every port.
 - Filter × layout matrix (`tests/layout_matrix.rs`): every filter type
   (139 single-input entries, 8 two-input) over all 70 `PixelFormat`
   layouts on a picture carrying all six side-channel records, at an
@@ -106,6 +115,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ChannelExtract` declare their `Gray8` output, `Heatmap` /
   `Cyanotype` / `GradientMap` their packed-RGB widening of grey input,
   `ChannelExtract` its per-channel layouts.
+- `Clut` with a single-entry CLUT clamped its lookup index to `1` and
+  read past the one-entry table (fuzz finding, first minute).
+- `MorphologyEdge` (edge-in / edge-out / edge-magnitude) sized its
+  subtraction from a clone of the input plane, so a padded stride or
+  trailing bytes on the input read past the tight morph results (fuzz
+  finding); the output planes are now built from the picture geometry.
+- `ReinhardLocal` took an unbounded scale count (`levels` / `scales`),
+  and each scale's Gaussian radius grew geometrically with no bound:
+  a 3×12 picture with `levels = 60` asked for a kernel of ~10¹² taps
+  (fuzz finding, out-of-memory). Scales are capped at 16 and a kernel
+  radius never exceeds the picture extent (beyond it every tap is the
+  edge sample).
 - Ordered (Bayer) dither on a tightly-strided `Rgb24` / `Rgba` picture
   sliced one byte past the last row for every channel but the first —
   an index panic through the `dither-bayer` / `ordered-dither`

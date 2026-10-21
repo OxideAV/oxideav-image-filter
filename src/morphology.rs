@@ -278,9 +278,24 @@ impl PixelFilter for MorphologyEdge {
 
         // Per-channel saturating subtract, alpha-preserving on RGBA.
         let alpha_passthrough = matches!(params.format, PixelFormat::Rgba);
-        let mut out = input.clone();
-        for (idx, plane) in out.planes.iter_mut().enumerate() {
+        // Emit tight planes sized from the picture geometry rather than
+        // cloning the input: an input plane may carry a padded stride or
+        // trailing bytes, and the subtraction below walks the *tight*
+        // morph results — sizing the walk from a padded clone read past
+        // their rows.
+        let (cx, cy) = chroma_subsampling(params.format);
+        let mut out = VideoFrame {
+            pts: input.pts,
+            planes: Vec::with_capacity(input.planes.len()),
+        };
+        for idx in 0..input.planes.len() {
             let bpp = bytes_per_plane_pixel(params.format, idx);
+            let (pw, ph) = plane_dims(params.width, params.height, params.format, idx, cx, cy);
+            let row_bytes = pw as usize * bpp;
+            let mut plane = VideoPlane {
+                stride: row_bytes,
+                data: vec![0u8; row_bytes * ph as usize],
+            };
             // Choose source operands per op:
             //   EdgeIn        : src - erode
             //   EdgeOut       : dilate - src
@@ -309,7 +324,7 @@ impl PixelFilter for MorphologyEdge {
                 EdgeOp::EdgeMagnitude => other.as_ref().unwrap().planes[idx].stride,
             };
             sub_plane(
-                plane,
+                &mut plane,
                 a_data,
                 a_stride,
                 b_data,
@@ -317,6 +332,7 @@ impl PixelFilter for MorphologyEdge {
                 bpp,
                 alpha_passthrough,
             );
+            out.planes.push(plane);
         }
 
         Ok(out)
@@ -334,11 +350,12 @@ fn sub_plane(
     bpp: usize,
     alpha_passthrough: bool,
 ) {
-    // Output rows are tightly packed (no padding) — Morphology emits
-    // them that way and the input plane (when used as `a` in EdgeIn)
-    // may have different stride. We respect that.
+    // `out` is tightly packed (`stride == visible row`, exactly
+    // `stride × rows` bytes — built from the picture geometry by the
+    // caller); `a` / `b` are read through their own strides, which may
+    // be padded (the input plane) or tight (a morph result).
     let out_stride = out.stride;
-    let row_bytes = out_stride; // tightly packed for our generated planes
+    let row_bytes = out_stride;
     let h = out.data.len() / out_stride;
     for y in 0..h {
         for x in 0..(row_bytes / bpp) {
@@ -412,6 +429,33 @@ fn morph_plane(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edge_ops_take_padded_and_over_long_input_planes() {
+        // A padded stride and trailing bytes on the input must not steer
+        // the subtraction past the tight morph results (fuzz finding).
+        let (w, h) = (5u32, 4u32);
+        let stride = 9usize;
+        let data: Vec<u8> = (0..stride * h as usize + 7)
+            .map(|i| (i * 53 % 256) as u8)
+            .collect();
+        let input = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride, data }],
+        };
+        let p = VideoStreamParams {
+            format: PixelFormat::Gray8,
+            width: w,
+            height: h,
+        };
+        for op in [EdgeOp::EdgeIn, EdgeOp::EdgeOut, EdgeOp::EdgeMagnitude] {
+            let out = MorphologyEdge::new(op, StructuringElement::Square3x3)
+                .apply(&input, p)
+                .unwrap();
+            assert_eq!(out.planes[0].stride, 5);
+            assert_eq!(out.planes[0].data.len(), 20);
+        }
+    }
     use crate::ImageFilter;
 
     fn gray_frame(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {

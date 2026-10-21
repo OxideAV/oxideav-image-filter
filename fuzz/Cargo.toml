@@ -1,0 +1,58 @@
+[package]
+name = "oxideav-image-filter-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# The filters' contract under test is the core 0.1.40 frame contract:
+# every filter must *return* — a typed `Unsupported` for a layout it
+# does not take, a typed `InvalidData` for a picture that is not well
+# formed, `Ok` otherwise — for any layout, any extent, any plane
+# shape (short, over-long, mis-strided, missing, extra) and any
+# trailing side-channel record (metadata blobs, palette, palette alpha,
+# significant bits, colour signal, layer identity, each possibly
+# malformed), and an `Ok` output must carry the input's blobs and never
+# read a record as pixels. The registry target drives the same through
+# `RuntimeContext::filters` with attacker-chosen factory parameters.
+#
+# No external library is consulted as an oracle: the contract is
+# panic-freedom and record carriage, not pixel equality.
+
+[dependencies]
+libfuzzer-sys = "0.4"
+oxideav-core = "0.1"
+serde_json = "1"
+
+[dependencies.oxideav-image-filter]
+path = ".."
+
+# Prevent this fuzz package from being pulled into the umbrella
+# workspace at `crates/*` glob-resolve time.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+# ------------------------------------------------------------------
+# Fuzz targets.
+# ------------------------------------------------------------------
+
+# Every filter type in the crate (the `catalog`) over an arbitrary
+# layout, extent, plane set and side-channel run.
+[[bin]]
+name = "filters"
+path = "fuzz_targets/filters.rs"
+test = false
+doc = false
+
+# Every registered factory name with arbitrary JSON parameters, an
+# arbitrary input port and arbitrary frames pushed on every port.
+[[bin]]
+name = "registry"
+path = "fuzz_targets/registry.rs"
+test = false
+doc = false
