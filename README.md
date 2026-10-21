@@ -17,7 +17,7 @@ frame-to-frame context. That's what separates it from sibling crates:
 ```toml
 [dependencies]
 oxideav-core = "0.1"
-oxideav-image-filter = "0.0"
+oxideav-image-filter = "0.1"
 ```
 
 ## Filters
@@ -1057,16 +1057,80 @@ All single-input filters listed above share the `ImageFilter` trait — chain th
 manually with repeated `.apply()` calls, or feed them through
 `oxideav-pipeline` as `video.<name>` filter nodes in a JSON job.
 
-## Pixel formats
+## Pixel layouts and the frame contract
 
-Supported:
+Every filter runs behind one wrapper (`PixelFilter` → blanket
+`ImageFilter`, `TwoInputPixelFilter` → blanket `TwoInputImageFilter`)
+that enforces the `oxideav-core` 0.1.40 frame contract before a filter
+body sees a sample:
 
-- `Gray8`, `Rgb24`, `Rgba`
-- `Yuv420P`, `Yuv422P`, `Yuv444P`
+1. **Layout gate.** Each filter declares the layouts it takes natively
+   (`accepted_formats()`); `ImageFilter::accepted_pixel_formats()` lists
+   every layout it takes at all (natively or through a route below) and
+   `output_pixel_format(input)` the layout it emits. A layout outside
+   that set is a typed `Error::Unsupported` naming the layout — never a
+   panic, never a silent narrowing or widening.
+2. **Frame validation.** The frame must hold exactly the format's image
+   planes, each `stride × rows` bytes with `stride ≥` its visible row,
+   for a non-empty extent; otherwise a typed `Error::InvalidData`.
+3. **Side channels.** A frame may end with core's side-channel records
+   (metadata blobs, palette, palette alpha, per-plane significant bits,
+   colour signal, layer identity — entries whose `stride` no image plane
+   can have). They are stripped before the filter body runs and
+   re-attached to the output under this ruling:
 
-Other formats return `Error::unsupported`. Planar higher-bit formats
-(`Yuv420P10Le` etc.) are not yet supported and will land as filters grow
-per-format specialisations.
+   | record | carried when |
+   |---|---|
+   | metadata blobs | always, byte-for-byte |
+   | layer identity | always |
+   | colour signal | the output stays in the input's carriage (YUV → YUV, RGB/grey → RGB/grey) |
+   | significant bits | the output layout equals the input layout |
+   | palette + palette alpha | the output is still `Pal8` (indices moved, not recoloured); the palette route rewrites them |
+
+   Two-input filters carry port 0's (`src`) records.
+
+### Routes
+
+| route | when | output label |
+|---|---|---|
+| native | the layout is in the filter's declared set | `output_format(input)` |
+| palette | `Pal8`, a pointwise filter (36 declare `is_pointwise()`): the palette is filtered as a one-row `Rgba` picture, alpha from the palette-alpha record, the index plane untouched | `Pal8` with the recoloured table |
+| packed-RGB hop | any other **8-bit** layout `oxideav-pixfmt` converts (planar / semi-planar YUV(A) at either range with the frame's colour signal honoured, `Bgr24` / `Bgra` / `Argb` / `Abgr`, `Ya8`, `Yuyv422` / `Uyvy422`, `Cmyk`, bit-packed mono, `Pal8` for a non-pointwise filter) into the first of `Rgba` / `Rgb24` / `Gray8` the filter takes, and back when the filter keeps that layout | the input layout; the hop layout (or the filter's own, e.g. `Gray8`) when it does not convert back or the source was `Pal8` |
+| refusal | 10/12/14/16-bit words and float through a filter without a native deep path (they are never narrowed); the macropixel / mono layouts through a filter with no packed target | typed `Unsupported` |
+
+Packed 4:2:2 and 4:1:1 take the hop at the widths pixfmt accepts (even /
+multiple of 4) on both legs; otherwise a typed `InvalidData`.
+
+### Who takes what
+
+| filters | layouts |
+|---|---|
+| `Flip`, `Flop`, `Crop` (and `Shave`), `Roll`, `Rotate` by a quarter turn, `Resize` with `Nearest` | all 66 byte-addressable layouts natively (16-bit words move as words, palette indices with their table, `Nv12` pairs as pairs, `Yuva*` alpha at picture resolution, 4:2:2 / 4:4:0 / 4:1:1 chroma on their own grids) + the 4 others through the hop |
+| `Resize` with an interpolating kernel | the 65 byte-addressable layouts but `Pal8` natively, depth-aware (255 / `2^bits − 1` / float unclamped; chroma on its own grid); `Pal8` through the hop (emits `Rgba`) |
+| the per-plane classics (`Blur`, `Sharpen`, `Unsharp`, `Emboss`, `MotionBlur`, `Negate`, `Gamma`, `Level`, `Equalize`, `Threshold`, the edge detectors, `Statistic`, `Pixelate`, `Canvas`, `Extent`, `Trim`, …) | `Gray8`, `Rgb24`, `Rgba`, `Yuv420P` / `Yuv422P` / `Yuv444P` and the `YuvJ*` trio natively; every other 8-bit layout through the hop |
+| the packed-RGB colour filters (`Sepia`, `Tint`, `Modulate`, the HSL / balance / curve / tone-mapping families, `Kuwahara`, `Swirl`, …) | `Rgb24` / `Rgba` (some `Gray8`) natively; every other 8-bit layout through the hop; `Pal8` through the palette route when pointwise |
+| the mask operators (`DistanceTransform`, `EuclideanDistanceTransform`, `SignedDistanceField`, `VoronoiTransform`, `ProximityFill`, `WeightedDistanceTransform`) | `Gray8` natively; every other 8-bit layout through the hop (luma) |
+| `ChannelExtract` | per channel: `Red` grey + packed RGB(A); `Green` / `Blue` packed RGB(A); `Alpha` `Rgba`; `Y` grey + planar YUV(J); `U` / `V` planar YUV(J) (no hop for `U` / `V`) |
+| two-input (`Composite`, `Clut`, `Stegano`, `Watermark`, `DisplacementMap`: `Gray8` / `Rgb24` / `Rgba`; `HaldClut`, `Stereo`: `Rgb24` / `Rgba`; `Difference`: the classic nine) | natively only (no routes) |
+
+In numbers: 134 of the 142 catalogued filter instances take all 30
+8-bit layouts, 7 take all 70, `ChannelExtract(U)` takes the 6 planar
+YUV(J) layouts. The registry labels every output port from the
+filter's own declaration; filters whose extent depends on the picture
+(`trim`, `auto-trim`, `deskew`) mirror the input extent on the port.
+
+### Proof
+
+`tests/layout_matrix.rs` runs every filter instance over all 70
+layouts at an even and an odd size on a picture carrying all six
+records (19 880 cells: 9 032 accepted, the rest typed refusals, zero
+panics) and checks each pointwise flag pixel by pixel and palette entry
+by palette entry; `tests/registry_truth.rs` builds all 242 factory
+names on seven layouts and checks the emitted planes against the
+declared port; `tests/geometry_layouts.rs` and `tests/resize_depth.rs`
+are pixel-exact on the widened paths; `fuzz/` drives the same two
+surfaces with arbitrary layouts, plane shapes, records and factory
+parameters (daily `Fuzz` workflow).
 
 ## License
 
