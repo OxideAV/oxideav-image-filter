@@ -1,7 +1,17 @@
 //! Rescale a frame to arbitrary dimensions.
+//!
+//! Every byte-addressable layout is taken: each image plane is unpacked
+//! to `f32` samples by its storage ([`SampleKind`]), resampled on its
+//! own grid — a subsampled chroma plane goes from `ceil(W/sx) ×
+//! ceil(H/sy)` to `ceil(W'/sx) × ceil(H'/sy)`, never through the luma
+//! grid — and quantised back to the plane's own depth: 8-bit to
+//! `0..=255`, a 10/12/14/16-bit word to `0..=2^bits − 1`, a binary32
+//! sample left unclamped. `Pal8` is taken by [`Interpolation::Nearest`]
+//! only (indices are identifiers, not magnitudes).
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
-use oxideav_core::{Error, VideoFrame, VideoPlane};
+use crate::layout::{self, PlaneGeometry, SampleKind};
+use crate::{PixelFilter, VideoStreamParams};
+use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// How samples are reconstructed during rescale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -115,8 +125,15 @@ impl Resize {
 }
 
 impl PixelFilter for Resize {
-    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+    /// Every byte-addressable layout for the nearest-neighbour kernel;
+    /// every byte-addressable layout but `Pal8` for the interpolating
+    /// kernels (a palette index cannot be averaged).
+    fn accepted_formats(&self) -> &'static [PixelFormat] {
+        if self.interp == Interpolation::Nearest {
+            layout::BYTE_ADDRESSABLE
+        } else {
+            layout::BYTE_ADDRESSABLE_SAMPLED
+        }
     }
 
     fn apply_pixels(
@@ -124,32 +141,38 @@ impl PixelFilter for Resize {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Resize does not yet handle {:?}",
-                params.format
-            )));
+        let fmt = params.format;
+        let kind = layout::sample_kind(fmt).ok_or_else(|| {
+            Error::unsupported(format!(
+                "oxideav-image-filter: Resize does not take {fmt:?}"
+            ))
+        })?;
+        if fmt == PixelFormat::Pal8 && self.interp != Interpolation::Nearest {
+            return Err(Error::unsupported(
+                "oxideav-image-filter: Resize takes Pal8 with Interpolation::Nearest only \
+                 (palette indices are identifiers, not magnitudes)",
+            ));
         }
-
-        let (cx, cy) = crate::blur::chroma_subsampling(params.format);
         let new_w = self.target_width;
         let new_h = self.target_height;
 
         let mut new_planes: Vec<VideoPlane> = Vec::with_capacity(input.planes.len());
         for (idx, plane) in input.planes.iter().enumerate() {
-            let (src_w, src_h) =
-                crate::blur::plane_dims(params.width, params.height, params.format, idx, cx, cy);
-            let (dst_w, dst_h) = crate::blur::plane_dims(new_w, new_h, params.format, idx, cx, cy);
-            let bpp = crate::blur::bytes_per_plane_pixel(params.format, idx);
-            new_planes.push(resize_plane(
-                plane,
-                src_w,
-                src_h,
-                dst_w,
-                dst_h,
-                bpp,
+            let src_g =
+                layout::plane_geometry(fmt, idx, params.width, params.height).ok_or_else(|| {
+                    Error::invalid(format!(
+                        "oxideav-image-filter: Resize: {fmt:?} has no plane {idx}"
+                    ))
+                })?;
+            let dst_g = layout::plane_geometry(fmt, idx, new_w, new_h).unwrap_or(src_g);
+            let samples = unpack(plane, src_g, kind);
+            let out = resample(
+                &samples,
+                dst_g.width as usize,
+                dst_g.height as usize,
                 self.interp,
-            ));
+            );
+            new_planes.push(pack(&out, kind));
         }
 
         Ok(VideoFrame {
@@ -159,32 +182,74 @@ impl PixelFilter for Resize {
     }
 }
 
-fn resize_plane(
-    src: &VideoPlane,
-    src_w: u32,
-    src_h: u32,
-    dst_w: u32,
-    dst_h: u32,
-    bpp: usize,
-    interp: Interpolation,
-) -> VideoPlane {
-    let sw = src_w as usize;
-    let sh = src_h as usize;
-    let dw = dst_w as usize;
-    let dh = dst_h as usize;
-    let mut out = vec![0u8; dw * dh * bpp];
+/// One image plane as `f32` samples: `ch` samples per position, tight
+/// row-major storage.
+struct Samples {
+    w: usize,
+    h: usize,
+    ch: usize,
+    data: Vec<f32>,
+}
 
-    // Scale factors (source units per destination unit). Use a half-pixel
-    // offset so the output samples centre on input pixels — prevents the
-    // top-left bias that integer-math resize often shows.
-    let scale_x = sw as f32 / dw as f32;
-    let scale_y = sh as f32 / dh as f32;
+/// Unpack a plane's visible samples to `f32` by its storage kind.
+fn unpack(plane: &VideoPlane, g: PlaneGeometry, kind: SampleKind) -> Samples {
+    let w = g.width as usize;
+    let h = g.height as usize;
+    let ch = (g.position_bytes / kind.bytes()).max(1);
+    let mut data = Vec::with_capacity(w * h * ch);
+    for y in 0..h {
+        let row = &plane.data[y * plane.stride..y * plane.stride + g.row_bytes];
+        match kind {
+            SampleKind::U8 => data.extend(row.iter().map(|&b| b as f32)),
+            SampleKind::U16 { .. } => data.extend(
+                row.chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]) as f32),
+            ),
+            SampleKind::F32 => data.extend(
+                row.chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+            ),
+        }
+    }
+    Samples { w, h, ch, data }
+}
+
+/// Quantise resampled `f32` samples back to the plane's storage: round
+/// to nearest and clamp to the depth's full scale for integer words,
+/// write binary32 as-is (no clamp — scene-referred values keep their
+/// range).
+fn pack(s: &Samples, kind: SampleKind) -> VideoPlane {
+    let positions = s.w * s.ch;
+    let stride = positions * kind.bytes();
+    let mut out = Vec::with_capacity(stride * s.h);
+    match kind {
+        SampleKind::U8 => out.extend(s.data.iter().map(|&v| v.round().clamp(0.0, 255.0) as u8)),
+        SampleKind::U16 { bits } => {
+            let max = ((1u32 << bits) - 1) as f32;
+            for &v in &s.data {
+                out.extend_from_slice(&(v.round().clamp(0.0, max) as u16).to_le_bytes());
+            }
+        }
+        SampleKind::F32 => {
+            for &v in &s.data {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+    }
+    VideoPlane { stride, data: out }
+}
+
+/// Resample `src` to `dw × dh` with `interp`. Every kernel works in
+/// `f32`; the caller quantises.
+fn resample(src: &Samples, dw: usize, dh: usize, interp: Interpolation) -> Samples {
+    let (sw, sh, ch) = (src.w, src.h, src.ch);
+    let mut out = vec![0.0f32; dw * dh * ch];
 
     // Area-average resampling integrates a whole source footprint per
     // output pixel rather than point-sampling a fixed tap stencil, so it
     // gets its own separable two-pass driver below.
     if interp == Interpolation::Area {
-        return resize_plane_area(src, sw, sh, dw, dh, bpp);
+        return resample_area(src, dw, dh);
     }
 
     // The windowed-sinc / parametric-cubic family runs through a general
@@ -192,21 +257,27 @@ fn resize_plane(
     // ratio on downscale (so the reconstruction filter doubles as the
     // anti-alias low-pass) and renormalises the per-output weights.
     if let Some(kernel) = ResampleKernel::from_interpolation(interp) {
-        return resize_plane_kernel(src, sw, sh, dw, dh, bpp, kernel);
+        return resample_kernel(src, dw, dh, kernel);
     }
+
+    // Scale factors (source units per destination unit). Use a half-pixel
+    // offset so the output samples centre on input pixels — prevents the
+    // top-left bias that integer-math resize often shows.
+    let scale_x = sw as f32 / dw as f32;
+    let scale_y = sh as f32 / dh as f32;
+    let at = |x: usize, y: usize, c: usize| src.data[(y * sw + x) * ch + c];
 
     for y in 0..dh {
         let sy = (y as f32 + 0.5) * scale_y - 0.5;
         for x in 0..dw {
             let sx = (x as f32 + 0.5) * scale_x - 0.5;
+            let dst = (y * dw + x) * ch;
             match interp {
                 Interpolation::Nearest => {
                     let nx = sx.round().clamp(0.0, (sw - 1) as f32) as usize;
                     let ny = sy.round().clamp(0.0, (sh - 1) as f32) as usize;
-                    let src_row_off = ny * src.stride + nx * bpp;
-                    let dst_off = y * dw * bpp + x * bpp;
-                    out[dst_off..dst_off + bpp]
-                        .copy_from_slice(&src.data[src_row_off..src_row_off + bpp]);
+                    out[dst..dst + ch]
+                        .copy_from_slice(&src.data[(ny * sw + nx) * ch..(ny * sw + nx) * ch + ch]);
                 }
                 Interpolation::Bilinear => {
                     let x0 = sx.floor().clamp(0.0, (sw - 1) as f32) as usize;
@@ -215,17 +286,11 @@ fn resize_plane(
                     let y1 = (y0 + 1).min(sh - 1);
                     let fx = (sx - x0 as f32).clamp(0.0, 1.0);
                     let fy = (sy - y0 as f32).clamp(0.0, 1.0);
-
-                    for ch in 0..bpp {
-                        let p00 = src.data[y0 * src.stride + x0 * bpp + ch] as f32;
-                        let p10 = src.data[y0 * src.stride + x1 * bpp + ch] as f32;
-                        let p01 = src.data[y1 * src.stride + x0 * bpp + ch] as f32;
-                        let p11 = src.data[y1 * src.stride + x1 * bpp + ch] as f32;
-                        let v = p00 * (1.0 - fx) * (1.0 - fy)
-                            + p10 * fx * (1.0 - fy)
-                            + p01 * (1.0 - fx) * fy
-                            + p11 * fx * fy;
-                        out[y * dw * bpp + x * bpp + ch] = v.round().clamp(0.0, 255.0) as u8;
+                    for c in 0..ch {
+                        out[dst + c] = at(x0, y0, c) * (1.0 - fx) * (1.0 - fy)
+                            + at(x1, y0, c) * fx * (1.0 - fy)
+                            + at(x0, y1, c) * (1.0 - fx) * fy
+                            + at(x1, y1, c) * fx * fy;
                     }
                 }
                 Interpolation::Bicubic => {
@@ -237,25 +302,22 @@ fn resize_plane(
                     // tap neighbourhood `(ix0-1 .. ix0+2, iy0-1 .. iy0+2)`.
                     let ix0 = sx.floor();
                     let iy0 = sy.floor();
-                    let fx = sx - ix0;
-                    let fy = sy - iy0;
-                    let wx = catmull_rom_weights(fx);
-                    let wy = catmull_rom_weights(fy);
+                    let wx = catmull_rom_weights(sx - ix0);
+                    let wy = catmull_rom_weights(sy - iy0);
                     let bx = ix0 as isize;
                     let by = iy0 as isize;
-                    for ch in 0..bpp {
+                    for c in 0..ch {
                         let mut acc = 0.0f32;
                         for (j, &wyj) in wy.iter().enumerate() {
                             let syy = clamp_coord(by - 1 + j as isize, sh);
-                            let row = syy * src.stride;
                             let mut rowacc = 0.0f32;
                             for (i, &wxi) in wx.iter().enumerate() {
                                 let sxx = clamp_coord(bx - 1 + i as isize, sw);
-                                rowacc += wxi * src.data[row + sxx * bpp + ch] as f32;
+                                rowacc += wxi * at(sxx, syy, c);
                             }
                             acc += wyj * rowacc;
                         }
-                        out[y * dw * bpp + x * bpp + ch] = acc.round().clamp(0.0, 255.0) as u8;
+                        out[dst + c] = acc;
                     }
                 }
                 Interpolation::Area
@@ -268,8 +330,10 @@ fn resize_plane(
         }
     }
 
-    VideoPlane {
-        stride: dw * bpp,
+    Samples {
+        w: dw,
+        h: dh,
+        ch,
         data: out,
     }
 }
@@ -280,7 +344,6 @@ fn resize_plane(
 fn clamp_coord(c: isize, extent: usize) -> usize {
     c.clamp(0, extent as isize - 1) as usize
 }
-
 /// The four uniform Catmull-Rom cubic weights for a fractional offset
 /// `t ∈ [0, 1)` between the second and third of four equally-spaced
 /// taps `p_{-1}, p_0, p_1, p_2`.
@@ -319,44 +382,39 @@ fn catmull_rom_weights(t: f32) -> [f32; 4] {
 /// with fractional weights at the two ragged ends so non-integer ratios
 /// are exact. On upscale (footprint < 1 px) the single covered sample
 /// carries full weight, degenerating to nearest-neighbour.
-fn resize_plane_area(
-    src: &VideoPlane,
-    sw: usize,
-    sh: usize,
-    dw: usize,
-    dh: usize,
-    bpp: usize,
-) -> VideoPlane {
+fn resample_area(src: &Samples, dw: usize, dh: usize) -> Samples {
+    let (sw, sh, ch) = (src.w, src.h, src.ch);
     let scale_x = sw as f32 / dw as f32;
     let scale_y = sh as f32 / dh as f32;
 
-    // Pass 1: horizontal — produce a (dw × sh) intermediate in f32.
-    let mut mid = vec![0.0f32; dw * sh * bpp];
+    // Pass 1: horizontal — produce a (dw × sh) intermediate.
+    let mut mid = vec![0.0f32; dw * sh * ch];
     for x in 0..dw {
         let (lo, hi) = footprint(x, scale_x, sw);
         for sy in 0..sh {
-            let row = sy * src.stride;
-            for ch in 0..bpp {
-                let v = integrate_axis(lo, hi, |sx| src.data[row + sx * bpp + ch] as f32);
-                mid[(sy * dw + x) * bpp + ch] = v;
+            for c in 0..ch {
+                let v = integrate_axis(lo, hi, |sx| src.data[(sy * sw + sx) * ch + c]);
+                mid[(sy * dw + x) * ch + c] = v;
             }
         }
     }
 
     // Pass 2: vertical — collapse the (dw × sh) intermediate to (dw × dh).
-    let mut out = vec![0u8; dw * dh * bpp];
+    let mut out = vec![0.0f32; dw * dh * ch];
     for y in 0..dh {
         let (lo, hi) = footprint(y, scale_y, sh);
         for x in 0..dw {
-            for ch in 0..bpp {
-                let v = integrate_axis(lo, hi, |sy| mid[(sy * dw + x) * bpp + ch]);
-                out[(y * dw + x) * bpp + ch] = v.round().clamp(0.0, 255.0) as u8;
+            for c in 0..ch {
+                out[(y * dw + x) * ch + c] =
+                    integrate_axis(lo, hi, |sy| mid[(sy * dw + x) * ch + c]);
             }
         }
     }
 
-    VideoPlane {
-        stride: dw * bpp,
+    Samples {
+        w: dw,
+        h: dh,
+        ch,
         data: out,
     }
 }
@@ -425,7 +483,6 @@ fn sinc(x: f32) -> f32 {
         px.sin() / px
     }
 }
-
 /// Lanczos windowed sinc with `a` lobes: `L(x) = sinc(x)·sinc(x/a)` on
 /// `|x| < a`, zero outside. `L(0) = 1`, `L(k) = 0` at non-zero integers.
 #[inline]
@@ -436,7 +493,6 @@ fn lanczos(x: f32, a: f32) -> f32 {
         sinc(x) * sinc(x / a)
     }
 }
-
 /// The two-parameter Mitchell–Netravali cubic `BC(B, C)` (support `[−2, 2]`).
 ///
 /// Derived from the piecewise cubic that is `C¹` at `|x| = 1` and `|x| = 2`
@@ -467,7 +523,6 @@ fn mitchell_netravali(x: f32, b: f32, c: f32) -> f32 {
     };
     v / 6.0
 }
-
 /// One axis of the general separable weighted-tap resampler: for each
 /// output index `k` build the list of `(source_index, weight)` taps whose
 /// kernel support overlaps `k`.
@@ -531,53 +586,47 @@ struct Contribs {
 
 /// General separable weighted-kernel resampler shared by the windowed-sinc
 /// (Lanczos) and parametric-cubic (Mitchell / B-spline) variants. A
-/// horizontal pass collapses the source columns onto `dw` weighted columns
-/// (f32 intermediate), then a vertical pass collapses the rows onto `dh`.
-fn resize_plane_kernel(
-    src: &VideoPlane,
-    sw: usize,
-    sh: usize,
-    dw: usize,
-    dh: usize,
-    bpp: usize,
-    kernel: ResampleKernel,
-) -> VideoPlane {
+/// horizontal pass collapses the source columns onto `dw` weighted columns,
+/// then a vertical pass collapses the rows onto `dh`.
+fn resample_kernel(src: &Samples, dw: usize, dh: usize, kernel: ResampleKernel) -> Samples {
+    let (sw, sh, ch) = (src.w, src.h, src.ch);
     let scale_x = sw as f32 / dw as f32;
     let scale_y = sh as f32 / dh as f32;
     let cx = axis_contributions(dw, sw, scale_x, &kernel);
     let cy = axis_contributions(dh, sh, scale_y, &kernel);
 
-    // Pass 1: horizontal — (sw × sh) → (dw × sh) in f32.
-    let mut mid = vec![0.0f32; dw * sh * bpp];
+    // Pass 1: horizontal — (sw × sh) → (dw × sh).
+    let mut mid = vec![0.0f32; dw * sh * ch];
     for sy in 0..sh {
-        let row = sy * src.stride;
         for (x, taps) in cx.per_out.iter().enumerate() {
-            for ch in 0..bpp {
+            for c in 0..ch {
                 let mut acc = 0.0f32;
                 for &(sx, w) in taps {
-                    acc += w * src.data[row + sx * bpp + ch] as f32;
+                    acc += w * src.data[(sy * sw + sx) * ch + c];
                 }
-                mid[(sy * dw + x) * bpp + ch] = acc;
+                mid[(sy * dw + x) * ch + c] = acc;
             }
         }
     }
 
-    // Pass 2: vertical — (dw × sh) → (dw × dh) in u8.
-    let mut out = vec![0u8; dw * dh * bpp];
+    // Pass 2: vertical — (dw × sh) → (dw × dh).
+    let mut out = vec![0.0f32; dw * dh * ch];
     for (y, taps) in cy.per_out.iter().enumerate() {
         for x in 0..dw {
-            for ch in 0..bpp {
+            for c in 0..ch {
                 let mut acc = 0.0f32;
                 for &(sy, w) in taps {
-                    acc += w * mid[(sy * dw + x) * bpp + ch];
+                    acc += w * mid[(sy * dw + x) * ch + c];
                 }
-                out[(y * dw + x) * bpp + ch] = acc.round().clamp(0.0, 255.0) as u8;
+                out[(y * dw + x) * ch + c] = acc;
             }
         }
     }
 
-    VideoPlane {
-        stride: dw * bpp,
+    Samples {
+        w: dw,
+        h: dh,
+        ch,
         data: out,
     }
 }
@@ -599,7 +648,6 @@ fn footprint(k: usize, scale: f32, extent: usize) -> (f32, f32) {
     let ext = extent as f32;
     (lo.clamp(0.0, ext), hi.clamp(0.0, ext))
 }
-
 /// Coverage-weighted mean of `sample(i)` over the continuous interval
 /// `[lo, hi)`: each whole source pixel `i` contributes the length of its
 /// overlap with the interval, divided by the total interval length.

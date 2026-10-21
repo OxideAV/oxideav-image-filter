@@ -42,6 +42,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes-per-position from `PixelFormat` itself. Arbitrary-angle
   `Rotate` keeps the classic 8-bit layouts (it fills corners with an
   8-bit colour).
+- **`Resize` on every byte-addressable layout, depth-aware.** Each
+  plane is unpacked to `f32` by its storage (`u8` / little-endian
+  16-bit word / binary32), resampled on its own grid (a 4:2:0 chroma
+  plane goes `ceil(W/2) × ceil(H/2)` → `ceil(W'/2) × ceil(H'/2)`; 4:2:2,
+  4:4:0 and 4:1:1 likewise; `Nv12` pairs and packed deep pixels per
+  component) and quantised back to the plane's own full scale — 255,
+  `2^bits − 1` for 10/12/14/16-bit words, no clamp for float. The old
+  `clamp(0.0, 255.0)` narrowing is gone from every kernel. `Pal8` is
+  taken by `Interpolation::Nearest` only (indices are identifiers); the
+  interpolating kernels refuse it with a typed error, and the
+  declaration follows the kernel (`layout::BYTE_ADDRESSABLE_SAMPLED`).
 - **`YuvJ420P` / `YuvJ422P` / `YuvJ444P`** are taken by every filter
   that takes the limited-range trio (identical storage; the range is
   the label's): 64 filters widened.

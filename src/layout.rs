@@ -142,6 +142,24 @@ pub const BYTE_ADDRESSABLE: &[PixelFormat] = &[
     PixelFormat::GbrapF32Le,
 ];
 
+/// [`BYTE_ADDRESSABLE`] without `Pal8`: the layouts whose samples are
+/// magnitudes that may be averaged (every interpolating resampler).
+pub const BYTE_ADDRESSABLE_SAMPLED: &[PixelFormat] = &without_pal8();
+
+const fn without_pal8() -> [PixelFormat; 65] {
+    let mut out = [PixelFormat::Gray8; 65];
+    let mut i = 0;
+    let mut j = 0;
+    while i < BYTE_ADDRESSABLE.len() {
+        if !matches!(BYTE_ADDRESSABLE[i], PixelFormat::Pal8) {
+            out[j] = BYTE_ADDRESSABLE[i];
+            j += 1;
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Every layout the crate knows how to describe, in discriminant order
 /// — the probe set for the filter × layout matrix tests and the fuzz
 /// target. Includes the layouts no filter takes (bit-packed mono,
@@ -440,6 +458,9 @@ mod tests {
         }
         assert_eq!(ALL.len(), 70);
         assert_eq!(BYTE_ADDRESSABLE.len(), 66);
+        assert_eq!(BYTE_ADDRESSABLE_SAMPLED.len(), 65);
+        assert!(!BYTE_ADDRESSABLE_SAMPLED.contains(&PixelFormat::Pal8));
+        assert!(BYTE_ADDRESSABLE_SAMPLED.contains(&PixelFormat::GbrapF32Le));
     }
 
     #[test]
