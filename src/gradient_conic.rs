@@ -15,7 +15,7 @@
 //!
 //! Operates on `Gray8`, `Rgb24`, `Rgba`. YUV returns `Unsupported`.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Conic-gradient filter.
@@ -69,8 +69,16 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
     v.round().clamp(0.0, 255.0) as u8
 }
 
-impl ImageFilter for GradientConic {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for GradientConic {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let w = params.width as usize;
         let h = params.height as usize;
         if w == 0 || h == 0 {
@@ -125,6 +133,7 @@ impl ImageFilter for GradientConic {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn empty_rgba(w: u32, h: u32) -> VideoFrame {
         VideoFrame {

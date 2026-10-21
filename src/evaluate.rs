@@ -25,7 +25,7 @@
 //! All operators clamp the per-channel result to `[0, 255]`. `Divide`
 //! by zero saturates to 255. `Pow` with a negative base saturates to 0.
 
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Which per-pixel arithmetic operator to apply.
@@ -121,8 +121,16 @@ impl Evaluate {
     }
 }
 
-impl ImageFilter for Evaluate {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Evaluate {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Evaluate does not yet handle {:?}",
@@ -255,6 +263,7 @@ fn clamp_round(v: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn gray(w: u32, h: u32, pat: impl Fn(u32, u32) -> u8) -> VideoFrame {

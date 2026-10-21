@@ -17,7 +17,7 @@
 //! - `Yuv*P`: only the Y plane is clamped; chroma pass-through (chroma
 //!   has its own legal range that doesn't match 0/255 endpoints).
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Clamp every tone sample into `[low, high]`.
@@ -57,8 +57,16 @@ impl Clamp {
     }
 }
 
-impl ImageFilter for Clamp {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Clamp {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Clamp does not yet handle {:?}",
@@ -80,6 +88,7 @@ impl ImageFilter for Clamp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::{PixelFormat, VideoPlane};
 
     fn gray(w: u32, h: u32, pat: impl Fn(u32, u32) -> u8) -> VideoFrame {

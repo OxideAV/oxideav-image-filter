@@ -10,7 +10,7 @@
 //!
 //! `radius = 0` is bit-exact identity (a 1×1 window is just the input).
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Median-window despeckle filter.
@@ -35,8 +35,16 @@ impl Despeckle {
     }
 }
 
-impl ImageFilter for Despeckle {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Despeckle {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_RGB
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let (bpp, denoise_channels) = match params.format {
             PixelFormat::Rgb24 => (3usize, 3usize),
             // RGBA: only despeckle R/G/B; alpha pass-through.
@@ -119,6 +127,7 @@ impl ImageFilter for Despeckle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

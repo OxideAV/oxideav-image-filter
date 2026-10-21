@@ -18,7 +18,7 @@
 //! `Rgb24` / `Rgba`. Alpha (RGBA) is preserved. Other formats return
 //! [`Error::unsupported`].
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Toon / cel-shading filter.
@@ -51,8 +51,16 @@ impl Toon {
     }
 }
 
-impl ImageFilter for Toon {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Toon {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_RGB
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4, true),
@@ -181,6 +189,7 @@ fn build_lut(levels: u32) -> [u8; 256] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

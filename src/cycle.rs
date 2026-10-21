@@ -14,7 +14,7 @@
 //! produces visually striking, periodic colour shifts on continuous-tone
 //! images). Negative `amount` rotates downward.
 
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Per-channel modular value rotation.
@@ -32,8 +32,16 @@ impl Cycle {
     }
 }
 
-impl ImageFilter for Cycle {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Cycle {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Cycle does not yet handle {:?}",
@@ -106,6 +114,7 @@ fn build_lut(amount: i32) -> [u8; 256] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn gray_strip(values: &[u8]) -> VideoFrame {

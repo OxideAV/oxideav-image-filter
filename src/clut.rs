@@ -29,7 +29,7 @@
 //!   same format (Rgb24/Rgba) so per-channel samples line up.
 //! - YUV / other formats return `Error::unsupported`.
 
-use crate::{TwoInputImageFilter, VideoStreamParams};
+use crate::{TwoInputPixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// 1-D colour look-up table filter.
@@ -80,8 +80,12 @@ fn clut_samples(
     Ok((out, bpp, has_alpha))
 }
 
-impl TwoInputImageFilter for Clut {
-    fn apply_two(
+impl TwoInputPixelFilter for Clut {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_two_pixels(
         &self,
         src: &VideoFrame,
         dst: &VideoFrame,
@@ -165,6 +169,7 @@ impl TwoInputImageFilter for Clut {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TwoInputImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

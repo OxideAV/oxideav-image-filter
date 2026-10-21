@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- r478: **the core 0.1.40 frame contract.** Every filter now runs
+  behind one wrapper (`PixelFilter` → blanket `ImageFilter`,
+  `TwoInputPixelFilter` → blanket `TwoInputImageFilter`) that (1) gates
+  the layout against the filter's declared `accepted_formats()` with a
+  typed `Error::Unsupported` naming the layout, (2) validates the frame
+  (plane count, stride ≥ row, `stride × rows` bytes, non-empty extent)
+  with a typed `Error::InvalidData`, (3) strips every side-channel
+  record (`side_channels::image_only`) so no filter body ever reads a
+  metadata-blobs / palette-alpha / colour-signal / layer / significant-
+  bits record as pixels — the `resize.rs:214` panic reported by the
+  r477 `convert` seat is gone — and (4) re-attaches the records under a
+  single ruling (`side_channels::carry`): blobs and layer identity
+  always, palette records onto `Pal8` outputs only, colour signal within
+  the same carriage, significant bits onto an unchanged layout.
+  `ImageFilter::accepted_pixel_formats()` / `output_pixel_format()`
+  expose the declarations (provided methods; additive).
+- `PixelFilter::is_pointwise()` + the **palette route**: a pointwise
+  filter that takes `Rgba` takes `Pal8` by recolouring the palette as a
+  one-row `Rgba` picture (alpha from the palette-alpha record) and
+  leaving the index plane untouched.
+- `layout` module: named layout sets (`PACKED_8BIT`, `PACKED_RGB`,
+  `LEGACY`, `CLASSIC`, `BYTE_ADDRESSABLE`, `ALL`), `SampleKind` /
+  `sample_kind()`, core-derived `PlaneGeometry`, `validate_frame()`.
+- Filter × layout matrix (`tests/layout_matrix.rs`): every filter type
+  (139 single-input entries, 8 two-input) over all 70 `PixelFormat`
+  layouts on a picture carrying all six side-channel records, at an
+  even and an odd size — declared → `Ok` with the declared output
+  geometry, undeclared → typed refusal, never a panic. A `catalog`
+  module (`#[doc(hidden)]`) holds one instance of every filter for the
+  matrix and the fuzz target.
+
+### Fixed
+
+- `Rotate` by 90° / 270° re-grids chroma for layouts whose subsampling
+  is not symmetric (4:2:2, 4:4:0, 4:1:1): the turned chroma plane was
+  emitted at the *source* grid's transposed size, not the rotated
+  picture's `ceil(H/sx) × ceil(W/sy)`.
+- `Crop` (and `Shave`) emit chroma planes exactly on the cropped
+  picture's grid (`ceil(w/sx) × ceil(h/sy)` from `floor(x/sx)`,
+  `floor(y/sy)`) instead of rounding the rectangle outward, which
+  produced a chroma plane one sample wider / taller than the format's
+  own geometry for odd origins.
+- Edge / threshold / Hough / sketch / shade / `BwMix` / `MaxRgb` /
+  `ChannelExtract` declare their `Gray8` output, `Heatmap` /
+  `Cyanotype` / `GradientMap` their packed-RGB widening of grey input,
+  `ChannelExtract` its per-channel layouts.
+- A 0×0 picture, a missing plane or a short plane is a typed
+  `Error::InvalidData` from every filter (several filters used to pass
+  an empty picture through; a short plane could index out of bounds).
+
 ### Changed
 
 - Marked internal test-support surface `#[doc(hidden)]`

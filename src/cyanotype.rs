@@ -28,7 +28,7 @@
 //! Operates on `Gray8` (upgraded to `Rgb24` on output), `Rgb24`, and
 //! `Rgba` (alpha pass-through). YUV returns `Unsupported`.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Cyanotype vintage blue-print operator.
@@ -73,8 +73,24 @@ fn luma(r: u8, g: u8, b: u8) -> f32 {
     (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) / 255.0
 }
 
-impl ImageFilter for Cyanotype {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Cyanotype {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    /// Grey input is toned into packed RGB; colour layouts keep theirs.
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        match input {
+            oxideav_core::PixelFormat::Gray8 => oxideav_core::PixelFormat::Rgb24,
+            other => other,
+        }
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if input.planes.is_empty() {
             return Err(Error::invalid(
                 "oxideav-image-filter: Cyanotype requires a non-empty input plane",
@@ -170,6 +186,7 @@ impl ImageFilter for Cyanotype {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

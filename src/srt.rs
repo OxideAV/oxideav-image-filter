@@ -30,7 +30,7 @@
 //! transform — exactly what IM's `-distort SRT` does.
 
 use crate::affine::Affine;
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Scale / Rotate / Translate warp wrapping [`Affine`].
@@ -115,8 +115,16 @@ impl Srt {
     }
 }
 
-impl ImageFilter for Srt {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Srt {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::Affine::identity().accepted_formats()
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         self.to_affine().apply(input, params)
     }
 }
@@ -124,6 +132,7 @@ impl ImageFilter for Srt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::{PixelFormat, VideoPlane};
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {

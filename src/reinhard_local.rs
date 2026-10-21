@@ -53,7 +53,7 @@
 //! `K = 8` matches the §3.3 recommendation. Each scale runs a separable
 //! Gaussian, so the per-scale cost is linear in the kernel radius.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Local Reinhard "dodging-and-burning" tone-mapping operator
@@ -227,8 +227,16 @@ fn blur_field(src: &[f32], w: usize, h: usize, sigma: f32) -> Vec<f32> {
     out
 }
 
-impl ImageFilter for ReinhardLocal {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for ReinhardLocal {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,
@@ -398,6 +406,7 @@ impl ImageFilter for ReinhardLocal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

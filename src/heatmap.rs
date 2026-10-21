@@ -26,7 +26,7 @@
 //! `Rgba` — the source alpha is preserved). Other formats return
 //! [`Error::unsupported`].
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Built-in colour ramps.
@@ -76,8 +76,25 @@ impl Heatmap {
     }
 }
 
-impl ImageFilter for Heatmap {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Heatmap {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    /// False colour is packed RGB: `Rgba` keeps its alpha, every other
+    /// input (grey, YUV luma) becomes `Rgb24`.
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        match input {
+            oxideav_core::PixelFormat::Rgba => oxideav_core::PixelFormat::Rgba,
+            _ => oxideav_core::PixelFormat::Rgb24,
+        }
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let lut = build_lut(self.ramp);
         let w = params.width as usize;
         let h = params.height as usize;
@@ -243,6 +260,7 @@ fn build_lut(ramp: HeatmapRamp) -> Vec<[u8; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

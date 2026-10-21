@@ -24,7 +24,7 @@
 //! shape — the shadow is rendered onto the same canvas; consumers
 //! wanting an outset canvas should pre-pad with [`Extent`](crate::Extent).
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Drop-shadow filter.
@@ -81,8 +81,16 @@ impl DropShadow {
     }
 }
 
-impl ImageFilter for DropShadow {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for DropShadow {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::RGBA_ONLY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if params.format != PixelFormat::Rgba {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: DropShadow requires Rgba, got {:?}",
@@ -211,6 +219,7 @@ fn box_blur_gray(src: &[u8], w: usize, h: usize, radius: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgba(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 4]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 4) as usize);

@@ -18,7 +18,7 @@
 //! [`Error::unsupported`] — the glow is computed in display-RGB
 //! space, so YUV callers should explicitly transcode first.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Bloom / glow filter.
@@ -59,8 +59,16 @@ impl Bloom {
     }
 }
 
-impl ImageFilter for Bloom {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Bloom {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         match params.format {
             PixelFormat::Gray8 => apply_gray(self, input, params),
             PixelFormat::Rgb24 => apply_rgb(self, input, params, false),
@@ -202,6 +210,7 @@ fn box_blur_gray(src: &[u8], w: usize, h: usize, radius: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

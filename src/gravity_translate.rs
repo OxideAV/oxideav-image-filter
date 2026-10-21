@@ -15,7 +15,7 @@
 //! the existing [`Extent`](crate::extent::Extent) pipeline so YUV
 //! chroma subsampling alignment matches.
 
-use crate::{extent::Extent, ImageFilter, VideoStreamParams};
+use crate::{extent::Extent, ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// 9-point compass anchor mirroring the documented `-gravity` CLI.
@@ -97,8 +97,16 @@ impl GravityTranslate {
     }
 }
 
-impl ImageFilter for GravityTranslate {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for GravityTranslate {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::Extent::new(1, 1).accepted_formats()
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if self.width == 0 || self.height == 0 {
             return Err(Error::invalid(
                 "oxideav-image-filter: GravityTranslate width/height must be > 0",
@@ -120,6 +128,7 @@ impl ImageFilter for GravityTranslate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::{PixelFormat, VideoPlane};
 
     fn rgba(w: u32, h: u32, fill: [u8; 4]) -> VideoFrame {

@@ -10,7 +10,7 @@
 //! with endpoints clamped at 0 and 255 to avoid divide-by-zero when
 //! `white == black`. Mirrors the documented `-level LOW,MID,HIGH` CLI.
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Linear/gamma levels adjustment.
@@ -56,8 +56,16 @@ impl Level {
     }
 }
 
-impl ImageFilter for Level {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Level {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Level does not yet handle {:?}",
@@ -94,6 +102,7 @@ pub(crate) fn build_level_lut(black: u8, white: u8, gamma: f32) -> [u8; 256] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::{PixelFormat, VideoPlane};
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {

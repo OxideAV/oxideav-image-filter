@@ -8,7 +8,7 @@
 //! negative; parameter syntax mirrors the documented `-negate` CLI flag so
 //! the CLI layer can forward user input directly.
 
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Invert pixel values ("photo negative").
@@ -29,8 +29,16 @@ impl Negate {
     }
 }
 
-impl ImageFilter for Negate {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Negate {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Negate does not yet handle {:?}",
@@ -102,6 +110,7 @@ impl ImageFilter for Negate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {

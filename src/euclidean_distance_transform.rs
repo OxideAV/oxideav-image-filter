@@ -55,7 +55,7 @@
 //! glyph atlases, feathering masks, and morphology effects that need
 //! a metric better than the chamfer approximation.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Exact-Euclidean Distance-Transform filter (Felzenszwalb–Huttenlocher
@@ -357,8 +357,16 @@ pub(crate) fn edt_squared_2d(mask: &[bool], w: usize, h: usize) -> Vec<f64> {
     f
 }
 
-impl ImageFilter for EuclideanDistanceTransform {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for EuclideanDistanceTransform {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::GRAY8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: EuclideanDistanceTransform requires Gray8, got {:?}",
@@ -420,6 +428,7 @@ impl ImageFilter for EuclideanDistanceTransform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
@@ -730,8 +739,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_dimensions_clone_input() {
-        // 0×0 → bypass, returns the input verbatim.
+    fn empty_dimensions_are_a_typed_refusal() {
+        // 0×0 is not a picture: the wrapper refuses it before the
+        // transform runs (typed, never a panic).
         let input = VideoFrame {
             pts: Some(42),
             planes: vec![VideoPlane {
@@ -739,10 +749,10 @@ mod tests {
                 data: vec![],
             }],
         };
-        let out = EuclideanDistanceTransform::default()
+        let err = EuclideanDistanceTransform::default()
             .apply(&input, p_gray(0, 0))
-            .unwrap();
-        assert_eq!(out.pts, Some(42));
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidData(_)));
     }
 
     #[test]

@@ -17,7 +17,7 @@
 //! uses a *local* window mean; Otsu is a single global cut whose value
 //! is data-driven (so the caller need not pre-pick a level).
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Otsu auto-thresholder.
@@ -97,8 +97,21 @@ fn rec601(r: u8, g: u8, b: u8) -> u8 {
     ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000).min(255) as u8
 }
 
-impl ImageFilter for OtsuThreshold {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for OtsuThreshold {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    /// Collapses every input to a single-plane `Gray8` picture.
+    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        oxideav_core::PixelFormat::Gray8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let w = params.width as usize;
         let h = params.height as usize;
         if w == 0 || h == 0 {
@@ -168,6 +181,7 @@ impl ImageFilter for OtsuThreshold {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

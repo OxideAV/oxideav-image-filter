@@ -21,7 +21,7 @@
 //!   so this is internally consistent.
 
 use crate::blur::{chroma_subsampling, plane_dims};
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which channel to pull out as a `Gray8` frame.
@@ -75,8 +75,34 @@ impl ChannelExtract {
     }
 }
 
-impl ImageFilter for ChannelExtract {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for ChannelExtract {
+    /// The layouts that carry the requested channel: `Red` reads grey
+    /// as well as packed RGB(A), `Green` / `Blue` need packed RGB(A),
+    /// `Alpha` needs `Rgba`, `Y` reads grey or planar YUV, `U` / `V`
+    /// need planar YUV.
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        use oxideav_core::PixelFormat as P;
+        const Y: &[P] = &[P::Gray8, P::Yuv420P, P::Yuv422P, P::Yuv444P];
+        const UV: &[P] = &[P::Yuv420P, P::Yuv422P, P::Yuv444P];
+        match self.channel {
+            Channel::Red => crate::layout::PACKED_8BIT,
+            Channel::Green | Channel::Blue => crate::layout::PACKED_RGB,
+            Channel::Alpha => crate::layout::RGBA_ONLY,
+            Channel::Y => Y,
+            Channel::U | Channel::V => UV,
+        }
+    }
+
+    /// Collapses every input to a single-plane `Gray8` picture.
+    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        oxideav_core::PixelFormat::Gray8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: ChannelExtract does not yet handle {:?}",
@@ -153,6 +179,7 @@ impl ImageFilter for ChannelExtract {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     #[test]
     fn parse_short_and_long_names() {
@@ -259,7 +286,10 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert!(format!("{err}").contains("Alpha"));
+        // `Alpha` declares `Rgba` only; the wrapper's refusal names the
+        // layout it was handed.
+        assert!(matches!(err, Error::Unsupported(_)));
+        assert!(format!("{err}").contains("Rgb24"));
     }
 
     #[test]
@@ -291,6 +321,9 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert!(format!("{err}").contains("Red"));
+        // Declared per channel: `Red` does not list the YUV layouts, so
+        // the wrapper refuses before the extractor runs.
+        assert!(matches!(err, Error::Unsupported(_)));
+        assert!(format!("{err}").contains("Yuv420P"));
     }
 }

@@ -4,7 +4,7 @@
 //! `(x, y, w, h)` rectangle. Clean-room from the obvious definition:
 //! the output pixel `(i, j)` is the input pixel `(x + i, y + j)`.
 
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Crop a rectangular region out of a frame.
@@ -35,8 +35,16 @@ impl Crop {
     }
 }
 
-impl ImageFilter for Crop {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Crop {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Crop does not yet handle {:?}",
@@ -80,9 +88,16 @@ impl ImageFilter for Crop {
     }
 }
 
-/// Compute the per-plane crop rectangle. For planar YUV we scale the
-/// (x, y, w, h) rectangle by the chroma subsampling factor and round
-/// outward so the chroma region fully contains the cropped luma region.
+/// Compute the per-plane crop rectangle. For a subsampled chroma plane
+/// the origin is the chroma site holding the luma origin (`x / cx`,
+/// `y / cy`) and the extent is the cropped picture's own chroma grid
+/// (`ceil(w / cx) × ceil(h / cy)`) — so every output plane has exactly
+/// the geometry [`PixelFormat::plane_dimensions`] reports for the
+/// cropped picture, which is what every consumer of the frame computes.
+/// That rectangle always lies inside the source chroma plane
+/// (`floor(x/c) + ceil(w/c) ≤ ceil((x+w)/c)`). An origin that is not a
+/// multiple of the subsampling factor keeps the chroma sample that
+/// covers it: a crop moves indices, it does not resample.
 fn plane_rect(
     fmt: oxideav_core::PixelFormat,
     idx: usize,
@@ -94,13 +109,7 @@ fn plane_rect(
     let (x, y, w, h) = rect;
     match fmt {
         PixelFormat::Yuv420P | PixelFormat::Yuv422P | PixelFormat::Yuv444P if idx > 0 => {
-            let px = x / cx;
-            let py = y / cy;
-            // For odd-aligned crops the chroma rect has to cover the
-            // fractional samples on either side. Round end position up.
-            let pw = (x + w).div_ceil(cx).saturating_sub(px);
-            let ph = (y + h).div_ceil(cy).saturating_sub(py);
-            (px, py, pw, ph)
+            (x / cx, y / cy, w.div_ceil(cx), h.div_ceil(cy))
         }
         _ => (x, y, w, h),
     }
@@ -127,6 +136,7 @@ fn crop_plane(src: &VideoPlane, x: u32, y: u32, w: u32, h: u32, bpp: usize) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::PixelFormat;
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {

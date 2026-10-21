@@ -28,7 +28,7 @@
 //! Both inputs must share the same `PixelFormat`. Other formats return
 //! [`Error::unsupported`].
 
-use crate::{TwoInputImageFilter, VideoStreamParams};
+use crate::{TwoInputPixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Watermark overlay filter.
@@ -77,8 +77,21 @@ impl Watermark {
     }
 }
 
-impl TwoInputImageFilter for Watermark {
-    fn apply_two(
+impl TwoInputPixelFilter for Watermark {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    /// The overlay on port 1 is `overlay_width × overlay_height`.
+    fn dst_params(&self, params: VideoStreamParams) -> VideoStreamParams {
+        VideoStreamParams {
+            width: self.overlay_width,
+            height: self.overlay_height,
+            ..params
+        }
+    }
+
+    fn apply_two_pixels(
         &self,
         src: &VideoFrame,
         dst: &VideoFrame,
@@ -169,6 +182,7 @@ impl TwoInputImageFilter for Watermark {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TwoInputImageFilter;
 
     fn rgb(w: u32, h: u32, fill: [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);
@@ -289,9 +303,12 @@ mod tests {
     fn rejects_zero_overlay_shape() {
         let s = rgb(4, 4, [0, 0, 0]);
         let d = rgb(2, 2, [0, 0, 0]);
+        // A zero-extent overlay is refused by the frame validation the
+        // two-input wrapper runs on port 1 (typed, names the filter).
         let err = Watermark::default()
             .apply_two(&s, &d, p_rgb(4, 4))
             .unwrap_err();
-        assert!(format!("{err}").contains("overlay_width"));
+        assert!(matches!(err, Error::InvalidData(_)));
+        assert!(format!("{err}").contains("Watermark"));
     }
 }

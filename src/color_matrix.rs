@@ -18,7 +18,7 @@
 //!   is intrinsically chromatic; callers wanting a per-channel scale
 //!   on luma should use [`Evaluate`](crate::Evaluate) `Multiply`.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// 3×3 colour matrix with an optional 3-vector offset.
@@ -73,8 +73,16 @@ impl ColorMatrix {
     }
 }
 
-impl ImageFilter for ColorMatrix {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for ColorMatrix {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_RGB
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,
@@ -121,6 +129,7 @@ fn clamp_u8(v: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn rgba(w: u32, h: u32, pat: impl Fn(u32, u32) -> [u8; 4]) -> VideoFrame {

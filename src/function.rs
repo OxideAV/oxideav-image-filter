@@ -29,7 +29,7 @@
 //! transform every channel; `Rgba` preserves alpha; `Yuv*P` only the
 //! Y plane.
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Which mathematical kind the [`Function`] filter applies.
@@ -83,8 +83,16 @@ impl Function {
     }
 }
 
-impl ImageFilter for Function {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Function {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Function does not yet handle {:?}",
@@ -166,6 +174,7 @@ fn clamp_round(v: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::{PixelFormat, VideoPlane};
 
     fn gray(w: u32, h: u32, pat: impl Fn(u32, u32) -> u8) -> VideoFrame {

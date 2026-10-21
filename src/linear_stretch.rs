@@ -13,7 +13,7 @@
 //! - The stretch is per-channel (matching IM behaviour).
 
 use crate::{
-    contrast_stretch::build_lut_from_hist, is_supported_format, ImageFilter, VideoStreamParams,
+    contrast_stretch::build_lut_from_hist, is_supported_format, PixelFilter, VideoStreamParams,
 };
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
@@ -42,8 +42,16 @@ impl LinearStretch {
     }
 }
 
-impl ImageFilter for LinearStretch {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for LinearStretch {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: LinearStretch does not yet handle {:?}",
@@ -144,6 +152,7 @@ fn stretch_packed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn gray(w: u32, h: u32, pat: impl Fn(u32, u32) -> u8) -> VideoFrame {

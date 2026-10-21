@@ -42,7 +42,7 @@
 //!
 //! Other formats return [`Error::unsupported`].
 
-use crate::{ImageFilter, TwoInputImageFilter, VideoStreamParams};
+use crate::{PixelFilter, TwoInputImageFilter, TwoInputPixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which composite operator to apply.
@@ -164,8 +164,12 @@ impl Composite {
     }
 }
 
-impl TwoInputImageFilter for Composite {
-    fn apply_two(
+impl TwoInputPixelFilter for Composite {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_two_pixels(
         &self,
         src: &VideoFrame,
         dst: &VideoFrame,
@@ -187,8 +191,16 @@ impl TwoInputImageFilter for Composite {
 /// it usable through the existing one-port `ImageFilterAdapter`
 /// path purely as a convenience for tests and ad-hoc chaining;
 /// the pipeline-facing factories use the two-input adapter.
-impl ImageFilter for Composite {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Composite {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         // Cheap clone of the planes — VideoFrame is shallow.
         let dst = VideoFrame {
             pts: input.pts,
@@ -597,6 +609,7 @@ fn u8_round(v: f32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TwoInputImageFilter;
 
     fn rgba_pixel(s: [u8; 4], d: [u8; 4], op: CompositeOp) -> [u8; 4] {
         let src = VideoFrame {

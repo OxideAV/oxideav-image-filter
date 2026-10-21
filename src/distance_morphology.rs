@@ -44,7 +44,7 @@
 //! `fg_value` (default `255`) on the result foreground, `0` elsewhere.
 
 use crate::euclidean_distance_transform::edt_squared_2d;
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which morphological operation a [`DistanceMorphology`] performs.
@@ -174,8 +174,16 @@ impl DistanceMorphology {
     }
 }
 
-impl ImageFilter for DistanceMorphology {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for DistanceMorphology {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::GRAY8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: DistanceMorphology requires Gray8, got {:?}",
@@ -336,8 +344,16 @@ impl DistanceOutline {
     }
 }
 
-impl ImageFilter for DistanceOutline {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for DistanceOutline {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::GRAY8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: DistanceOutline requires Gray8, got {:?}",
@@ -397,6 +413,7 @@ impl ImageFilter for DistanceOutline {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

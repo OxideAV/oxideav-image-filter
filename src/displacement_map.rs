@@ -32,7 +32,7 @@
 //! return [`Error::unsupported`].
 
 use crate::zoom_blur::bilinear_sample;
-use crate::{TwoInputImageFilter, VideoStreamParams};
+use crate::{TwoInputPixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Displacement-map filter.
@@ -71,8 +71,12 @@ impl DisplacementMap {
     }
 }
 
-impl TwoInputImageFilter for DisplacementMap {
-    fn apply_two(
+impl TwoInputPixelFilter for DisplacementMap {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_two_pixels(
         &self,
         src: &VideoFrame,
         dst: &VideoFrame,
@@ -138,6 +142,7 @@ impl TwoInputImageFilter for DisplacementMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TwoInputImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

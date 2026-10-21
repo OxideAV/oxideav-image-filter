@@ -18,7 +18,7 @@
 //! preserved on RGBA) is the same as for [`Gamma`](crate::Gamma) and
 //! friends — see [`apply_tone_lut`](crate::tonal_lut::apply_tone_lut).
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Sigmoid-curve contrast filter.
@@ -57,8 +57,16 @@ impl SigmoidalContrast {
     }
 }
 
-impl ImageFilter for SigmoidalContrast {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for SigmoidalContrast {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: SigmoidalContrast does not yet handle {:?}",
@@ -109,6 +117,7 @@ fn sigmoid(x: f32, alpha: f32, beta: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::{PixelFormat, VideoPlane};
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {

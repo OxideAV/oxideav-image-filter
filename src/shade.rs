@@ -38,7 +38,7 @@
 //! - `Yuv*P`: the Y plane is treated as the height field and modulated;
 //!   chroma is preserved.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Directional shading from a virtual light source.
@@ -146,8 +146,21 @@ fn shade_intensity_map(field: &[u8], w: usize, h: usize, az_deg: f32, el_deg: f3
     out
 }
 
-impl ImageFilter for Shade {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Shade {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    /// Collapses every input to a single-plane `Gray8` picture.
+    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        oxideav_core::PixelFormat::Gray8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let supported = matches!(
             params.format,
             PixelFormat::Gray8
@@ -243,6 +256,7 @@ impl ImageFilter for Shade {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

@@ -47,7 +47,7 @@
 //! returns `Unsupported` — the range comparison only makes sense in a
 //! gamma / luma-coherent space.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Edge-preserving bilateral blur.
@@ -156,8 +156,16 @@ fn bilateral_plane(
     out
 }
 
-impl ImageFilter for BilateralBlur {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for BilateralBlur {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let (bpp, channels, has_alpha) = match params.format {
             PixelFormat::Gray8 => (1usize, 1usize, false),
             PixelFormat::Rgb24 => (3, 3, false),
@@ -216,6 +224,7 @@ impl ImageFilter for BilateralBlur {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn p_rgb(w: u32, h: u32) -> VideoStreamParams {
         VideoStreamParams {

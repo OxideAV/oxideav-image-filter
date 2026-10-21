@@ -24,7 +24,7 @@
 //! `Unsupported` (the per-channel knobs only make sense on
 //! direct-colour data).
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Three-way ASC CDL-style colour balance.
@@ -81,8 +81,16 @@ impl ColorBalance {
     }
 }
 
-impl ImageFilter for ColorBalance {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for ColorBalance {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let bpp = match params.format {
             PixelFormat::Gray8 => 1,
             PixelFormat::Rgb24 => 3,
@@ -144,6 +152,7 @@ impl ImageFilter for ColorBalance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

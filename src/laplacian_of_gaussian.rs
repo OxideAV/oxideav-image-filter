@@ -111,7 +111,7 @@
 //! hand-computed from the formulae above.
 
 use crate::laplacian::build_luma_plane;
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Output mode for the Laplacian-of-Gaussian filter.
@@ -220,8 +220,21 @@ impl LaplacianOfGaussian {
     }
 }
 
-impl ImageFilter for LaplacianOfGaussian {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for LaplacianOfGaussian {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    /// Collapses every input to a single-plane `Gray8` picture.
+    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        oxideav_core::PixelFormat::Gray8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: LaplacianOfGaussian does not yet handle {:?}",
@@ -394,6 +407,7 @@ fn render_zero_crossings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::PixelFormat;
 
     fn gray(w: u32, h: u32, pat: impl Fn(u32, u32) -> u8) -> VideoFrame {

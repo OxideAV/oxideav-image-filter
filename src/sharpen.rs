@@ -9,7 +9,7 @@
 //! RGB/RGBA inputs.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{is_supported_format, Blur, ImageFilter, Planes, VideoStreamParams};
+use crate::{is_supported_format, Blur, ImageFilter, PixelFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Sharpen an image via unsharp-mask. See the module docs for the
@@ -48,8 +48,16 @@ impl Sharpen {
     }
 }
 
-impl ImageFilter for Sharpen {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Sharpen {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Sharpen does not yet handle {:?}",
@@ -139,6 +147,7 @@ pub(crate) fn unsharp_mask_plane(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
         for y in 0..h {

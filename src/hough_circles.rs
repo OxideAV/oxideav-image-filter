@@ -23,7 +23,7 @@
 //! Pixel formats: same `Gray8` / `Rgb24` / `Rgba` / planar-YUV set as
 //! [`HoughLines`]; output is always single-plane `Gray8`.
 
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Hough-circle detector.
@@ -81,8 +81,21 @@ impl HoughCircles {
     }
 }
 
-impl ImageFilter for HoughCircles {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for HoughCircles {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    /// Collapses every input to a single-plane `Gray8` picture.
+    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        oxideav_core::PixelFormat::Gray8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: HoughCircles does not yet handle {:?}",
@@ -293,6 +306,7 @@ fn bresenham_circle(r: i32) -> Vec<(i32, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
@@ -321,8 +335,10 @@ mod tests {
     #[test]
     fn empty_input_no_panics() {
         let input = gray(0, 0, |_, _| 0);
-        let out = HoughCircles::default().apply(&input, p_gray(0, 0)).unwrap();
-        assert_eq!(out.planes[0].data.len(), 0);
+        let err = HoughCircles::default()
+            .apply(&input, p_gray(0, 0))
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidData(_)));
     }
 
     #[test]

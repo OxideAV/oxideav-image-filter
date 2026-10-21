@@ -22,7 +22,7 @@
 //! differenced independently). Other formats return
 //! [`Error::unsupported`].
 
-use crate::{TwoInputImageFilter, VideoStreamParams};
+use crate::{TwoInputPixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Pixel-wise absolute-difference filter.
@@ -35,8 +35,12 @@ impl Difference {
     }
 }
 
-impl TwoInputImageFilter for Difference {
-    fn apply_two(
+impl TwoInputPixelFilter for Difference {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_two_pixels(
         &self,
         src: &VideoFrame,
         dst: &VideoFrame,
@@ -141,6 +145,7 @@ fn diff_planar_yuv(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TwoInputImageFilter;
 
     fn rgb(w: u32, h: u32, fill: [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

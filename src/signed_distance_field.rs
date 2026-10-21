@@ -63,7 +63,7 @@
 //! it to the `Gray8` floor / ceiling accordingly.
 
 use crate::euclidean_distance_transform::{dt_1d, INF};
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Signed-distance-field filter (difference of two exact-Euclidean
@@ -181,8 +181,16 @@ fn edt_2d(f: &mut [f64], w: usize, h: usize) {
     }
 }
 
-impl ImageFilter for SignedDistanceField {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for SignedDistanceField {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::GRAY8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: SignedDistanceField requires Gray8, got {:?}",
@@ -253,6 +261,7 @@ impl ImageFilter for SignedDistanceField {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
@@ -530,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_dimensions_clone_input() {
+    fn empty_dimensions_are_a_typed_refusal() {
         let input = VideoFrame {
             pts: Some(7),
             planes: vec![VideoPlane {
@@ -538,10 +547,10 @@ mod tests {
                 data: vec![],
             }],
         };
-        let out = SignedDistanceField::default()
+        let err = SignedDistanceField::default()
             .apply(&input, p_gray(0, 0))
-            .unwrap();
-        assert_eq!(out.pts, Some(7));
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidData(_)));
     }
 
     #[test]

@@ -24,7 +24,7 @@
 //!
 //! Operates on `Gray8` / `Rgb24` / `Rgba`. YUV inputs touch luma only.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Independent shadow + highlight tonal-range recovery.
@@ -78,8 +78,16 @@ impl ShadowHighlight {
     }
 }
 
-impl ImageFilter for ShadowHighlight {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for ShadowHighlight {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let lut = self.build_lut();
         match params.format {
             PixelFormat::Gray8 => {
@@ -180,6 +188,7 @@ impl ImageFilter for ShadowHighlight {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

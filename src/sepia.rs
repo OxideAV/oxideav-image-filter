@@ -12,7 +12,7 @@
 //! A `threshold` parameter in `0.0..=1.0` blends between the original
 //! (0) and the full sepia conversion (1).
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Sepia-tone colour remap for RGB/RGBA frames.
@@ -39,8 +39,16 @@ impl Sepia {
     }
 }
 
-impl ImageFilter for Sepia {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Sepia {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_RGB
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),
@@ -96,6 +104,7 @@ impl ImageFilter for Sepia {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);
         for y in 0..h {

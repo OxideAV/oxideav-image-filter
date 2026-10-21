@@ -20,7 +20,7 @@
 //!   the colour channels — same offset is used for all components of a
 //!   pixel, so RGBA stays self-consistent.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Random pixel-position perturbation with a fixed neighbourhood.
@@ -59,8 +59,16 @@ impl Spread {
     }
 }
 
-impl ImageFilter for Spread {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Spread {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_RGB
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,
@@ -133,6 +141,7 @@ impl ImageFilter for Spread {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

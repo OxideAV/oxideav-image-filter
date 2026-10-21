@@ -24,7 +24,7 @@
 //! (alpha pass-through on RGBA). YUV / planar / higher-bit formats
 //! return [`Error::unsupported`].
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// A single gradient stop: position in `[0, 1]` + RGB colour.
@@ -163,8 +163,24 @@ fn rec601(r: u8, g: u8, b: u8) -> u8 {
     ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000).min(255) as u8
 }
 
-impl ImageFilter for GradientMap {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for GradientMap {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    /// Grey input is mapped onto the RGB ramp; colour layouts keep theirs.
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        match input {
+            oxideav_core::PixelFormat::Gray8 => oxideav_core::PixelFormat::Rgb24,
+            other => other,
+        }
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,
@@ -235,6 +251,7 @@ impl ImageFilter for GradientMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

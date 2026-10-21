@@ -10,7 +10,7 @@
 //! universally useful and letting callers pick is clearer.
 
 use crate::{
-    is_supported_format, level::build_level_lut, tonal_lut::apply_tone_lut, ImageFilter,
+    is_supported_format, level::build_level_lut, tonal_lut::apply_tone_lut, PixelFilter,
     VideoStreamParams,
 };
 use oxideav_core::{Error, PixelFormat, VideoFrame};
@@ -52,8 +52,16 @@ impl Normalize {
     }
 }
 
-impl ImageFilter for Normalize {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Normalize {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Normalize does not yet handle {:?}",
@@ -165,6 +173,7 @@ fn scan_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {

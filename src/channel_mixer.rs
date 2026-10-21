@@ -27,7 +27,7 @@
 //! Operates on `Rgb24` / `Rgba`; YUV inputs return
 //! `Error::unsupported` (use [`ColorMatrix`] which is also RGB-only).
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// 4×4 channel-mixing matrix (row-major) + 4-vector offset.
@@ -91,8 +91,16 @@ impl ChannelMixer {
     }
 }
 
-impl ImageFilter for ChannelMixer {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for ChannelMixer {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_RGB
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),
@@ -152,6 +160,7 @@ impl ImageFilter for ChannelMixer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn p_rgb(w: u32, h: u32) -> VideoStreamParams {
         VideoStreamParams {

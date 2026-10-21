@@ -17,7 +17,7 @@
 //! plane 0 (the existing luma plane). YUV `Yuv420P` etc. work
 //! directly.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Local-mean-based adaptive threshold.
@@ -146,8 +146,21 @@ fn local_mean(src: &[u8], w: usize, h: usize, radius: usize) -> Vec<u16> {
     out
 }
 
-impl ImageFilter for AdaptiveThreshold {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for AdaptiveThreshold {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    /// Collapses every input to a single-plane `Gray8` picture.
+    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        oxideav_core::PixelFormat::Gray8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let w = params.width as usize;
         let h = params.height as usize;
         if w == 0 || h == 0 {
@@ -176,6 +189,7 @@ impl ImageFilter for AdaptiveThreshold {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

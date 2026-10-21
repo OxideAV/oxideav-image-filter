@@ -4,7 +4,7 @@
 //! Output can either stay in the input's RGB layout (each channel set
 //! to `y`) or collapse to `Gray8` when `output_gray8` is set.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// RGB → grayscale desaturation.
@@ -51,8 +51,16 @@ fn luma(r: u8, g: u8, b: u8) -> u8 {
     y.round().clamp(0.0, 255.0) as u8
 }
 
-impl ImageFilter for Grayscale {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Grayscale {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),
@@ -136,6 +144,7 @@ impl ImageFilter for Grayscale {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);
         for y in 0..h {

@@ -19,7 +19,7 @@
 //!
 //! `Rgb24` / `Rgba`. Other formats return [`Error::unsupported`].
 
-use crate::{TwoInputImageFilter, VideoStreamParams};
+use crate::{TwoInputPixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Red/cyan anaglyph stereo composer.
@@ -34,8 +34,12 @@ impl Stereo {
     }
 }
 
-impl TwoInputImageFilter for Stereo {
-    fn apply_two(
+impl TwoInputPixelFilter for Stereo {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_RGB
+    }
+
+    fn apply_two_pixels(
         &self,
         src: &VideoFrame,
         dst: &VideoFrame,
@@ -89,6 +93,7 @@ impl TwoInputImageFilter for Stereo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TwoInputImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

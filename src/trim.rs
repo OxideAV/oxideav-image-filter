@@ -13,7 +13,7 @@
 //! IM's `-fuzz N` semantics on `[0, 255]` channels.
 
 use crate::blur::bytes_per_plane_pixel;
-use crate::{is_supported_format, Crop, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, Crop, ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Crop the frame down to the bounding box of pixels that differ from
@@ -50,8 +50,16 @@ impl Trim {
     }
 }
 
-impl ImageFilter for Trim {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Trim {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Trim does not yet handle {:?}",
@@ -153,6 +161,7 @@ fn compute_bbox(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {

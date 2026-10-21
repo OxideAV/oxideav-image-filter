@@ -9,7 +9,7 @@
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
 use crate::sharpen::unsharp_mask_plane;
-use crate::{is_supported_format, Blur, ImageFilter, Planes, VideoStreamParams};
+use crate::{is_supported_format, Blur, ImageFilter, PixelFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Unsharp-mask with a contrast threshold.
@@ -47,8 +47,16 @@ impl Unsharp {
     }
 }
 
-impl ImageFilter for Unsharp {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Unsharp {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Unsharp does not yet handle {:?}",
@@ -97,6 +105,7 @@ impl ImageFilter for Unsharp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {

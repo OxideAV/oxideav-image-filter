@@ -27,7 +27,7 @@
 //!   mean of the modal bucket.
 //! - YUV / other formats return `Error::unsupported`.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Oil-paint stylise filter.
@@ -65,8 +65,16 @@ fn luma(r: u8, g: u8, b: u8) -> u8 {
     ((r as u32 * 77 + g as u32 * 150 + b as u32 * 29) >> 8) as u8
 }
 
-impl ImageFilter for Paint {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Paint {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Gray8 => (1usize, false),
             PixelFormat::Rgb24 => (3usize, false),
@@ -174,6 +182,7 @@ impl ImageFilter for Paint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

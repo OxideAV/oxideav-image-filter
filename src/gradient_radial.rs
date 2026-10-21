@@ -15,7 +15,7 @@
 //! Operates on `Gray8`, `Rgb24`, `Rgba`. YUV formats return
 //! `Unsupported`.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Radial-gradient filter.
@@ -72,8 +72,16 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
     v.round().clamp(0.0, 255.0) as u8
 }
 
-impl ImageFilter for GradientRadial {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for GradientRadial {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let w = params.width as usize;
         let h = params.height as usize;
         if w == 0 || h == 0 {
@@ -135,6 +143,7 @@ impl ImageFilter for GradientRadial {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn empty_rgba(w: u32, h: u32) -> VideoFrame {
         VideoFrame {

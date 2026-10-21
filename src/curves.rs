@@ -129,7 +129,7 @@
 //! on luma plane only — chroma untouched, matching the documented CLI's
 //! `-channel RGB -function …` convention for tonal ops).
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Interpolation mode for [`Curves`].
@@ -965,8 +965,16 @@ impl Curves {
     }
 }
 
-impl ImageFilter for Curves {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Curves {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let (lr, lg, lb) = self.luts();
         match params.format {
             PixelFormat::Gray8 => {
@@ -1061,6 +1069,7 @@ impl ImageFilter for Curves {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

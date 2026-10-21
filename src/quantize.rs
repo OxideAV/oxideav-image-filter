@@ -31,7 +31,7 @@
 //!   independently).
 //! - YUV / other formats return `Error::unsupported`.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Uniform-grid colour quantizer.
@@ -78,8 +78,16 @@ impl Quantize {
     }
 }
 
-impl ImageFilter for Quantize {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Quantize {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Gray8 => (1usize, false),
             PixelFormat::Rgb24 => (3usize, false),
@@ -144,6 +152,7 @@ impl ImageFilter for Quantize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use std::collections::HashSet;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {

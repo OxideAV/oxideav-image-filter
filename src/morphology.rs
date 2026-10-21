@@ -30,7 +30,7 @@
 //! `Planes` selector if a luma-only mode is needed.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which extremum the morphology pass takes over its window.
@@ -108,8 +108,16 @@ impl Morphology {
     }
 }
 
-impl ImageFilter for Morphology {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Morphology {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Morphology does not yet handle {:?}",
@@ -167,8 +175,16 @@ pub struct MorphologyChain {
     pub second: Morphology,
 }
 
-impl ImageFilter for MorphologyChain {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for MorphologyChain {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let mid = self.first.apply(input, params)?;
         self.second.apply(&mid, params)
     }
@@ -238,8 +254,16 @@ impl MorphologyEdge {
     }
 }
 
-impl ImageFilter for MorphologyEdge {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for MorphologyEdge {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         // Reuse the same code path as `Morphology` for both passes.
         let dilated_or_erode = match self.op {
             EdgeOp::EdgeIn => Morphology::erode(self.element, 1).apply(input, params)?,
@@ -388,6 +412,7 @@ fn morph_plane(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray_frame(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

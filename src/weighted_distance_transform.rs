@@ -62,7 +62,7 @@
 //! clamped to `[0, 255]`.
 
 use crate::euclidean_distance_transform::{dt_1d, INF};
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Weighted (generalised) distance-transform filter — the continuous-
@@ -132,8 +132,16 @@ impl WeightedDistanceTransform {
     }
 }
 
-impl ImageFilter for WeightedDistanceTransform {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for WeightedDistanceTransform {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::GRAY8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: WeightedDistanceTransform requires Gray8, got {:?}",
@@ -233,6 +241,7 @@ impl ImageFilter for WeightedDistanceTransform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
@@ -477,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_dimensions_passthrough() {
+    fn empty_dimensions_are_a_typed_refusal() {
         let frame = VideoFrame {
             pts: Some(7),
             planes: vec![VideoPlane {
@@ -485,10 +494,10 @@ mod tests {
                 data: vec![],
             }],
         };
-        let out = WeightedDistanceTransform::new(8.0)
+        let err = WeightedDistanceTransform::new(8.0)
             .apply(&frame, p_gray(0, 4))
-            .unwrap();
-        assert_eq!(out.pts, Some(7));
+            .unwrap_err();
+        assert!(matches!(err, Error::InvalidData(_)));
     }
 
     #[test]

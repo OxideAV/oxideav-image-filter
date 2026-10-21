@@ -697,6 +697,8 @@ pub mod brightness_contrast;
 pub mod bw_mix;
 pub mod canny;
 pub mod canvas;
+#[doc(hidden)]
+pub mod catalog;
 pub mod channel_extract;
 pub mod channel_mixer;
 pub mod charcoal;
@@ -764,6 +766,7 @@ pub mod inner_shadow;
 pub mod kuwahara;
 pub mod laplacian;
 pub mod laplacian_of_gaussian;
+pub mod layout;
 pub mod level;
 pub mod linear_stretch;
 pub mod max_rgb;
@@ -791,6 +794,7 @@ pub mod resize;
 pub mod roberts;
 pub mod roll;
 pub mod rotate;
+mod route;
 pub mod scharr;
 pub mod selective_color;
 pub mod sepia;
@@ -798,6 +802,7 @@ pub mod shade;
 pub mod shadow_highlight;
 pub mod sharpen;
 pub mod shave;
+pub mod side_channels;
 pub mod sigmoidal_contrast;
 pub mod signed_distance_field;
 pub mod sketch;
@@ -1003,7 +1008,36 @@ pub struct VideoStreamParams {
 pub trait ImageFilter: Send {
     /// Apply the filter to `input`, producing a new frame. The filter
     /// must not retain any reference to `input`.
+    ///
+    /// For every filter in this crate `input` may carry `oxideav-core`
+    /// side-channel records (palette, palette alpha, significant bits,
+    /// colour signal, layer identity, metadata blobs) behind its image
+    /// planes: they are never read as pixels and are re-attached to the
+    /// output under the ruling in [`side_channels`]. A layout the
+    /// filter does not take is a typed [`Error::Unsupported`] naming the
+    /// layout; a malformed frame (wrong plane count, short or
+    /// mis-strided plane) is a typed [`Error::InvalidData`]. Neither
+    /// panics.
     fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error>;
+
+    /// Every pixel layout this filter takes, in [`layout::ALL`] order —
+    /// natively or through a documented route (the pointwise palette
+    /// route for `Pal8`). Empty when the implementation does not declare
+    /// its layouts (an implementor outside this crate that only provides
+    /// [`apply`](Self::apply)); every filter in this crate declares.
+    fn accepted_pixel_formats(&self) -> Vec<PixelFormat> {
+        Vec::new()
+    }
+
+    /// The layout this filter emits for an `input` layout it takes
+    /// (`None` when it does not take `input`, or when the implementation
+    /// does not declare). Most filters keep the input layout; the
+    /// edge / threshold / distance families emit `Gray8`, the false-colour
+    /// and stereo families emit packed RGB.
+    fn output_pixel_format(&self, input: PixelFormat) -> Option<PixelFormat> {
+        let _ = input;
+        None
+    }
 }
 
 /// A filter that combines two video frames — `src` (foreground) and
@@ -1025,12 +1059,141 @@ pub trait ImageFilter: Send {
 pub trait TwoInputImageFilter: Send {
     /// Combine `src` and `dst` into a new frame. Neither input is
     /// retained beyond this call.
+    ///
+    /// Side-channel records on either input are never read as pixels;
+    /// the output carries `src`'s records (input port 0) under the
+    /// [`side_channels`] ruling.
     fn apply_two(
         &self,
         src: &VideoFrame,
         dst: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error>;
+
+    /// Every pixel layout this filter takes (see
+    /// [`ImageFilter::accepted_pixel_formats`]).
+    fn accepted_pixel_formats(&self) -> Vec<PixelFormat> {
+        Vec::new()
+    }
+
+    /// The layout emitted for an `input` layout it takes (see
+    /// [`ImageFilter::output_pixel_format`]).
+    fn output_pixel_format(&self, input: PixelFormat) -> Option<PixelFormat> {
+        let _ = input;
+        None
+    }
+}
+
+/// What a concrete filter implements: the pixel work on a frame that
+/// holds nothing but image planes, plus a declaration of the layouts
+/// it takes and emits. Every `PixelFilter` is an [`ImageFilter`] through
+/// a blanket impl whose `apply` adds the layout gate, the frame
+/// validation, the side-channel stripping / re-attachment and the
+/// `Pal8` palette route — so no filter body ever sees a side-channel
+/// record, a mis-sized plane, or a layout it did not declare.
+///
+/// Implement this (not [`ImageFilter`]) for a new filter.
+pub trait PixelFilter: Send {
+    /// The layouts [`apply_pixels`](Self::apply_pixels) handles
+    /// natively. Pick a named set from [`layout`] or return a slice of
+    /// your own. A layout outside this set is refused before
+    /// `apply_pixels` runs — never narrowed, never widened silently.
+    fn accepted_formats(&self) -> &'static [PixelFormat];
+
+    /// The layout the output frame is in when the input is `input` (one
+    /// of [`accepted_formats`](Self::accepted_formats)). Defaults to the
+    /// input layout; filters that collapse to a mask or expand to colour
+    /// override it. Drives the registry's output port label and the
+    /// side-channel ruling.
+    fn output_format(&self, input: PixelFormat) -> PixelFormat {
+        input
+    }
+
+    /// `true` when every output pixel depends only on the input pixel at
+    /// the same position — no neighbourhood, no image statistics, no
+    /// geometry. Pointwise filters that take `Rgba` natively also take
+    /// `Pal8` through the palette route: the palette is filtered as a
+    /// one-row `Rgba` picture (alpha from the palette-alpha record) and
+    /// the index plane is left untouched, so a 256-entry table is
+    /// recoloured instead of a million pixels.
+    fn is_pointwise(&self) -> bool {
+        false
+    }
+
+    /// The filter proper. `input` holds exactly
+    /// `params.format.plane_count()` image planes, each at least
+    /// `stride × rows` bytes with `stride ≥` the visible row, and
+    /// `params.format` is one of [`accepted_formats`](Self::accepted_formats).
+    /// Return a frame holding only image planes in
+    /// [`output_format`](Self::output_format)`(params.format)`.
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error>;
+}
+
+impl<T: PixelFilter> ImageFilter for T {
+    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+        route::apply_single(self, input, params)
+    }
+
+    fn accepted_pixel_formats(&self) -> Vec<PixelFormat> {
+        route::accepted_single(self)
+    }
+
+    fn output_pixel_format(&self, input: PixelFormat) -> Option<PixelFormat> {
+        route::output_single(self, input)
+    }
+}
+
+/// Two-input counterpart of [`PixelFilter`]: implement this for a new
+/// two-input filter and the blanket impl provides
+/// [`TwoInputImageFilter`] with the same gate, validation (both inputs)
+/// and side-channel carriage (from `src`).
+pub trait TwoInputPixelFilter: Send {
+    /// The layouts both inputs may be in (they always share one).
+    fn accepted_formats(&self) -> &'static [PixelFormat];
+
+    /// The output layout for an `input` layout (default: unchanged).
+    fn output_format(&self, input: PixelFormat) -> PixelFormat {
+        input
+    }
+
+    /// The shape of the second input (`dst`, port 1) when it is not the
+    /// `params` shape — an overlay with its own extent. The frame on
+    /// port 1 is validated against this. Default: `params`.
+    fn dst_params(&self, params: VideoStreamParams) -> VideoStreamParams {
+        params
+    }
+
+    /// The filter proper; `src` holds only image planes of `params`
+    /// shape, `dst` of [`dst_params`](Self::dst_params) shape.
+    fn apply_two_pixels(
+        &self,
+        src: &VideoFrame,
+        dst: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error>;
+}
+
+impl<T: TwoInputPixelFilter> TwoInputImageFilter for T {
+    fn apply_two(
+        &self,
+        src: &VideoFrame,
+        dst: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
+        route::apply_pair(self, src, dst, params)
+    }
+
+    fn accepted_pixel_formats(&self) -> Vec<PixelFormat> {
+        route::accepted_pair(self)
+    }
+
+    fn output_pixel_format(&self, input: PixelFormat) -> Option<PixelFormat> {
+        route::output_pair(self, input)
+    }
 }
 
 /// Selects which planes of a video frame a filter operates on.

@@ -19,7 +19,7 @@
 //!   smear hue across edges in a way that's almost never what callers
 //!   want; convert to RGB first if needed).
 
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Which statistic to compute over the window.
@@ -77,8 +77,16 @@ impl Statistic {
     }
 }
 
-impl ImageFilter for Statistic {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Statistic {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Statistic does not yet handle {:?}",
@@ -170,6 +178,7 @@ fn combine(op: StatisticOp, samples: &mut [u8]) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn pack(data: Vec<u8>, stride: usize) -> VideoFrame {

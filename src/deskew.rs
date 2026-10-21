@@ -22,7 +22,7 @@
 //! The background fill colour is configurable.
 
 use crate::rotate::Rotate;
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Auto-deskew filter.
@@ -120,8 +120,16 @@ impl Deskew {
     }
 }
 
-impl ImageFilter for Deskew {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Deskew {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let angle = self.estimate_angle(input, params)?;
         // Rotate by the negative of the estimated skew to restore
         // horizontal alignment.
@@ -250,6 +258,7 @@ fn build_luma(f: &VideoFrame, params: VideoStreamParams) -> Result<Vec<u8>, Erro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::VideoPlane;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {

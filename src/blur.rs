@@ -1,7 +1,7 @@
 //! Gaussian blur — separable 1D kernel applied row-wise then column-wise
 //! on each selected plane.
 
-use crate::{is_supported_format, ImageFilter, Planes, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Separable Gaussian blur.
@@ -44,8 +44,16 @@ impl Blur {
     }
 }
 
-impl ImageFilter for Blur {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Blur {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Blur does not yet handle {:?}",
@@ -173,6 +181,7 @@ pub(crate) fn plane_dims(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray_frame(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

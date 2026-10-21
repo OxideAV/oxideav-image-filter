@@ -25,7 +25,7 @@
 //! is supported on the luma plane only — chroma is left untouched.
 //! Other formats return [`Error::unsupported`].
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Relief filter with configurable light direction.
@@ -63,8 +63,16 @@ impl EmbossDirectional {
     }
 }
 
-impl ImageFilter for EmbossDirectional {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for EmbossDirectional {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         // 3×3 kernel — weights = (dx, -dy) · (cos a, sin a). The minus
         // sign on dy converts from image / screen y (down-positive) to
         // math y (up-positive).
@@ -184,6 +192,7 @@ fn emboss_yuv_luma(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

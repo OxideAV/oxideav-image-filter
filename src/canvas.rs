@@ -11,7 +11,7 @@
 //! for `composite-over`) or as a wipe / clear stage between montage
 //! tiles. Operates on `Gray8`, `Rgb24`, `Rgba`, and planar YUV.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Constant-colour canvas filter.
@@ -39,8 +39,16 @@ impl Canvas {
     }
 }
 
-impl ImageFilter for Canvas {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Canvas {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let w = params.width as usize;
         let h = params.height as usize;
         let [r, g, b, a] = self.colour;
@@ -110,6 +118,7 @@ impl ImageFilter for Canvas {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgba_in(w: u32, h: u32, fill: [u8; 4]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 4) as usize);

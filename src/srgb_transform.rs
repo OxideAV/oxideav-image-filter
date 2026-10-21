@@ -43,7 +43,7 @@
 //! is a linear coverage value, not a light value, so it is **passed through**
 //! unchanged on `Rgba`. Cost is one 256-entry LUT build plus `O(W·H)`.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which transfer curve the transform uses.
@@ -173,8 +173,16 @@ impl SrgbTransform {
     }
 }
 
-impl ImageFilter for SrgbTransform {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for SrgbTransform {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let bpp = match params.format {
             PixelFormat::Gray8 => 1,
             PixelFormat::Rgb24 => 3,
@@ -236,6 +244,7 @@ impl ImageFilter for SrgbTransform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);
@@ -487,6 +496,7 @@ mod tests {
         let err = SrgbTransform::decode()
             .apply(&frame, p_rgb(2, 2))
             .unwrap_err();
-        assert!(format!("{err}").contains("non-empty"));
+        assert!(matches!(err, Error::InvalidData(_)));
+        assert!(format!("{err}").contains("SrgbTransform"));
     }
 }

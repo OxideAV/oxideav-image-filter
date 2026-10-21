@@ -18,7 +18,7 @@
 //! `rho` to `n_rho` bins of width `1.0` covering `±sqrt(w² + h²) / 2`.
 //! The defaults (`n_theta = 180`, ½°-bins) match the documented CLI model.
 
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Hough-line detector.
@@ -71,8 +71,21 @@ impl HoughLines {
     }
 }
 
-impl ImageFilter for HoughLines {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for HoughLines {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    /// Collapses every input to a single-plane `Gray8` picture.
+    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        oxideav_core::PixelFormat::Gray8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: HoughLines does not yet handle {:?}",
@@ -237,6 +250,7 @@ fn sobel_magnitude(luma: &[u8], w: usize, h: usize) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
@@ -266,8 +280,8 @@ mod tests {
     fn empty_input_no_panics() {
         let input = gray(0, 0, |_, _| 0);
         let p = p_gray(0, 0);
-        let out = HoughLines::default().apply(&input, p).unwrap();
-        assert_eq!(out.planes[0].data.len(), 0);
+        let err = HoughLines::default().apply(&input, p).unwrap_err();
+        assert!(matches!(err, Error::InvalidData(_)));
     }
 
     #[test]

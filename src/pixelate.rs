@@ -21,7 +21,7 @@
 //! look worse than not pixelating it at all, and the visible effect
 //! comes from the luma blockiness.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Spatial block-average mosaic.
@@ -93,8 +93,16 @@ fn pixelate_plane(src: &VideoPlane, w: usize, h: usize, bpp: usize, block: usize
     out
 }
 
-impl ImageFilter for Pixelate {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Pixelate {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let block = self.block.max(1) as usize;
         match params.format {
             PixelFormat::Gray8 => {
@@ -170,6 +178,7 @@ impl ImageFilter for Pixelate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn p_rgb(w: u32, h: u32) -> VideoStreamParams {
         VideoStreamParams {

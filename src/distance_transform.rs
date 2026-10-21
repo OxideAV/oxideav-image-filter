@@ -49,7 +49,7 @@
 //! `invert` is `true`). Output is always `Gray8`, clamped to
 //! `[0, 255]` so unreachable regions saturate to white.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Selectable chamfer kernel for [`DistanceTransform`].
@@ -225,8 +225,16 @@ fn backward_offsets(kind: ChamferKind) -> &'static [Offset] {
     }
 }
 
-impl ImageFilter for DistanceTransform {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for DistanceTransform {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::GRAY8
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: DistanceTransform requires Gray8, got {:?}",
@@ -333,6 +341,7 @@ impl ImageFilter for DistanceTransform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

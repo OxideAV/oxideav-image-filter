@@ -28,7 +28,7 @@
 //! and per-channel variants; per-channel is the GDC default). Operates
 //! on `Gray8` / `Rgb24` / `Rgba`; YUV returns `Unsupported`.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Hable / Uncharted-2 "filmic" tone-mapping operator.
@@ -104,8 +104,16 @@ fn linear_to_srgb(x: f32) -> u8 {
     (y.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-impl ImageFilter for Hable {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Hable {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,
@@ -184,6 +192,7 @@ impl ImageFilter for Hable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

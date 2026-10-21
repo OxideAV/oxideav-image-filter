@@ -18,7 +18,7 @@
 //! All four parameters are exposed so callers can override them. The documented CLI
 //! analogue: `-unsharp 30x15+0.5+10`.
 
-use crate::{ImageFilter, Unsharp, VideoStreamParams};
+use crate::{ImageFilter, PixelFilter, Unsharp, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Mid-frequency local-contrast boost ("clarity").
@@ -69,8 +69,16 @@ impl Clarity {
     }
 }
 
-impl ImageFilter for Clarity {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Clarity {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::Unsharp::default().accepted_formats()
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let sigma = if self.sigma > 0.0 {
             self.sigma
         } else {
@@ -84,6 +92,7 @@ impl ImageFilter for Clarity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::{PixelFormat, VideoPlane};
 
     fn rgb_grad(w: u32, h: u32) -> VideoFrame {

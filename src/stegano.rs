@@ -25,7 +25,7 @@
 //! `Gray8` / `Rgb24` / `Rgba`. Other formats return
 //! [`Error::unsupported`].
 
-use crate::{TwoInputImageFilter, VideoStreamParams};
+use crate::{TwoInputPixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// LSB-plane steganographic embed.
@@ -55,8 +55,12 @@ impl Stegano {
     }
 }
 
-impl TwoInputImageFilter for Stegano {
-    fn apply_two(
+impl TwoInputPixelFilter for Stegano {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_8BIT
+    }
+
+    fn apply_two_pixels(
         &self,
         src: &VideoFrame,
         dst: &VideoFrame,
@@ -116,6 +120,7 @@ impl TwoInputImageFilter for Stegano {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TwoInputImageFilter;
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

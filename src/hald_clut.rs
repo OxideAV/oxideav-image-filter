@@ -39,7 +39,7 @@
 //! - `Rgb24` / `Rgba`: full effect; alpha is preserved on RGBA.
 //! - YUV / Gray8 return `Error::unsupported` (the cube is RGB-only).
 
-use crate::{TwoInputImageFilter, VideoStreamParams};
+use crate::{TwoInputPixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Hald CLUT image-as-LUT colour grading filter.
@@ -103,8 +103,12 @@ fn sample_cube(plane: &VideoPlane, l: u32, bpp: usize, cr: u32, cg: u32, cb: u32
     fetch(plane, x, y, bpp)
 }
 
-impl TwoInputImageFilter for HaldClut {
-    fn apply_two(
+impl TwoInputPixelFilter for HaldClut {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::PACKED_RGB
+    }
+
+    fn apply_two_pixels(
         &self,
         src: &VideoFrame,
         dst: &VideoFrame,
@@ -235,6 +239,7 @@ pub fn build_identity_hald(l: u32, has_alpha: bool) -> (VideoFrame, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TwoInputImageFilter;
 
     #[test]
     fn identity_hald_clut_passes_input_through() {

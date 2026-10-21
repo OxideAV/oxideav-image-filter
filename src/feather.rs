@@ -56,7 +56,7 @@
 //! return [`Error::unsupported`].
 
 use crate::euclidean_distance_transform::{dt_1d, INF};
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Edge-feathering filter (soft coverage falloff from an exact
@@ -195,8 +195,16 @@ impl Feather {
     }
 }
 
-impl ImageFilter for Feather {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Feather {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::GRAY8_RGBA
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let w = params.width as usize;
         let h = params.height as usize;
         if input.planes.is_empty() {
@@ -285,6 +293,7 @@ impl ImageFilter for Feather {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn p(format: PixelFormat, w: u32, h: u32) -> VideoStreamParams {
         VideoStreamParams {
@@ -377,11 +386,11 @@ mod tests {
     }
 
     #[test]
-    fn zero_dims_pass_through() {
+    fn zero_dims_are_a_typed_refusal() {
         let f = Feather::new(3.0);
         let frame = gray(0, 0, |_, _| 0);
-        let out = f.apply(&frame, p(PixelFormat::Gray8, 0, 0)).unwrap();
-        assert_eq!(out.planes[0].data.len(), 0);
+        let err = f.apply(&frame, p(PixelFormat::Gray8, 0, 0)).unwrap_err();
+        assert!(matches!(err, Error::InvalidData(_)));
     }
 
     #[test]

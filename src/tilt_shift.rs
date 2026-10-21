@@ -43,7 +43,7 @@
 //! `sigma = 2.0` Gaussian blur for the out-of-focus regions.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, gaussian_kernel, plane_dims};
-use crate::{is_supported_format, Blur, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, Blur, ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Tilt-shift filter: blends a sharp source with a Gaussian-blurred
@@ -216,8 +216,16 @@ impl TiltShift {
     }
 }
 
-impl ImageFilter for TiltShift {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for TiltShift {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: TiltShift does not yet handle {:?}",
@@ -318,6 +326,7 @@ fn blend_plane(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn gray_frame(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

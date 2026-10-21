@@ -16,7 +16,7 @@
 //! source coordinate and sample it with bilinear interpolation.
 //! Out-of-bounds samples become the configured background colour.
 
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Rotate a frame by `degrees` around its centre. Positive values
@@ -52,8 +52,16 @@ impl Rotate {
     }
 }
 
-impl ImageFilter for Rotate {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Rotate {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Rotate does not yet handle {:?}",
@@ -143,6 +151,17 @@ fn quarter_turn(input: &VideoFrame, params: VideoStreamParams, degrees: f32) -> 
         let pw = pw as usize;
         let ph = ph as usize;
         let (dw, dh) = new_dims(pw, ph);
+        // The plane of the rotated picture lives on the rotated
+        // picture's own chroma grid: for a 90° / 270° turn of a layout
+        // whose subsampling is not symmetric (4:2:2, 4:4:0, 4:1:1) the
+        // turned chroma plane (`ph × pw`) must be re-gridded to
+        // `ceil(H / sx) × ceil(W / sy)`.
+        let (new_w, new_h) = match d as u32 {
+            90 | 270 => (params.height, params.width),
+            _ => (params.width, params.height),
+        };
+        let (gw, gh) = crate::blur::plane_dims(new_w, new_h, params.format, idx, cx, cy);
+        let (gw, gh) = (gw as usize, gh as usize);
         let row_bytes = dw * bpp;
         let mut out = vec![0u8; row_bytes * dh];
         for y in 0..ph {
@@ -159,10 +178,15 @@ fn quarter_turn(input: &VideoFrame, params: VideoStreamParams, degrees: f32) -> 
                 out[dst_off..dst_off + bpp].copy_from_slice(&plane.data[src_off..src_off + bpp]);
             }
         }
-        new_planes.push(VideoPlane {
-            stride: row_bytes,
-            data: out,
-        });
+        let plane = if (dw, dh) == (gw, gh) {
+            VideoPlane {
+                stride: row_bytes,
+                data: out,
+            }
+        } else {
+            regrid_nearest(&out, dw, dh, gw, gh, bpp)
+        };
+        new_planes.push(plane);
     }
 
     // (Old: returned width/height on the VideoFrame literal; the slim
@@ -172,6 +196,34 @@ fn quarter_turn(input: &VideoFrame, params: VideoStreamParams, degrees: f32) -> 
         pts: input.pts,
         planes: new_planes,
     })
+}
+
+/// Nearest-neighbour re-grid of a tight `sw × sh` plane (`bpp` bytes
+/// per position) onto `dw × dh`: used to move a turned chroma plane
+/// onto the rotated picture's canonical chroma grid.
+fn regrid_nearest(
+    src: &[u8],
+    sw: usize,
+    sh: usize,
+    dw: usize,
+    dh: usize,
+    bpp: usize,
+) -> VideoPlane {
+    let row_bytes = dw * bpp;
+    let mut out = vec![0u8; row_bytes * dh];
+    for y in 0..dh {
+        let sy = (y * sh / dh.max(1)).min(sh - 1);
+        for x in 0..dw {
+            let sx = (x * sw / dw.max(1)).min(sw - 1);
+            let s = sy * sw * bpp + sx * bpp;
+            let d = y * row_bytes + x * bpp;
+            out[d..d + bpp].copy_from_slice(&src[s..s + bpp]);
+        }
+    }
+    VideoPlane {
+        stride: row_bytes,
+        data: out,
+    }
 }
 
 /// Size of the axis-aligned bounding box around a rotated `sw × sh` rect.
@@ -316,6 +368,7 @@ fn rotate_plane(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
         for y in 0..h {

@@ -1,7 +1,7 @@
 //! Mirror a frame horizontally — left column becomes right column.
 //! The documented CLI calls this `-flop` (the vertical cousin is `Flip`).
 
-use crate::{is_supported_format, ImageFilter, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Horizontal flop — reverses the order of pixels within every row.
@@ -20,8 +20,16 @@ impl Flop {
     }
 }
 
-impl ImageFilter for Flop {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Flop {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Flop does not yet handle {:?}",
@@ -66,6 +74,7 @@ fn flop_plane(src: &VideoPlane, w: usize, h: usize, bpp: usize) -> VideoPlane {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::PixelFormat;
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {

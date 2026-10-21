@@ -18,7 +18,7 @@
 //! channel as a coverage mask. Output keeps the same `(width, height)`.
 //! Alpha is preserved.
 
-use crate::{ImageFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Inner-shadow filter.
@@ -75,8 +75,16 @@ impl InnerShadow {
     }
 }
 
-impl ImageFilter for InnerShadow {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for InnerShadow {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::RGBA_ONLY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if params.format != PixelFormat::Rgba {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: InnerShadow requires Rgba, got {:?}",
@@ -189,6 +197,7 @@ fn box_blur_gray(src: &[u8], w: usize, h: usize, radius: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
 
     fn rgba(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 4]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 4) as usize);

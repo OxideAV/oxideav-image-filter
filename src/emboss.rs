@@ -11,7 +11,7 @@
 //! bias value everywhere.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{is_supported_format, ImageFilter, Planes, VideoStreamParams};
+use crate::{is_supported_format, PixelFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Relief / "emboss" 3×3 convolution.
@@ -40,8 +40,16 @@ impl Emboss {
 const KERNEL: [[i32; 3]; 3] = [[-2, -1, 0], [-1, 1, 1], [0, 1, 2]];
 const BIAS: i32 = 128;
 
-impl ImageFilter for Emboss {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Emboss {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::layout::LEGACY
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Emboss does not yet handle {:?}",
@@ -101,6 +109,7 @@ fn emboss_plane(src: &VideoPlane, w: usize, h: usize, bpp: usize) -> VideoPlane 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);
         for y in 0..h {

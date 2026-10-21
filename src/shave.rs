@@ -9,7 +9,7 @@
 //! the result, no resampling. Backed by [`Crop`](crate::crop::Crop) so
 //! YUV chroma alignment behaves identically.
 
-use crate::{Crop, ImageFilter, VideoStreamParams};
+use crate::{Crop, ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame};
 
 /// Trim a `x_border × y_border` margin from every edge of the frame.
@@ -32,8 +32,16 @@ impl Shave {
     }
 }
 
-impl ImageFilter for Shave {
-    fn apply(&self, input: &VideoFrame, params: VideoStreamParams) -> Result<VideoFrame, Error> {
+impl PixelFilter for Shave {
+    fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
+        crate::Crop::new(0, 0, 1, 1).accepted_formats()
+    }
+
+    fn apply_pixels(
+        &self,
+        input: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
         let total_x = self
             .x_border
             .checked_mul(2)
@@ -57,6 +65,7 @@ impl ImageFilter for Shave {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageFilter;
     use oxideav_core::{PixelFormat, VideoPlane};
 
     fn gray(w: u32, h: u32, pattern: impl Fn(u32, u32) -> u8) -> VideoFrame {
