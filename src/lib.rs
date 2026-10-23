@@ -771,6 +771,7 @@ pub mod layout;
 pub mod level;
 pub mod linear_stretch;
 pub mod max_rgb;
+pub mod measure;
 pub mod modulate;
 pub mod morphology;
 pub mod motion_blur;
@@ -918,6 +919,10 @@ pub use laplacian_of_gaussian::{LaplacianOfGaussian, LogMode};
 pub use level::Level;
 pub use linear_stretch::LinearStretch;
 pub use max_rgb::{MaxRgb, MaxRgbMode};
+pub use measure::{
+    ChannelMoments, ChannelStatistics, ColorCount, CompareMetric, Comparison, ImageStatistics,
+    PerceptualHash, SimilarityMatch,
+};
 pub use modulate::Modulate;
 pub use morphology::{
     EdgeOp, Morphology, MorphologyChain, MorphologyEdge, MorphologyOp, StructuringElement,

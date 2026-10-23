@@ -1080,6 +1080,23 @@ All single-input filters listed above share the `ImageFilter` trait — chain th
 manually with repeated `.apply()` calls, or feed them through
 `oxideav-pipeline` as `video.<name>` filter nodes in a JSON job.
 
+## Measurement
+
+`measure` is the read-only side of the Imagick surface: `statistics`
+(per-channel and overall min / max / mean / median / standard deviation /
+kurtosis / skewness / entropy, with `identify -verbose`'s conventions —
+sample deviation, excess kurtosis, entropy over the occupied bins),
+`compare` with every `compare -metric` (AE, MAE, MEPP, MSE, NCC, PAE,
+PSNR, RMSE, SSIM, DSSIM, Fuzz, PHASH — the joint `(1 − NCC) / 2` and
+`(1 − SSIM) / 2` figures `magick` prints), `difference_image`,
+`similarity_search`, `moments` (centroid, inertia ellipse, Hu I1–I8, per
+channel and pooled as `identify -moments` pools them),
+`perceptual_hash`, `histogram` / `unique_colors` and `trim_bounds`. Every
+layout the float hop reaches is measured in normalised units; the live
+test compares all of it against `magick` on `rose:`. `Fuzz` and the
+perceptual hash follow the documented recipes but not `magick`'s figures
+to the digit (its colour-space conversions are not staged).
+
 ## Pixel layouts and the frame contract
 
 Every filter runs behind one wrapper (`PixelFilter` → blanket
