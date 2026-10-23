@@ -67,11 +67,7 @@ fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
         // Match the canonical "mod 6" convention without using the
         // negative-aware `rem_euclid` directly on a float that may sit
         // on a six-boundary (we want exactly 0 for the wrap, not 6).
-        if t < 0.0 {
-            t + 6.0
-        } else {
-            t
-        }
+        if t < 0.0 { t + 6.0 } else { t }
     } else if (max - g).abs() < 1e-6 {
         (b - r) / d + 2.0
     } else {

@@ -25,7 +25,7 @@
 //! All operators clamp the per-channel result to `[0, 255]`. `Divide`
 //! by zero saturates to 255. `Pow` with a negative base saturates to 0.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Which per-pixel arithmetic operator to apply.
@@ -254,11 +254,7 @@ fn apply_scalar(op: EvaluateOp, src: u8, value: f32) -> u8 {
         }
         EvaluateOp::Threshold => {
             let t = clamp_round(v);
-            if src >= t {
-                255
-            } else {
-                0
-            }
+            if src >= t { 255 } else { 0 }
         }
     }
 }

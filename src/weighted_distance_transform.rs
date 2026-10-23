@@ -61,7 +61,7 @@
 //! dimensions. The rendered value is `sqrt(D_f) · scale`, rounded and
 //! clamped to `[0, 255]`.
 
-use crate::euclidean_distance_transform::{dt_1d, INF};
+use crate::euclidean_distance_transform::{INF, dt_1d};
 use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
@@ -480,9 +480,11 @@ mod tests {
             width: 2,
             height: 2,
         };
-        assert!(WeightedDistanceTransform::new(8.0)
-            .apply(&frame, params)
-            .is_err());
+        assert!(
+            WeightedDistanceTransform::new(8.0)
+                .apply(&frame, params)
+                .is_err()
+        );
     }
 
     #[test]

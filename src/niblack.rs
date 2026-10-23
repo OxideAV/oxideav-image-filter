@@ -122,7 +122,7 @@
 //! [`Error::unsupported`]: oxideav_core::Error
 
 use crate::laplacian::build_luma_plane;
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Niblack adaptive local-statistics threshold.
@@ -615,14 +615,18 @@ mod tests {
     #[test]
     fn rejects_non_finite_k() {
         let input = gray(4, 4, |_, _| 100);
-        assert!(Niblack::new()
-            .with_k(f32::NAN)
-            .apply(&input, p_gray(4, 4))
-            .is_err());
-        assert!(Niblack::new()
-            .with_k(f32::INFINITY)
-            .apply(&input, p_gray(4, 4))
-            .is_err());
+        assert!(
+            Niblack::new()
+                .with_k(f32::NAN)
+                .apply(&input, p_gray(4, 4))
+                .is_err()
+        );
+        assert!(
+            Niblack::new()
+                .with_k(f32::INFINITY)
+                .apply(&input, p_gray(4, 4))
+                .is_err()
+        );
     }
 
     #[test]
@@ -634,16 +638,18 @@ mod tests {
                 data: vec![],
             }],
         };
-        assert!(Niblack::new()
-            .apply(
-                &frame,
-                VideoStreamParams {
-                    format: PixelFormat::Gray8,
-                    width: 0,
-                    height: 4,
-                },
-            )
-            .is_err());
+        assert!(
+            Niblack::new()
+                .apply(
+                    &frame,
+                    VideoStreamParams {
+                        format: PixelFormat::Gray8,
+                        width: 0,
+                        height: 4,
+                    },
+                )
+                .is_err()
+        );
     }
 
     #[test]

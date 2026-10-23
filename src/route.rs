@@ -25,10 +25,10 @@
 //! the filter refuses them with a typed error instead.
 
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
-use oxideav_pixfmt::{convert_with, supports, ConvertContext, ConvertOptions, FrameInfo};
+use oxideav_pixfmt::{ConvertContext, ConvertOptions, FrameInfo, convert_with, supports};
 
 use crate::layout::SampleKind;
-use crate::{layout, side_channels, PixelFilter, TwoInputPixelFilter, VideoStreamParams};
+use crate::{PixelFilter, TwoInputPixelFilter, VideoStreamParams, layout, side_channels};
 
 /// How a filter reaches a picture in `input` layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

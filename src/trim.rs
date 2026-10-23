@@ -13,7 +13,7 @@
 //! IM's `-fuzz N` semantics on `[0, 255]` channels.
 
 use crate::blur::bytes_per_plane_pixel;
-use crate::{is_supported_format, Crop, ImageFilter, PixelFilter, VideoStreamParams};
+use crate::{Crop, ImageFilter, PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Crop the frame down to the bounding box of pixels that differ from

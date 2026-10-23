@@ -17,7 +17,7 @@
 //! - `Yuv*P`: only the Y plane is clamped; chroma pass-through (chroma
 //!   has its own legal range that doesn't match 0/255 endpoints).
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Clamp every tone sample into `[low, high]`.

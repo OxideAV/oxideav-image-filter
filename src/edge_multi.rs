@@ -23,7 +23,7 @@
 //! `[0, 255]`. Same input format coverage as [`Edge`] (Gray8 / Rgb24 /
 //! Rgba / planar YUV — RGB is reduced to a luma proxy first).
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Choice of gradient kernel for [`EdgeDetect`].

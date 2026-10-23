@@ -20,7 +20,7 @@
 //! a luma plane first, then the Laplacian is applied. Output is
 //! always `Gray8`.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Laplacian (second-derivative) filter.

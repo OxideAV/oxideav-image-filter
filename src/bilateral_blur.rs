@@ -277,11 +277,7 @@ mod tests {
             8,
             4,
             |x, _| {
-                if x < 4 {
-                    [50, 50, 50]
-                } else {
-                    [200, 200, 200]
-                }
+                if x < 4 { [50, 50, 50] } else { [200, 200, 200] }
             },
         );
         let out = BilateralBlur::new(2, 1.5, 5.0)
@@ -341,7 +337,7 @@ mod tests {
             // Numerical Recipes LCG.
             state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             let v = ((state >> 16) & 0xff) as i32; // 0..255
-                                                   // Map 0..255 -> -20..+20.
+            // Map 0..255 -> -20..+20.
             let noise = ((v * 40) / 255) - 20;
             (128 + noise).clamp(0, 255) as u8
         };

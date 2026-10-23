@@ -10,7 +10,7 @@
 //!
 //! Both `B` and `C` live in `-100..=100`. Applied via a 256-entry LUT.
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Combined brightness and contrast adjustment.

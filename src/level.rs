@@ -10,7 +10,7 @@
 //! with endpoints clamped at 0 and 255 to avoid divide-by-zero when
 //! `white == black`. Mirrors the documented `-level LOW,MID,HIGH` CLI.
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Linear/gamma levels adjustment.

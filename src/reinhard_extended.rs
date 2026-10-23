@@ -331,11 +331,7 @@ mod tests {
             4,
             4,
             |x, _| {
-                if x < 2 {
-                    [250, 250, 250]
-                } else {
-                    [60, 60, 60]
-                }
+                if x < 2 { [250, 250, 250] } else { [60, 60, 60] }
             },
         );
         let auto = ReinhardExtended::default()

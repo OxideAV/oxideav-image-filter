@@ -307,11 +307,7 @@ mod tests {
             4,
             4,
             |x, _| {
-                if x < 2 {
-                    [250, 250, 250]
-                } else {
-                    [60, 60, 60]
-                }
+                if x < 2 { [250, 250, 250] } else { [60, 60, 60] }
             },
         );
         let wide = Reinhard::default().apply(&input, p_rgb(4, 4)).unwrap();

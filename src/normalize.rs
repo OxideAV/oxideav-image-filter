@@ -10,8 +10,8 @@
 //! universally useful and letting callers pick is clearer.
 
 use crate::{
-    is_supported_format, level::build_level_lut, tonal_lut::apply_tone_lut, PixelFilter,
-    VideoStreamParams,
+    PixelFilter, VideoStreamParams, is_supported_format, level::build_level_lut,
+    tonal_lut::apply_tone_lut,
 };
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 

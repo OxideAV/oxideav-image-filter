@@ -30,7 +30,7 @@
 //! `Planes` selector if a luma-only mode is needed.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{is_supported_format, ImageFilter, PixelFilter, VideoStreamParams};
+use crate::{ImageFilter, PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which extremum the morphology pass takes over its window.

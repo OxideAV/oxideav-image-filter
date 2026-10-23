@@ -201,11 +201,7 @@ mod tests {
             9,
             1,
             |x, _| {
-                if x >= 4 {
-                    [255, 255, 255]
-                } else {
-                    [0, 0, 0]
-                }
+                if x >= 4 { [255, 255, 255] } else { [0, 0, 0] }
             },
         );
         // Baseline (no offset): R-transition column == B-transition column == 4.

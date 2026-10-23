@@ -55,7 +55,7 @@
 //! is flat-coloured. With no feature pixels at all the output is flat
 //! `0`.
 
-use crate::euclidean_distance_transform::{dt_1d_arg, INF};
+use crate::euclidean_distance_transform::{INF, dt_1d_arg};
 use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 

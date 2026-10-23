@@ -62,7 +62,7 @@
 //! the two component distances saturates to `+∞`; the renderer clamps
 //! it to the `Gray8` floor / ceiling accordingly.
 
-use crate::euclidean_distance_transform::{dt_1d, INF};
+use crate::euclidean_distance_transform::{INF, dt_1d};
 use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 

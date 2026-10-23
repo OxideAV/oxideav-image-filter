@@ -11,7 +11,7 @@
 //!
 //! Matches the documented `-posterize N` parameter convention semantics.
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Posterise each channel to `levels` intensity buckets.

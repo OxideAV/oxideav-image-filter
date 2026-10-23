@@ -13,7 +13,7 @@
 //! - The stretch is per-channel (matching IM behaviour).
 
 use crate::{
-    contrast_stretch::build_lut_from_hist, is_supported_format, PixelFilter, VideoStreamParams,
+    PixelFilter, VideoStreamParams, contrast_stretch::build_lut_from_hist, is_supported_format,
 };
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 

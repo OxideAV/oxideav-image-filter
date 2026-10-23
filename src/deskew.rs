@@ -22,7 +22,7 @@
 //! The background fill colour is configurable.
 
 use crate::rotate::Rotate;
-use crate::{is_supported_format, ImageFilter, PixelFilter, VideoStreamParams};
+use crate::{ImageFilter, PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Auto-deskew filter.

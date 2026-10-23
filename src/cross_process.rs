@@ -25,7 +25,7 @@
 //! to the G-channel curve (the "neutral" sigmoid). Alpha is preserved
 //! on RGBA. Other formats return [`Error::unsupported`].
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Cross-processed film-look filter.
@@ -241,11 +241,7 @@ mod tests {
             2,
             1,
             |x, _| {
-                if x == 0 {
-                    [0, 0, 0]
-                } else {
-                    [255, 255, 255]
-                }
+                if x == 0 { [0, 0, 0] } else { [255, 255, 255] }
             },
         );
         let out = CrossProcess::new(1.0).apply(&input, p_rgb(2, 1)).unwrap();

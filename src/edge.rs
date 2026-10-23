@@ -1,7 +1,7 @@
 //! Sobel edge-magnitude filter. Returns a `Gray8` frame containing
 //! `|Gx| + |Gy|` per pixel (clamped to 0..=255).
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Sobel edge detector.

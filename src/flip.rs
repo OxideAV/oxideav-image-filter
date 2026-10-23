@@ -123,14 +123,14 @@ mod tests {
         let h = 4u32;
         // Y: row-distinct pattern.
         let y: Vec<u8> = (0..h)
-            .flat_map(|row| std::iter::repeat(row as u8 * 10).take(w as usize))
+            .flat_map(|row| std::iter::repeat_n(row as u8 * 10, w as usize))
             .collect();
         // U/V: also row-distinct, at half height.
         let u: Vec<u8> = (0..h / 2)
-            .flat_map(|row| std::iter::repeat(100 + row as u8).take((w / 2) as usize))
+            .flat_map(|row| std::iter::repeat_n(100 + row as u8, (w / 2) as usize))
             .collect();
         let v: Vec<u8> = (0..h / 2)
-            .flat_map(|row| std::iter::repeat(200 + row as u8).take((w / 2) as usize))
+            .flat_map(|row| std::iter::repeat_n(200 + row as u8, (w / 2) as usize))
             .collect();
         let input = VideoFrame {
             pts: None,

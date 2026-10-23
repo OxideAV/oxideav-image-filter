@@ -7,16 +7,16 @@
 //! need to depend on this crate.
 
 use oxideav_core::{
-    filter::FilterContext, Error, Frame, PixelFormat, PortParams, PortSpec, Result, RuntimeContext,
-    StreamFilter, TimeBase,
+    Error, Frame, PixelFormat, PortParams, PortSpec, Result, RuntimeContext, StreamFilter,
+    TimeBase, filter::FilterContext,
 };
 use serde_json::Value;
 
 use crate::{
+    ImageFilter, Planes, TwoInputImageFilter, VideoStreamParams,
     clut::Clut,
     composite::{Composite, CompositeOp},
     hald_clut::HaldClut,
-    ImageFilter, Planes, TwoInputImageFilter, VideoStreamParams,
 };
 
 /// Install every image-filter factory into the runtime context's
@@ -502,10 +502,9 @@ impl ImageFilterAdapter {
         // their target size).
         if let (PortParams::Video { format: inf, .. }, PortParams::Video { format: outf, .. }) =
             (&in_port.params, &mut out_port.params)
+            && let Some(declared) = inner.output_pixel_format(*inf)
         {
-            if let Some(declared) = inner.output_pixel_format(*inf) {
-                *outf = declared;
-            }
+            *outf = declared;
         }
         let params = match &in_port.params {
             PortParams::Video {
@@ -591,10 +590,9 @@ impl TwoInputImageFilterAdapter {
     ) -> Self {
         if let (PortParams::Video { format: inf, .. }, PortParams::Video { format: outf, .. }) =
             (&src_port.params, &mut out_port.params)
+            && let Some(declared) = inner.output_pixel_format(*inf)
         {
-            if let Some(declared) = inner.output_pixel_format(*inf) {
-                *outf = declared;
-            }
+            *outf = declared;
         }
         // The two input ports must agree on shape — pick `src`'s
         // params as the canonical pair (the factory layer enforces
@@ -715,14 +713,13 @@ fn make_composite(
             ..
         },
     ) = (&src_port.params, &dst_port.params)
+        && (sf != df || sw != dw || sh != dh)
     {
-        if sf != df || sw != dw || sh != dh {
-            return Err(Error::invalid(format!(
-                "job: filter 'composite-{}': src and dst ports must agree on \
+        return Err(Error::invalid(format!(
+            "job: filter 'composite-{}': src and dst ports must agree on \
                  (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})",
-                op.name()
-            )));
-        }
+            op.name()
+        )));
     }
     // Output port mirrors the src port shape but uses the canonical
     // "video" name so downstream wiring matches the rest of the
@@ -2962,13 +2959,12 @@ fn make_clut(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilte
             ..
         },
     ) = (&src_port.params, &dst_port.params)
+        && (sf != df || sw != dw || sh != dh)
     {
-        if sf != df || sw != dw || sh != dh {
-            return Err(Error::invalid(format!(
-                "job: filter 'clut': src and dst ports must agree on \
+        return Err(Error::invalid(format!(
+            "job: filter 'clut': src and dst ports must agree on \
                  (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
-            )));
-        }
+        )));
     }
     let out_port = PortSpec {
         name: "video".to_string(),
@@ -2998,13 +2994,12 @@ fn make_hald_clut(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Stream
             ..
         },
     ) = (&src_port.params, &dst_port.params)
+        && (sf != df || sw != dw || sh != dh)
     {
-        if sf != df || sw != dw || sh != dh {
-            return Err(Error::invalid(format!(
-                "job: filter 'hald-clut': src and dst ports must agree on \
+        return Err(Error::invalid(format!(
+            "job: filter 'hald-clut': src and dst ports must agree on \
                  (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
-            )));
-        }
+        )));
     }
     let out_port = PortSpec {
         name: "video".to_string(),
@@ -3205,13 +3200,12 @@ fn make_stegano(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
             ..
         },
     ) = (&src_port.params, &dst_port.params)
+        && (sf != df || sw != dw || sh != dh)
     {
-        if sf != df || sw != dw || sh != dh {
-            return Err(Error::invalid(format!(
-                "job: filter 'stegano': src and dst ports must agree on \
+        return Err(Error::invalid(format!(
+            "job: filter 'stegano': src and dst ports must agree on \
                  (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
-            )));
-        }
+        )));
     }
     let out_port = PortSpec {
         name: "video".to_string(),
@@ -3242,13 +3236,12 @@ fn make_stereo(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
             ..
         },
     ) = (&src_port.params, &dst_port.params)
+        && (sf != df || sw != dw || sh != dh)
     {
-        if sf != df || sw != dw || sh != dh {
-            return Err(Error::invalid(format!(
-                "job: filter 'stereo': src and dst ports must agree on \
+        return Err(Error::invalid(format!(
+            "job: filter 'stereo': src and dst ports must agree on \
                  (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
-            )));
-        }
+        )));
     }
     let out_port = PortSpec {
         name: "video".to_string(),
@@ -4190,13 +4183,12 @@ fn make_difference(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Strea
             ..
         },
     ) = (&src_port.params, &dst_port.params)
+        && (sf != df || sw != dw || sh != dh)
     {
-        if sf != df || sw != dw || sh != dh {
-            return Err(Error::invalid(format!(
-                "job: filter 'difference': src and dst ports must agree on \
+        return Err(Error::invalid(format!(
+            "job: filter 'difference': src and dst ports must agree on \
                  (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
-            )));
-        }
+        )));
     }
     let out_port = PortSpec {
         name: "video".to_string(),
@@ -4291,12 +4283,11 @@ fn make_flood_fill(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn Stream
         let c3 = parse_rgb3(v, "flood-fill")?;
         color = [c3[0], c3[1], c3[2], 255];
         // If the array had a 4th entry, capture it.
-        if let Some(arr) = v.as_array() {
-            if arr.len() >= 4 {
-                if let Some(a) = arr[3].as_u64() {
-                    color[3] = a.min(255) as u8;
-                }
-            }
+        if let Some(arr) = v.as_array()
+            && arr.len() >= 4
+            && let Some(a) = arr[3].as_u64()
+        {
+            color[3] = a.min(255) as u8;
         }
     }
     let f = FloodFill::new(seed_x, seed_y, color, tolerance);
@@ -4370,13 +4361,12 @@ fn make_watermark(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamF
     };
     if let (PortParams::Video { format: sf, .. }, PortParams::Video { format: df, .. }) =
         (&src_port.params, &dst_port.params)
+        && sf != df
     {
-        if sf != df {
-            return Err(Error::invalid(format!(
-                "job: filter 'watermark': src and dst pixel formats must match; \
+        return Err(Error::invalid(format!(
+            "job: filter 'watermark': src and dst pixel formats must match; \
                  got src={sf:?} dst={df:?}"
-            )));
-        }
+        )));
     }
     if overlay_w == 0 || overlay_h == 0 {
         return Err(Error::invalid(
@@ -4790,13 +4780,12 @@ fn make_displacement_map(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn 
             ..
         },
     ) = (&src_port.params, &dst_port.params)
+        && (sf != df || sw != dw || sh != dh)
     {
-        if sf != df || sw != dw || sh != dh {
-            return Err(Error::invalid(format!(
-                "job: filter 'displacement-map': src and dst ports must agree on \
+        return Err(Error::invalid(format!(
+            "job: filter 'displacement-map': src and dst ports must agree on \
                  (format, width, height); got src=({sf:?}, {sw}x{sh}) dst=({df:?}, {dw}x{dh})"
-            )));
-        }
+        )));
     }
     let out_port = PortSpec {
         name: "video".to_string(),
@@ -7037,14 +7026,16 @@ mod tests {
     fn weighted_distance_transform_factory_rejects_bad_params() {
         let c = ctx();
         let inputs = [gray_in_port(16, 16)];
-        assert!(c
-            .filters
-            .make("wdt", &json!({"scale": 0.0}), &inputs)
-            .is_err());
-        assert!(c
-            .filters
-            .make("wdt", &json!({"weight": -1.0}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("wdt", &json!({"scale": 0.0}), &inputs)
+                .is_err()
+        );
+        assert!(
+            c.filters
+                .make("wdt", &json!({"weight": -1.0}), &inputs)
+                .is_err()
+        );
     }
 
     #[test]
@@ -7657,14 +7648,16 @@ mod tests {
     fn level_factory_rejects_non_positive_gamma() {
         let c = ctx();
         let inputs = [gray_in_port(4, 4)];
-        assert!(c
-            .filters
-            .make("level", &json!({"gamma": 0.0}), &inputs)
-            .is_err());
-        assert!(c
-            .filters
-            .make("level", &json!({"gamma": -1.0}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("level", &json!({"gamma": 0.0}), &inputs)
+                .is_err()
+        );
+        assert!(
+            c.filters
+                .make("level", &json!({"gamma": -1.0}), &inputs)
+                .is_err()
+        );
     }
 
     #[test]
@@ -7749,25 +7742,28 @@ mod tests {
     fn dither_bayer_rejects_unsupported_matrix_size() {
         let c = ctx();
         let inputs = [gray_in_port(4, 4)];
-        assert!(c
-            .filters
-            .make("dither-bayer", &json!({"matrix": 3}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("dither-bayer", &json!({"matrix": 3}), &inputs)
+                .is_err()
+        );
     }
 
     #[test]
     fn dither_bayer_accepts_matrix_16() {
         let c = ctx();
         let inputs = [gray_in_port(4, 4)];
-        assert!(c
-            .filters
-            .make("dither-bayer", &json!({"matrix": 16}), &inputs)
-            .is_ok());
+        assert!(
+            c.filters
+                .make("dither-bayer", &json!({"matrix": 16}), &inputs)
+                .is_ok()
+        );
         // The `kernel`-string alias on the generic `dither` factory too.
-        assert!(c
-            .filters
-            .make("dither", &json!({"kernel": "bayer16"}), &inputs)
-            .is_ok());
+        assert!(
+            c.filters
+                .make("dither", &json!({"kernel": "bayer16"}), &inputs)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -7942,14 +7938,16 @@ mod tests {
     fn crop_factory_requires_width_and_height() {
         let c = ctx();
         let inputs = [gray_in_port(4, 4)];
-        assert!(c
-            .filters
-            .make("crop", &json!({"x": 0, "y": 0, "height": 2}), &inputs)
-            .is_err());
-        assert!(c
-            .filters
-            .make("crop", &json!({"x": 0, "y": 0, "width": 2}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("crop", &json!({"x": 0, "y": 0, "height": 2}), &inputs)
+                .is_err()
+        );
+        assert!(
+            c.filters
+                .make("crop", &json!({"x": 0, "y": 0, "width": 2}), &inputs)
+                .is_err()
+        );
     }
 
     #[test]
@@ -8059,10 +8057,12 @@ mod tests {
             .expect("motion-blur factory");
         let out = run_one(f, gray_4x4(|_, _| 50));
         // Flat input should remain flat after blur.
-        assert!(out.planes[0]
-            .data
-            .iter()
-            .all(|&v| (v as i16 - 50).abs() <= 1));
+        assert!(
+            out.planes[0]
+                .data
+                .iter()
+                .all(|&v| (v as i16 - 50).abs() <= 1)
+        );
     }
 
     #[test]
@@ -9387,14 +9387,16 @@ mod tests {
     fn extent_factory_rejects_partial_size() {
         let c = ctx();
         let inputs = [gray_in_port(2, 2)];
-        assert!(c
-            .filters
-            .make("extent", &json!({"width": 4}), &inputs)
-            .is_err());
-        assert!(c
-            .filters
-            .make("extent", &json!({"height": 4}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("extent", &json!({"width": 4}), &inputs)
+                .is_err()
+        );
+        assert!(
+            c.filters
+                .make("extent", &json!({"height": 4}), &inputs)
+                .is_err()
+        );
     }
 
     #[test]
@@ -9439,14 +9441,16 @@ mod tests {
     fn channel_extract_factory_rejects_unknown_channel() {
         let c = ctx();
         let inputs = [rgba_in_port(1, 1)];
-        assert!(c
-            .filters
-            .make("channel-extract", &json!({"channel": "garbage"}), &inputs)
-            .is_err());
-        assert!(c
-            .filters
-            .make("channel-extract", &json!({}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("channel-extract", &json!({"channel": "garbage"}), &inputs)
+                .is_err()
+        );
+        assert!(
+            c.filters
+                .make("channel-extract", &json!({}), &inputs)
+                .is_err()
+        );
     }
 
     #[test]
@@ -9638,10 +9642,11 @@ mod tests {
     fn function_factory_unknown_op_errors() {
         let c = ctx();
         let inputs = [gray_in_port(4, 4)];
-        assert!(c
-            .filters
-            .make("function", &json!({"op": "bogus"}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("function", &json!({"op": "bogus"}), &inputs)
+                .is_err()
+        );
     }
 
     #[test]
@@ -9680,37 +9685,41 @@ mod tests {
         let c = ctx();
         let inputs = [gray_in_port(8, 8)];
         // Long-form spelling.
-        assert!(c
-            .filters
-            .make(
-                "laplacian-of-gaussian",
-                &json!({"sigma": 1.0, "mode": "zero-crossings", "slope_threshold": 2.0}),
-                &inputs
-            )
-            .is_ok());
+        assert!(
+            c.filters
+                .make(
+                    "laplacian-of-gaussian",
+                    &json!({"sigma": 1.0, "mode": "zero-crossings", "slope_threshold": 2.0}),
+                    &inputs
+                )
+                .is_ok()
+        );
         // Marr-Hildreth spelling alias + boolean shorthand.
-        assert!(c
-            .filters
-            .make(
-                "marr-hildreth",
-                &json!({"sigma": 1.4, "zero_crossings": true}),
-                &inputs
-            )
-            .is_ok());
+        assert!(
+            c.filters
+                .make(
+                    "marr-hildreth",
+                    &json!({"sigma": 1.4, "zero_crossings": true}),
+                    &inputs
+                )
+                .is_ok()
+        );
     }
 
     #[test]
     fn log_factory_rejects_non_positive_sigma() {
         let c = ctx();
         let inputs = [gray_in_port(8, 8)];
-        assert!(c
-            .filters
-            .make("log", &json!({"sigma": 0.0}), &inputs)
-            .is_err());
-        assert!(c
-            .filters
-            .make("log", &json!({"sigma": -1.0}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("log", &json!({"sigma": 0.0}), &inputs)
+                .is_err()
+        );
+        assert!(
+            c.filters
+                .make("log", &json!({"sigma": -1.0}), &inputs)
+                .is_err()
+        );
     }
 
     #[test]
@@ -9733,14 +9742,16 @@ mod tests {
         let c = ctx();
         let inputs = [gray_in_port(8, 8)];
         // Both the string form and the alias should construct fine.
-        assert!(c
-            .filters
-            .make("roberts", &json!({"magnitude": "l1"}), &inputs)
-            .is_ok());
-        assert!(c
-            .filters
-            .make("roberts-cross", &json!({"l1": true}), &inputs)
-            .is_ok());
+        assert!(
+            c.filters
+                .make("roberts", &json!({"magnitude": "l1"}), &inputs)
+                .is_ok()
+        );
+        assert!(
+            c.filters
+                .make("roberts-cross", &json!({"l1": true}), &inputs)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -9762,14 +9773,16 @@ mod tests {
     fn prewitt_factory_accepts_l1_magnitude() {
         let c = ctx();
         let inputs = [gray_in_port(8, 8)];
-        assert!(c
-            .filters
-            .make("prewitt", &json!({"magnitude": "l1"}), &inputs)
-            .is_ok());
-        assert!(c
-            .filters
-            .make("prewitt", &json!({"l1": true}), &inputs)
-            .is_ok());
+        assert!(
+            c.filters
+                .make("prewitt", &json!({"magnitude": "l1"}), &inputs)
+                .is_ok()
+        );
+        assert!(
+            c.filters
+                .make("prewitt", &json!({"l1": true}), &inputs)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -9791,14 +9804,16 @@ mod tests {
     fn scharr_factory_accepts_l1_magnitude() {
         let c = ctx();
         let inputs = [gray_in_port(8, 8)];
-        assert!(c
-            .filters
-            .make("scharr", &json!({"magnitude": "l1"}), &inputs)
-            .is_ok());
-        assert!(c
-            .filters
-            .make("scharr", &json!({"l1": true}), &inputs)
-            .is_ok());
+        assert!(
+            c.filters
+                .make("scharr", &json!({"magnitude": "l1"}), &inputs)
+                .is_ok()
+        );
+        assert!(
+            c.filters
+                .make("scharr", &json!({"l1": true}), &inputs)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -11106,28 +11121,31 @@ mod tests {
         let c = ctx();
         let inputs = [gray_in_port(8, 8)];
         // Long-form mode string.
-        assert!(c
-            .filters
-            .make(
-                "gabor",
-                &json!({"mode": "magnitude", "wavelength": 4.0, "sigma": 2.0}),
-                &inputs,
-            )
-            .is_ok());
+        assert!(
+            c.filters
+                .make(
+                    "gabor",
+                    &json!({"mode": "magnitude", "wavelength": 4.0, "sigma": 2.0}),
+                    &inputs,
+                )
+                .is_ok()
+        );
         // Boolean shorthand.
-        assert!(c
-            .filters
-            .make("gabor", &json!({"magnitude": true}), &inputs)
-            .is_ok());
+        assert!(
+            c.filters
+                .make("gabor", &json!({"magnitude": true}), &inputs)
+                .is_ok()
+        );
         // Param aliases.
-        assert!(c
-            .filters
-            .make(
-                "gabor",
-                &json!({"theta": 45.0, "psi": 90.0, "aspect": 0.7}),
-                &inputs,
-            )
-            .is_ok());
+        assert!(
+            c.filters
+                .make(
+                    "gabor",
+                    &json!({"theta": 45.0, "psi": 90.0, "aspect": 0.7}),
+                    &inputs,
+                )
+                .is_ok()
+        );
     }
 
     #[test]
@@ -11135,20 +11153,23 @@ mod tests {
         let c = ctx();
         let inputs = [gray_in_port(8, 8)];
         // wavelength below spatial Nyquist.
-        assert!(c
-            .filters
-            .make("gabor", &json!({"wavelength": 1.0}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("gabor", &json!({"wavelength": 1.0}), &inputs)
+                .is_err()
+        );
         // sigma non-positive.
-        assert!(c
-            .filters
-            .make("gabor", &json!({"sigma": 0.0}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("gabor", &json!({"sigma": 0.0}), &inputs)
+                .is_err()
+        );
         // gamma non-positive.
-        assert!(c
-            .filters
-            .make("gabor", &json!({"gamma": -0.5}), &inputs)
-            .is_err());
+        assert!(
+            c.filters
+                .make("gabor", &json!({"gamma": -0.5}), &inputs)
+                .is_err()
+        );
     }
 
     #[test]
@@ -11171,10 +11192,11 @@ mod tests {
         let c = ctx();
         let inputs = [gray_in_port(8, 8)];
         assert!(c.filters.make("niblack", &json!({}), &inputs).is_ok());
-        assert!(c
-            .filters
-            .make("niblack-threshold", &json!({"invert": true}), &inputs)
-            .is_ok());
+        assert!(
+            c.filters
+                .make("niblack-threshold", &json!({"invert": true}), &inputs)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -11186,9 +11208,10 @@ mod tests {
         // f64 that still rejects. Instead just feed a valid value to
         // confirm the happy path, and trust the unit tests in
         // `niblack::tests::rejects_non_finite_k` for the NaN case.
-        assert!(c
-            .filters
-            .make("niblack", &json!({"k": -0.5}), &inputs)
-            .is_ok());
+        assert!(
+            c.filters
+                .make("niblack", &json!({"k": -0.5}), &inputs)
+                .is_ok()
+        );
     }
 }

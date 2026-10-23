@@ -5,7 +5,7 @@
 //! parameter syntax mirrors the documented `-threshold N` CLI flag (the CLI
 //! is responsible for mapping percent syntax to a `u8`).
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Binary threshold.

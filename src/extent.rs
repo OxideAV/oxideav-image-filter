@@ -20,7 +20,7 @@
 //! pipeline.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Re-window the input onto a `(width, height)` canvas with an

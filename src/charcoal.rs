@@ -22,7 +22,7 @@
 //! `radius = 0` (the default) skips the pre-blur entirely.
 
 use crate::blur::gaussian_kernel;
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Charcoal-sketch stylise filter.
@@ -396,7 +396,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out.planes[0].data.len(), 64); // 8×8 single-channel
-                                                  // Flat colour ⇒ flat luma ⇒ no edges ⇒ pure white.
+        // Flat colour ⇒ flat luma ⇒ no edges ⇒ pure white.
         for &v in &out.planes[0].data {
             assert_eq!(v, 255);
         }

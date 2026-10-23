@@ -205,11 +205,15 @@ fn unpack(plane: &VideoPlane, g: PlaneGeometry, kind: SampleKind) -> Samples {
         match kind {
             SampleKind::U8 => data.extend(row.iter().map(|&b| b as f32)),
             SampleKind::U16 { .. } => data.extend(
-                row.chunks_exact(2)
+                row.as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| u16::from_le_bytes([c[0], c[1]]) as f32),
             ),
             SampleKind::F32 => data.extend(
-                row.chunks_exact(4)
+                row.as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])),
             ),
         }
@@ -942,8 +946,8 @@ mod tests {
                 },
             )
             .unwrap();
-        for px in out.planes[0].data.chunks_exact(3) {
-            assert_eq!(px, [10, 20, 30]);
+        for px in out.planes[0].data.as_chunks::<3>().0 {
+            assert_eq!(*px, [10, 20, 30]);
         }
     }
 
@@ -1271,8 +1275,8 @@ mod tests {
                     },
                 )
                 .unwrap();
-            for px in out.planes[0].data.chunks_exact(3) {
-                assert_eq!(px, [10, 20, 30], "{interp:?} channel bleed");
+            for px in out.planes[0].data.as_chunks::<3>().0 {
+                assert_eq!(*px, [10, 20, 30], "{interp:?} channel bleed");
             }
         }
     }

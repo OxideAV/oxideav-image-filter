@@ -22,7 +22,7 @@
 //! stay stable. Mirrors the documented `-auto-gamma` parameter convention
 //! semantics.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Auto-gamma correction.

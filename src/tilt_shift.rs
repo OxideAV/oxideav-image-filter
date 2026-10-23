@@ -43,7 +43,7 @@
 //! `sigma = 2.0` Gaussian blur for the out-of-focus regions.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, gaussian_kernel, plane_dims};
-use crate::{is_supported_format, Blur, ImageFilter, PixelFilter, VideoStreamParams};
+use crate::{Blur, ImageFilter, PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Tilt-shift filter: blends a sharp source with a Gaussian-blurred

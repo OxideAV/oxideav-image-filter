@@ -19,7 +19,7 @@
 //! [`MotionBlur`](crate::motion_blur::MotionBlur): 0° is horizontal
 //! (rightward), positive angles rotate clockwise in screen space.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Pencil-sketch stylise.

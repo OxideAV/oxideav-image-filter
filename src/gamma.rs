@@ -7,7 +7,7 @@
 //! in parameter semantics while being implemented from the textbook
 //! formula (no source borrowed).
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Apply a power-law gamma curve to the tone channels.

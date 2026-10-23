@@ -244,7 +244,9 @@ fn arbitrary_angle_takes_classic_layouts_only() {
     assert!(matches!(err, oxideav_core::Error::Unsupported(_)));
     assert!(err.to_string().contains("Gray16Le"));
     let input = picture(PixelFormat::YuvJ420P, 4, 4);
-    assert!(Rotate::new(30.0)
-        .apply(&input, params(PixelFormat::YuvJ420P, 4, 4))
-        .is_ok());
+    assert!(
+        Rotate::new(30.0)
+            .apply(&input, params(PixelFormat::YuvJ420P, 4, 4))
+            .is_ok()
+    );
 }

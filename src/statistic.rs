@@ -19,7 +19,7 @@
 //!   smear hue across edges in a way that's almost never what callers
 //!   want; convert to RGB first if needed).
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Which statistic to compute over the window.

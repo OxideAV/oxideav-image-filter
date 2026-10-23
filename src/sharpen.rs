@@ -9,7 +9,7 @@
 //! RGB/RGBA inputs.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{is_supported_format, Blur, ImageFilter, PixelFilter, Planes, VideoStreamParams};
+use crate::{Blur, ImageFilter, PixelFilter, Planes, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Sharpen an image via unsharp-mask. See the module docs for the

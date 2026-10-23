@@ -62,7 +62,7 @@
 //! above.
 
 use crate::laplacian::build_luma_plane;
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// How to combine the two gradient responses into a single edge

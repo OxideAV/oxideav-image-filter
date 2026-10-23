@@ -21,7 +21,7 @@
 //! Same as [`Edge`](crate::Edge): any supported input is collapsed
 //! to a luma plane up front.
 
-use crate::{is_supported_format, laplacian::build_luma_plane, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, laplacian::build_luma_plane};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Canny edge detector.

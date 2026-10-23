@@ -111,7 +111,7 @@
 //! hand-computed from the formulae above.
 
 use crate::laplacian::build_luma_plane;
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Output mode for the Laplacian-of-Gaussian filter.

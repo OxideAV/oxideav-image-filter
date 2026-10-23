@@ -291,11 +291,7 @@ mod tests {
                 2,
                 1,
                 |x, _| {
-                    if x == 0 {
-                        [0, 0, 0]
-                    } else {
-                        [255, 255, 255]
-                    }
+                    if x == 0 { [0, 0, 0] } else { [255, 255, 255] }
                 },
             );
             let out = f.apply(&input, p_rgb(2, 1)).unwrap();

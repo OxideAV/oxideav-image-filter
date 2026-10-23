@@ -45,7 +45,7 @@
 //!
 //! Other pixel formats return [`Error::unsupported`].
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 // ----------------------------------------------------------------------
@@ -1071,7 +1071,7 @@ mod tests {
         let out = Dither::new()
             .apply(&input, params(8, 8, PixelFormat::Rgb24))
             .unwrap();
-        for px in out.planes[0].data.chunks_exact(3) {
+        for px in out.planes[0].data.as_chunks::<3>().0 {
             assert!(px[0] == 0 || px[0] == 255, "R should dither, got {}", px[0]);
             assert_eq!(px[1], 0, "G channel should stay 0");
             assert_eq!(px[2], 255, "B channel should stay 255");

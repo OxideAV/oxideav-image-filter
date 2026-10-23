@@ -18,7 +18,7 @@
 //! `rho` to `n_rho` bins of width `1.0` covering `±sqrt(w² + h²) / 2`.
 //! The defaults (`n_theta = 180`, ½°-bins) match the documented CLI model.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Hough-line detector.

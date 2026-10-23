@@ -15,7 +15,7 @@
 //!   (matching IM behaviour); `Normalize` uses a single luma proxy.
 //! - For YUV the stretch is applied to luma only (chroma untouched).
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Contrast stretch with per-end pixel-count percentages.

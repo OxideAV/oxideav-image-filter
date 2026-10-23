@@ -68,11 +68,7 @@ fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     };
     let h = if (max - r).abs() < 1e-6 {
         let t = (g - b) / d;
-        if t < 0.0 {
-            t + 6.0
-        } else {
-            t
-        }
+        if t < 0.0 { t + 6.0 } else { t }
     } else if (max - g).abs() < 1e-6 {
         (b - r) / d + 2.0
     } else {

@@ -23,7 +23,7 @@
 //! Pixel formats: same `Gray8` / `Rgb24` / `Rgba` / planar-YUV set as
 //! [`HoughLines`]; output is always single-plane `Gray8`.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Hough-circle detector.

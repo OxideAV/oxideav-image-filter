@@ -1,7 +1,7 @@
 //! Gaussian blur — separable 1D kernel applied row-wise then column-wise
 //! on each selected plane.
 
-use crate::{is_supported_format, PixelFilter, Planes, VideoStreamParams};
+use crate::{PixelFilter, Planes, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Separable Gaussian blur.

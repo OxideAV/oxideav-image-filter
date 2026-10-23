@@ -8,7 +8,7 @@
 //! negative; parameter syntax mirrors the documented `-negate` CLI flag so
 //! the CLI layer can forward user input directly.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Invert pixel values ("photo negative").

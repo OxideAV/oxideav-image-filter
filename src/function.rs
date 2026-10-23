@@ -29,7 +29,7 @@
 //! transform every channel; `Rgba` preserves alpha; `Yuv*P` only the
 //! Y plane.
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Which mathematical kind the [`Function`] filter applies.

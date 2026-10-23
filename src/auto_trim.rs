@@ -25,7 +25,7 @@
 //! frame holding the background colour (matching `Trim`'s behaviour).
 
 use crate::blur::bytes_per_plane_pixel;
-use crate::{is_supported_format, Crop, ImageFilter, PixelFilter, VideoStreamParams};
+use crate::{Crop, ImageFilter, PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Auto-trim filter — pick the dominant colour and crop to its

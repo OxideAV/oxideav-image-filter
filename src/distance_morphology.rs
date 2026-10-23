@@ -492,11 +492,7 @@ mod tests {
             w as u32,
             h as u32,
             |x, y| {
-                if x == 5 && y == 5 {
-                    255
-                } else {
-                    0
-                }
+                if x == 5 && y == 5 { 255 } else { 0 }
             },
         );
         for &r in &[1.0_f64, 1.5, 2.0, 3.0, 4.5] {
@@ -584,11 +580,7 @@ mod tests {
         let input = gray(w as u32, h as u32, |x, y| {
             let dx = x as f64 - 5.0;
             let dy = y as f64 - 5.0;
-            if dx * dx + dy * dy <= 16.0 {
-                255
-            } else {
-                0
-            }
+            if dx * dx + dy * dy <= 16.0 { 255 } else { 0 }
         });
         let orig_count = plane_of(&input).iter().filter(|&&v| v >= 128).count();
         let eroded = DistanceMorphology::erode(2.0)
@@ -674,11 +666,7 @@ mod tests {
         let input = gray(w as u32, h as u32, |x, y| {
             let in_block = (2..6).contains(&x) && (2..6).contains(&y);
             let is_speck = x == 10 && y == 7;
-            if in_block || is_speck {
-                255
-            } else {
-                0
-            }
+            if in_block || is_speck { 255 } else { 0 }
         });
         let out = DistanceMorphology::open(1.0)
             .apply(&input, p_gray(w as u32, h as u32))
@@ -699,11 +687,7 @@ mod tests {
         let input = gray(w as u32, h as u32, |x, y| {
             let in_block = (2..7).contains(&x) && (2..7).contains(&y);
             let is_hole = x == 4 && y == 4;
-            if in_block && !is_hole {
-                255
-            } else {
-                0
-            }
+            if in_block && !is_hole { 255 } else { 0 }
         });
         // Before: the hole is background.
         assert_eq!(plane_of(&input)[4 * w + 4], 0);

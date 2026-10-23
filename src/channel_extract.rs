@@ -21,7 +21,7 @@
 //!   so this is internally consistent.
 
 use crate::blur::{chroma_subsampling, plane_dims};
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which channel to pull out as a `Gray8` frame.

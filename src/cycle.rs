@@ -14,7 +14,7 @@
 //! produces visually striking, periodic colour shifts on continuous-tone
 //! images). Negative `amount` rotates downward.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Per-channel modular value rotation.

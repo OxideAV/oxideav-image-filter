@@ -11,7 +11,7 @@
 //! The documented CLI spells this `-solarize N%`; the CLI is responsible for
 //! mapping percent syntax to the `u8` threshold taken here.
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Invert every sample above `threshold` ("solarise" effect).

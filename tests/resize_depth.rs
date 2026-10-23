@@ -62,7 +62,9 @@ fn picture(
 fn u16s(plane: &VideoPlane) -> Vec<u16> {
     plane
         .data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect()
 }
@@ -200,10 +202,12 @@ fn float_samples_are_not_clamped() {
         assert_eq!(out.planes[0].stride, 6 * 12, "{k:?}");
         let v: Vec<f32> = out.planes[0]
             .data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
-        for px in v.chunks_exact(3) {
+        for px in v.as_chunks::<3>().0 {
             assert!((px[0] - 3.5).abs() < 1e-5, "{k:?}: {px:?}");
             assert!((px[1] + 0.25).abs() < 1e-5, "{k:?}: {px:?}");
             assert!((px[2] - 0.5).abs() < 1e-5, "{k:?}: {px:?}");
@@ -237,7 +241,7 @@ fn semi_planar_pairs_and_deep_packed_pixels_resample_per_component() {
             .unwrap();
         assert_eq!(out.planes[1].stride, 6, "{k:?}");
         assert_eq!(out.planes[1].data.len(), 12, "{k:?}");
-        for pair in out.planes[1].data.chunks_exact(2) {
+        for pair in out.planes[1].data.as_chunks::<2>().0 {
             assert_eq!(pair, &[10, 200], "{k:?}");
         }
     }
@@ -255,7 +259,7 @@ fn semi_planar_pairs_and_deep_packed_pixels_resample_per_component() {
             .apply(&input, params(PixelFormat::Rgb48Le, 5, 4))
             .unwrap();
         assert_eq!(out.planes[0].stride, 7 * 6, "{k:?}");
-        for px in u16s(&out.planes[0]).chunks_exact(3) {
+        for px in u16s(&out.planes[0]).as_chunks::<3>().0 {
             assert_eq!(px, &[1, 65535, 32768], "{k:?}");
         }
     }
@@ -291,15 +295,24 @@ fn pal8_is_nearest_only_and_keeps_its_table() {
     assert_eq!(out.planes[0].stride, 8 * 4);
     assert!(out.palette().is_none());
     // Entry 2 is transparent: a column inside the index-2 run is alpha 0.
-    assert!(out.planes[0].data.chunks_exact(4).any(|px| px[3] == 0));
+    assert!(
+        out.planes[0]
+            .data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|px| px[3] == 0)
+    );
     let nearest = Resize::new(1, 1).with_interpolation(Interpolation::Nearest);
     assert_eq!(
         nearest.output_pixel_format(PixelFormat::Pal8),
         Some(PixelFormat::Pal8)
     );
-    assert!(Resize::new(1, 1)
-        .accepted_pixel_formats()
-        .contains(&PixelFormat::Pal8));
+    assert!(
+        Resize::new(1, 1)
+            .accepted_pixel_formats()
+            .contains(&PixelFormat::Pal8)
+    );
     let _ = Error::Unsupported(String::new());
 }
 

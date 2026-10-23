@@ -16,13 +16,13 @@
 //!   record only onto an unchanged layout;
 //! - a picture without records yields an output without records.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use oxideav_core::{
     BlobKind, ColorSignal, Error, LayerIdentity, MetadataBlob, PixelFormat, VideoFrame, VideoPlane,
 };
 use oxideav_image_filter::catalog::{all_pair, all_single};
-use oxideav_image_filter::layout::{self, is_yuv, sample_kind, SampleKind};
+use oxideav_image_filter::layout::{self, SampleKind, is_yuv, sample_kind};
 use oxideav_image_filter::{ImageFilter, TwoInputImageFilter, VideoStreamParams};
 
 /// A `w × h` picture in `fmt` with a deterministic sample pattern on
@@ -145,7 +145,7 @@ fn check_geometry(
     let (w, h) = if free_extent {
         let p0 = &out.planes[0];
         assert!(
-            p0.stride > 0 && p0.data.len() % p0.stride == 0,
+            p0.stride > 0 && p0.data.len().is_multiple_of(p0.stride),
             "{name} on {in_fmt:?}: plane 0 ragged"
         );
         let rows = (p0.data.len() / p0.stride) as u32;
@@ -166,7 +166,7 @@ fn check_geometry(
             _ => {
                 let pb = fmt.plane_row_bytes(0, 1).unwrap();
                 assert!(
-                    p0.stride % pb == 0,
+                    p0.stride.is_multiple_of(pb),
                     "{name} on {in_fmt:?}: plane 0 stride {}",
                     p0.stride
                 );

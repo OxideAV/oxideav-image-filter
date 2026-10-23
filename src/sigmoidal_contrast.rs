@@ -18,7 +18,7 @@
 //! preserved on RGBA) is the same as for [`Gamma`](crate::Gamma) and
 //! friends — see [`apply_tone_lut`](crate::tonal_lut::apply_tone_lut).
 
-use crate::{is_supported_format, tonal_lut::apply_tone_lut, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Sigmoid-curve contrast filter.

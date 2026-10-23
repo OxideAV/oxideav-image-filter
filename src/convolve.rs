@@ -44,7 +44,7 @@ impl Convolve {
     /// `Error::invalid` if `size` is even / zero, or if `kernel.len() !=
     /// size * size`, or if any element is not finite.
     pub fn new(size: u32, kernel: Vec<f32>) -> Result<Self, Error> {
-        if size == 0 || size % 2 == 0 {
+        if size == 0 || size.is_multiple_of(2) {
             return Err(Error::invalid(format!(
                 "oxideav-image-filter: Convolve size must be odd and >= 1, got {size}"
             )));
@@ -88,11 +88,7 @@ impl Convolve {
             return d;
         }
         let s: f32 = self.kernel.iter().sum();
-        if s.abs() < 1e-9 {
-            1.0
-        } else {
-            s
-        }
+        if s.abs() < 1e-9 { 1.0 } else { s }
     }
 }
 

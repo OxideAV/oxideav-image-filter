@@ -116,7 +116,7 @@
 //! above.
 
 use crate::laplacian::build_luma_plane;
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Which sub-space the Frei–Chen magnitude projects onto.
@@ -484,7 +484,7 @@ mod tests {
         // sits entirely in E, so the edge cosine is exactly 1.
         let n: [[i32; 3]; 3] = [[1, 0, -1], [2, 0, -2], [1, 0, -1]]; // ≈ S2·√2 (integer-encoded)
         let _ = n; // we'll test the more general property below
-                   // Use a clearly-integer mean-zero pattern aligned to S2 axes:
+        // Use a clearly-integer mean-zero pattern aligned to S2 axes:
         let n: [[i32; 3]; 3] = [[40, 0, -40], [40, 0, -40], [40, 0, -40]];
         let m = project_cosine(&n, FreiChenMode::Edge);
         assert!(

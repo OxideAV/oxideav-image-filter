@@ -179,7 +179,7 @@ impl PixelFilter for SelectiveColor {
                     let bin = (h_norm / 60.0).floor() as usize % 6;
                     let next_bin = (bin + 1) % 6;
                     let t = (h_norm - bin as f32 * 60.0) / 60.0; // [0, 1]
-                                                                 // Triangular weights — left peaks at t=0, right at t=1.
+                    // Triangular weights — left peaks at t=0, right at t=1.
                     let w_left = 1.0 - t;
                     let w_right = t;
                     let left = self.band_for(bands[bin]);

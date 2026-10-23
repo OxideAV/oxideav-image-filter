@@ -11,7 +11,7 @@
 //! Clean-room implementation: per-channel histogram min/max → linear
 //! remap.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Auto-level: stretch each channel independently to fill `[0, 255]`.

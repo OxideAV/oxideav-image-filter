@@ -55,7 +55,7 @@
 //! Output keeps the input `(width, height)` and format. Other formats
 //! return [`Error::unsupported`].
 
-use crate::euclidean_distance_transform::{dt_1d, INF};
+use crate::euclidean_distance_transform::{INF, dt_1d};
 use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
@@ -521,7 +521,7 @@ mod tests {
             &out.planes[0].data[o..o + 4]
         };
         // RGB preserved everywhere.
-        for px in out.planes[0].data.chunks_exact(4) {
+        for px in out.planes[0].data.as_chunks::<4>().0 {
             assert_eq!(&px[0..3], &[10, 20, 30]);
         }
         // Centre of the block is deep interior → full alpha.

@@ -11,7 +11,7 @@
 //! luma-only for YUV planar (chroma is left intact). Alpha passes
 //! through unchanged.
 
-use crate::{is_supported_format, PixelFilter, VideoStreamParams};
+use crate::{PixelFilter, VideoStreamParams, is_supported_format};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Histogram-equalise a frame.

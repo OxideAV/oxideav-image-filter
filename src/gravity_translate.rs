@@ -15,7 +15,7 @@
 //! the existing [`Extent`](crate::extent::Extent) pipeline so YUV
 //! chroma subsampling alignment matches.
 
-use crate::{extent::Extent, ImageFilter, PixelFilter, VideoStreamParams};
+use crate::{ImageFilter, PixelFilter, VideoStreamParams, extent::Extent};
 use oxideav_core::{Error, VideoFrame};
 
 /// 9-point compass anchor mirroring the documented `-gravity` CLI.
