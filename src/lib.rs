@@ -943,7 +943,7 @@ pub use registry::__oxideav_entry;
 pub use reinhard::Reinhard;
 pub use reinhard_extended::ReinhardExtended;
 pub use reinhard_local::ReinhardLocal;
-pub use resize::{Interpolation, Resize};
+pub use resize::{FilterOptions, Interpolation, ResampleFilter, Resize};
 pub use roberts::{Roberts, RobertsMagnitude};
 pub use roll::Roll;
 pub use rotate::Rotate;

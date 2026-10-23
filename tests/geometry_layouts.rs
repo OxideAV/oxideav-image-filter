@@ -236,13 +236,16 @@ fn four_quarter_turns_are_the_identity_on_deep_planar_and_palette() {
 }
 
 #[test]
-fn arbitrary_angle_takes_classic_layouts_only() {
+fn arbitrary_angle_takes_deep_layouts_through_the_float_hop() {
+    // A 16-bit picture rotates in binary32 and comes back as 16-bit
+    // words of the rotated extent (4×4 at 30° → 6×6).
     let input = picture(PixelFormat::Gray16Le, 4, 4);
-    let err = Rotate::new(30.0)
+    let out = Rotate::new(30.0)
         .apply(&input, params(PixelFormat::Gray16Le, 4, 4))
-        .unwrap_err();
-    assert!(matches!(err, oxideav_core::Error::Unsupported(_)));
-    assert!(err.to_string().contains("Gray16Le"));
+        .unwrap();
+    assert_eq!(out.image_plane_count(), 1);
+    assert_eq!(out.planes[0].stride, 6 * 2, "16-bit words of the new width");
+    assert_eq!(out.planes[0].data.len(), 6 * 2 * 6);
     let input = picture(PixelFormat::YuvJ420P, 4, 4);
     assert!(
         Rotate::new(30.0)

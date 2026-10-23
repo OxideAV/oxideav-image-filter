@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- resize (#10): ImageMagick's full `-filter` set as `Interpolation::Filter(ResampleFilter)` — Point, Box, Triangle, Hermite, Quadratic, Cubic/Spline, Catrom, Mitchell, CubicSpline, Lagrange, Hann, Hamming, Blackman, Welch, Parzen, Bohman, Bartlett, Kaiser, Cosine, Sinc/SincFast, Lanczos/LanczosSharp/Lanczos2/Lanczos2Sharp/LanczosRadius, Gaussian, Robidoux, RobidouxSharp, Jinc — with `FilterOptions` (`blur`, `support`, `lobes`, `window`, `sigma`, `b`/`c`, `kaiser_beta`) and the `magick` shrink/edge rule; every kernel fixed black-box against `magick` 7.1.2's impulse response (`tests/fixtures/magick_impulse.txt`, within 2e-5) and `rose:` at 8/16 bits ≥ 45 dB; the `resize` factory takes the ImageMagick names and defines
 - deep path (#8): `deep::FloatImage` and the float hop — a filter that takes the packed float layouts (`GrayF32Le` / `RgbF32Le` / `RgbaF32Le`) natively now takes every 16-bit and float layout (`Rgb48Le`, `Rgba64Le`, `Gray16Le`, `Ya16Le`, the 10/12/14/16-bit planar YUV(A) and GBR(A) families, planar float) through `oxideav-pixfmt`, filtered in binary32 with no intermediate quantisation; `layout::FLOAT` / `*_DEEP` / `TONAL` sets
 - deep path on the tonal family: `Level`, `Gamma`, `Negate`, `Threshold`, `SigmoidalContrast`, `BrightnessContrast`, `Solarize`, `Posterize`, `Clamp`, `Function`, `CrossProcess`, `Normalize`; the same family takes `Ya8` and `Cmyk` / `CmykInverted` natively (every ink a tone channel)
 - deep path on the spatial family: `Blur`, `Sharpen`, `Unsharp`, `Convolve`, `MotionBlur`, `Statistic`, `Emboss`, `Despeckle`, `Clarity`; the colour family: `Modulate`, `Grayscale` (float input → `GrayF32Le` output when collapsing), `Sepia`, `Tint`, `Colorize`, `Exposure`, `ColorMatrix`, `ChannelMixer`, `Evaluate`; the statistics-driven family on a 65 536-bin histogram of the float tone: `AutoLevel`, `AutoGamma`, `ContrastStretch`, `LinearStretch`, `Equalize`, `OtsuThreshold` (float input → `GrayF32Le`)
@@ -20,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `deep::histogram` / `clip_range` / `channel_iter` / `convolve_separable` / `convolve_2d` / `neighbourhood` helpers for float kernels
 - `Level::normalized(black, white, gamma)`: endpoints in normalised units, outside `[0, 1]` or reversed; a float picture keeps the out-of-range result
 - `tests/deep_parity.rs`: every filter with a float path agrees on a widened 16-bit / float picture with its 8-bit result to within one 8-bit code; a 16-bit level → gamma chain does not band
+
+### Changed
+
+- the separable kernel driver (Lanczos / Mitchell / BSpline and the new filters) now drops taps outside the picture and renormalises instead of folding them onto the edge sample — `magick`'s edge rule, measured on an impulse at pixel 0
+- `Interpolation` is `#[non_exhaustive]`
 
 ### Other
 

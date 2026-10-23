@@ -120,13 +120,36 @@ let half = Resize::new(params.width / 2, params.height / 2)
   `k(0) = 2/3`, so it *approximates* rather than interpolates the
   samples. Same anti-aliasing separable driver.
 
+- **`Filter(ResampleFilter)`** — ImageMagick's named filter set, the
+  `-filter` list: `Point`, `Box`, `Triangle`, `Hermite`, `Quadratic`,
+  `Cubic` / `Spline`, `Catrom`, `Mitchell`, `CubicSpline`, `Lagrange`,
+  the windowed sincs `Hann`, `Hamming`, `Blackman`, `Welch`, `Parzen`,
+  `Bohman`, `Bartlett`, `Kaiser` (β 6.5), `Cosine`, `Sinc` / `SincFast`,
+  `Lanczos` / `LanczosSharp` / `Lanczos2` / `Lanczos2Sharp` /
+  `LanczosRadius`, `Gaussian` (σ 0.5), `Robidoux`, `RobidouxSharp` and
+  `Jinc`. Each is a weighting function with a support radius, optionally
+  multiplied by a window over that support; `Resize::with_filter_options`
+  carries the expert defines (`blur`, `support` / `lobes`, `window`,
+  `sigma`, `b` / `c`, the Kaiser β). The shrink rule widens the kernel by
+  the scale, taps outside the picture are dropped and the rest
+  renormalised — the rule `magick` follows. Every filter was fixed
+  against the `magick` binary (7.1.2 Q16-HDRI): a one-pixel impulse
+  enlarged eight times gives the kernel sampled every eighth of a pixel,
+  and `tests/fixtures/magick_impulse.txt` holds those responses (plus the
+  edge and shrink cases and the expert defines) for the fixture test to
+  reproduce within `2e-5`; with `magick` on the path the live test
+  resizes `rose:` through all 31 filters at 8 and 16 bits and holds
+  PSNR ≥ 45 dB (measured: identical to the last code on most).
+
 For planar YUV the chroma planes are resized to the matching subsampled
 output dimensions (e.g. 4:2:0 halves both chroma axes). Pipeline JSON
 selects the kernel via `"interpolation"`: `nearest` / `bilinear` /
 `bicubic` (aliases `cubic`, `catmull-rom`) / `area` (aliases `box`,
 `average`) / `lanczos` (3-lobe; also `lanczos2` / `lanczos3`) /
 `mitchell` (alias `mitchell-netravali`) / `b-spline` (aliases `bspline`,
-`cubic-b-spline`).
+`cubic-b-spline`) / any ImageMagick filter name (`robidoux`, `hann`,
+`lanczos-sharp`, …; or `"filter"` outright), with the expert defines as
+`blur`, `support`, `lobes`, `window`, `sigma`, `b`, `c`, `kaiser_beta`.
 
 ### Geometric
 

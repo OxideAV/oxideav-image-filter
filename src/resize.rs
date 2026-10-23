@@ -16,6 +16,7 @@ use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// How samples are reconstructed during rescale.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Interpolation {
     /// Nearest-neighbour — fast, blocky. Good for pixel art.
@@ -99,6 +100,12 @@ pub enum Interpolation {
     /// The right choice when smoothness matters more than edge sharpness.
     /// Runs through the anti-aliasing separable driver.
     BSpline,
+    /// One of ImageMagick's named resize filters (`-filter`), tuned by
+    /// [`Resize::with_filter_options`]. [`ResampleFilter::Point`] is the
+    /// point-sampling path ([`Interpolation::Nearest`]); every other
+    /// filter runs through the separable driver with the shrink-side
+    /// widening and edge rule `magick` uses.
+    Filter(ResampleFilter),
 }
 
 /// Rescale to `target_width × target_height`.
@@ -107,6 +114,7 @@ pub struct Resize {
     target_width: u32,
     target_height: u32,
     interp: Interpolation,
+    options: FilterOptions,
 }
 
 impl Resize {
@@ -116,6 +124,7 @@ impl Resize {
             target_width: target_width.max(1),
             target_height: target_height.max(1),
             interp: Interpolation::default(),
+            options: FilterOptions::new(),
         }
     }
 
@@ -123,6 +132,38 @@ impl Resize {
     pub fn with_interpolation(mut self, interp: Interpolation) -> Self {
         self.interp = interp;
         self
+    }
+
+    /// Choose one of ImageMagick's named filters.
+    pub fn with_filter(mut self, filter: ResampleFilter) -> Self {
+        self.interp = Interpolation::Filter(filter);
+        self
+    }
+
+    /// Expert overrides for a named filter (blur, support, lobes, window,
+    /// sigma, `B` / `C`, Kaiser `β`).
+    pub fn with_filter_options(mut self, options: FilterOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The output extent.
+    pub fn target(&self) -> (u32, u32) {
+        (self.target_width, self.target_height)
+    }
+
+    /// The selected kernel.
+    pub fn interpolation(&self) -> Interpolation {
+        self.interp
+    }
+
+    /// `true` when the kernel point-samples (no averaging): `Nearest`
+    /// and the `Point` filter.
+    fn is_point_sampling(&self) -> bool {
+        matches!(
+            self.interp,
+            Interpolation::Nearest | Interpolation::Filter(ResampleFilter::Point)
+        )
     }
 }
 
@@ -132,7 +173,7 @@ impl PixelFilter for Resize {
     /// kernels (a palette index cannot be averaged — `Pal8` then takes
     /// the packed-RGB hop and the output is `Rgba`).
     fn accepted_formats(&self) -> &'static [PixelFormat] {
-        if self.interp == Interpolation::Nearest {
+        if self.is_point_sampling() {
             layout::BYTE_ADDRESSABLE
         } else {
             layout::BYTE_ADDRESSABLE_SAMPLED
@@ -150,7 +191,7 @@ impl PixelFilter for Resize {
                 "oxideav-image-filter: Resize does not take {fmt:?}"
             ))
         })?;
-        if fmt == PixelFormat::Pal8 && self.interp != Interpolation::Nearest {
+        if fmt == PixelFormat::Pal8 && !self.is_point_sampling() {
             return Err(Error::unsupported(
                 "oxideav-image-filter: Resize takes Pal8 with Interpolation::Nearest only \
                  (palette indices are identifiers, not magnitudes)",
@@ -174,6 +215,7 @@ impl PixelFilter for Resize {
                 dst_g.width as usize,
                 dst_g.height as usize,
                 self.interp,
+                &self.options,
             );
             new_planes.push(pack(&out, kind));
         }
@@ -248,9 +290,21 @@ fn pack(s: &Samples, kind: SampleKind) -> VideoPlane {
 
 /// Resample `src` to `dw × dh` with `interp`. Every kernel works in
 /// `f32`; the caller quantises.
-fn resample(src: &Samples, dw: usize, dh: usize, interp: Interpolation) -> Samples {
+fn resample(
+    src: &Samples,
+    dw: usize,
+    dh: usize,
+    interp: Interpolation,
+    opts: &FilterOptions,
+) -> Samples {
     let (sw, sh, ch) = (src.w, src.h, src.ch);
     let mut out = vec![0.0f32; dw * dh * ch];
+    // The Point filter is the point-sampling path.
+    let interp = if interp == Interpolation::Filter(ResampleFilter::Point) {
+        Interpolation::Nearest
+    } else {
+        interp
+    };
 
     // Area-average resampling integrates a whole source footprint per
     // output pixel rather than point-sampling a fixed tap stencil, so it
@@ -263,7 +317,7 @@ fn resample(src: &Samples, dw: usize, dh: usize, interp: Interpolation) -> Sampl
     // separable weighted-tap driver that scales its kernel by the shrink
     // ratio on downscale (so the reconstruction filter doubles as the
     // anti-alias low-pass) and renormalises the per-output weights.
-    if let Some(kernel) = ResampleKernel::from_interpolation(interp) {
+    if let Some(kernel) = Kernel::from_interpolation(interp, opts) {
         return resample_kernel(src, dw, dh, kernel);
     }
 
@@ -330,7 +384,8 @@ fn resample(src: &Samples, dw: usize, dh: usize, interp: Interpolation) -> Sampl
                 Interpolation::Area
                 | Interpolation::Lanczos { .. }
                 | Interpolation::Mitchell
-                | Interpolation::BSpline => {
+                | Interpolation::BSpline
+                | Interpolation::Filter(_) => {
                     unreachable!("handled by a dedicated separable driver above")
                 }
             }
@@ -426,56 +481,637 @@ fn resample_area(src: &Samples, dw: usize, dh: usize) -> Samples {
     }
 }
 
-/// A separable reconstruction kernel `φ(x)` with compact support radius
-/// `support` (in source-pixel units at unit scale). The general driver
-/// evaluates `φ` per tap; downscale widening and weight normalisation are
-/// handled by the driver, not the kernel.
-#[derive(Clone, Copy)]
-struct ResampleKernel {
-    /// Half-width of the support in unit-scale source pixels (`φ(x) = 0`
-    /// for `|x| ≥ support`).
-    support: f32,
-    /// The kernel function evaluated at signed distance `x` (source-pixel
-    /// units, unit scale).
-    phi: fn(f32) -> f32,
+/// ImageMagick's resize filter set — the names `-filter` takes. Each
+/// one is a weighting function (a box, a cubic, a Gaussian, a sinc, a
+/// jinc) with a support radius, optionally multiplied by a window
+/// function over that support. The shapes below were fixed against the
+/// `magick` binary (7.1.2 Q16-HDRI): a one-pixel impulse enlarged eight
+/// times gives the kernel sampled every eighth of a pixel, and every
+/// filter here matches that sample set to within `1e-7` (see
+/// `tests/magick_resize.rs`).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ResampleFilter {
+    /// Nearest source pixel to the output centre — point sampling, no
+    /// widening on shrink (`-sample` semantics).
+    Point,
+    /// Box, support `0.5`: on shrink the taps inside the widened box
+    /// are averaged with equal weight.
+    Box,
+    /// Tent `1 − |x|`, support 1.
+    Triangle,
+    /// Cubic Hermite `BC(0, 0)`, support 1.
+    Hermite,
+    /// Quadratic B-spline, support 1.5.
+    Quadratic,
+    /// Cubic B-spline `BC(1, 0)`, support 2.
+    Cubic,
+    /// Catmull–Rom `BC(0, 1/2)`, support 2.
+    Catrom,
+    /// Mitchell–Netravali `BC(1/3, 1/3)`, support 2.
+    Mitchell,
+    /// Alias of [`Self::Cubic`] (the cubic B-spline).
+    Spline,
+    /// The interpolating piecewise cubic `1 − x/5 − 9x²/5 + x³` on
+    /// `[0, 1)` and `(−5x³ + 27x² − 46x + 24) / 15` on `[1, 2)`,
+    /// support 2 (fixed from the measured impulse response).
+    CubicSpline,
+    /// Four-point Lagrange interpolation, support 2.
+    Lagrange,
+    /// Sinc windowed by `0.5 + 0.5 cos(πt)`, support 4.
+    Hann,
+    /// Sinc windowed by `0.54 + 0.46 cos(πt)`, support 4.
+    Hamming,
+    /// Sinc windowed by `0.42 + 0.5 cos(πt) + 0.08 cos(2πt)`, support 4.
+    Blackman,
+    /// `exp(−x² / 2σ²)` with `σ = 0.5`, support `4σ`.
+    Gaussian,
+    /// Sinc windowed by `1 − t²`, support 3.
+    Welch,
+    /// Sinc windowed by the Parzen (de la Vallée Poussin) window, support 4.
+    Parzen,
+    /// Sinc windowed by `(1 − t) cos(πt) + sin(πt) / π`, support 4.
+    Bohman,
+    /// Sinc windowed by the triangle `1 − |t|`, support 4.
+    Bartlett,
+    /// Sinc windowed by `I₀(β √(1 − t²)) / I₀(β)`, `β = 6.5`, support 4.
+    Kaiser,
+    /// Sinc windowed by `cos(πt / 2)`, support 3.
+    Cosine,
+    /// Plain sinc truncated at support 4.
+    Sinc,
+    /// Alias of [`Self::Sinc`].
+    SincFast,
+    /// Sinc windowed by `sinc(x / 3)`, support 3.
+    Lanczos,
+    /// [`Self::Lanczos`] with blur `0.9812505644269356`.
+    LanczosSharp,
+    /// Sinc windowed by `sinc(x / 2)`, support 2.
+    Lanczos2,
+    /// [`Self::Lanczos2`] with blur `0.9549963639785485`.
+    Lanczos2Sharp,
+    /// [`Self::Lanczos`] on the orthogonal (separable) resampler.
+    LanczosRadius,
+    /// `BC(12 / (19 + 9√2), 113 / (58 + 216√2))`, support 2.
+    Robidoux,
+    /// `BC(6 / (13 + 7√2), 7 / (2 + 12√2))`, support 2.
+    RobidouxSharp,
+    /// Plain jinc `2 J₁(πx) / (πx)` truncated at its third zero
+    /// (support `3.2383154841662362`).
+    Jinc,
 }
 
-impl ResampleKernel {
-    /// Map the public [`Interpolation`] selector onto a driver kernel, or
-    /// `None` for the variants handled by their own specialised path
-    /// (Nearest / Bilinear / Bicubic / Area).
-    fn from_interpolation(interp: Interpolation) -> Option<Self> {
+impl ResampleFilter {
+    /// Every filter, in ImageMagick's listing order.
+    pub const ALL: &'static [ResampleFilter] = &[
+        Self::Point,
+        Self::Box,
+        Self::Triangle,
+        Self::Hermite,
+        Self::Quadratic,
+        Self::Cubic,
+        Self::Catrom,
+        Self::Mitchell,
+        Self::Spline,
+        Self::CubicSpline,
+        Self::Lagrange,
+        Self::Hann,
+        Self::Hamming,
+        Self::Blackman,
+        Self::Gaussian,
+        Self::Welch,
+        Self::Parzen,
+        Self::Bohman,
+        Self::Bartlett,
+        Self::Kaiser,
+        Self::Cosine,
+        Self::Sinc,
+        Self::SincFast,
+        Self::Lanczos,
+        Self::LanczosSharp,
+        Self::Lanczos2,
+        Self::Lanczos2Sharp,
+        Self::LanczosRadius,
+        Self::Robidoux,
+        Self::RobidouxSharp,
+        Self::Jinc,
+    ];
+
+    /// The filter's name as `-filter` spells it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Point => "Point",
+            Self::Box => "Box",
+            Self::Triangle => "Triangle",
+            Self::Hermite => "Hermite",
+            Self::Quadratic => "Quadratic",
+            Self::Cubic => "Cubic",
+            Self::Catrom => "Catrom",
+            Self::Mitchell => "Mitchell",
+            Self::Spline => "Spline",
+            Self::CubicSpline => "CubicSpline",
+            Self::Lagrange => "Lagrange",
+            Self::Hann => "Hann",
+            Self::Hamming => "Hamming",
+            Self::Blackman => "Blackman",
+            Self::Gaussian => "Gaussian",
+            Self::Welch => "Welch",
+            Self::Parzen => "Parzen",
+            Self::Bohman => "Bohman",
+            Self::Bartlett => "Bartlett",
+            Self::Kaiser => "Kaiser",
+            Self::Cosine => "Cosine",
+            Self::Sinc => "Sinc",
+            Self::SincFast => "SincFast",
+            Self::Lanczos => "Lanczos",
+            Self::LanczosSharp => "LanczosSharp",
+            Self::Lanczos2 => "Lanczos2",
+            Self::Lanczos2Sharp => "Lanczos2Sharp",
+            Self::LanczosRadius => "LanczosRadius",
+            Self::Robidoux => "Robidoux",
+            Self::RobidouxSharp => "RobidouxSharp",
+            Self::Jinc => "Jinc",
+        }
+    }
+
+    /// Parse a filter name (case-insensitive; `-`, `_` and spaces are
+    /// ignored, so `lanczos-sharp` and `LanczosSharp` both parse).
+    pub fn from_name(name: &str) -> Option<Self> {
+        let key: String = name
+            .chars()
+            .filter(|c| !matches!(c, '-' | '_' | ' '))
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|f| f.name().eq_ignore_ascii_case(&key))
+            .or(match key.as_str() {
+                "hanning" => Some(Self::Hann),
+                "bspline" | "cubicbspline" => Some(Self::Cubic),
+                "catmullrom" => Some(Self::Catrom),
+                "lanczos3" => Some(Self::Lanczos),
+                "lanczos3sharp" => Some(Self::LanczosSharp),
+                "nearest" => Some(Self::Point),
+                _ => None,
+            })
+    }
+
+    /// The support radius the filter uses when nothing overrides it, in
+    /// source pixels at unit scale.
+    pub fn default_support(self) -> f32 {
+        match self {
+            Self::Point | Self::Box => 0.5,
+            Self::Triangle | Self::Hermite => 1.0,
+            Self::Quadratic => 1.5,
+            Self::Cubic
+            | Self::Catrom
+            | Self::Mitchell
+            | Self::Spline
+            | Self::CubicSpline
+            | Self::Lagrange
+            | Self::Robidoux
+            | Self::RobidouxSharp
+            | Self::Lanczos2
+            | Self::Lanczos2Sharp
+            | Self::Gaussian => 2.0,
+            Self::Welch
+            | Self::Cosine
+            | Self::Lanczos
+            | Self::LanczosSharp
+            | Self::LanczosRadius => 3.0,
+            Self::Hann
+            | Self::Hamming
+            | Self::Blackman
+            | Self::Parzen
+            | Self::Bohman
+            | Self::Bartlett
+            | Self::Kaiser
+            | Self::Sinc
+            | Self::SincFast => 4.0,
+            Self::Jinc => JINC_THIRD_ZERO,
+        }
+    }
+
+    /// `true` for the windowed-sinc family (support and window can be
+    /// overridden as lobes).
+    pub fn is_windowed_sinc(self) -> bool {
+        matches!(
+            self,
+            Self::Hann
+                | Self::Hamming
+                | Self::Blackman
+                | Self::Welch
+                | Self::Parzen
+                | Self::Bohman
+                | Self::Bartlett
+                | Self::Kaiser
+                | Self::Cosine
+                | Self::Sinc
+                | Self::SincFast
+                | Self::Lanczos
+                | Self::LanczosSharp
+                | Self::Lanczos2
+                | Self::Lanczos2Sharp
+                | Self::LanczosRadius
+        )
+    }
+
+    /// The window a windowed-sinc preset applies (`None`: plain sinc, or
+    /// not a windowed sinc).
+    fn window(self) -> Option<Window> {
+        Some(match self {
+            Self::Hann => Window::Hann,
+            Self::Hamming => Window::Hamming,
+            Self::Blackman => Window::Blackman,
+            Self::Welch => Window::Welch,
+            Self::Parzen => Window::Parzen,
+            Self::Bohman => Window::Bohman,
+            Self::Bartlett => Window::Bartlett,
+            Self::Kaiser => Window::Kaiser { beta: 6.5 },
+            Self::Cosine => Window::Cosine,
+            Self::Lanczos
+            | Self::LanczosSharp
+            | Self::Lanczos2
+            | Self::Lanczos2Sharp
+            | Self::LanczosRadius => Window::Sinc,
+            _ => return None,
+        })
+    }
+
+    /// The preset's blur (the `*Sharp` variants narrow their kernel).
+    fn default_blur(self) -> f32 {
+        match self {
+            Self::LanczosSharp => 0.981_250_6,
+            Self::Lanczos2Sharp => 0.954_996_4,
+            _ => 1.0,
+        }
+    }
+}
+
+/// Third zero of the jinc function, the support of [`ResampleFilter::Jinc`].
+const JINC_THIRD_ZERO: f32 = 3.238_315_5;
+
+/// Expert overrides of a [`ResampleFilter`] (ImageMagick's
+/// `-define filter:…` settings). Every field is optional; the defaults
+/// reproduce the named filter exactly.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FilterOptions {
+    /// Kernel width multiplier (`filter:blur`): the weighting function
+    /// is evaluated at `x / blur` and the support grows by `blur`.
+    /// `> 1` blurs, `< 1` sharpens (and aliases).
+    pub blur: f32,
+    /// Support radius override (`filter:support`), in source pixels at
+    /// unit scale. A windowed sinc stretches its window to the new
+    /// support; a polynomial kernel keeps its shape (its zeros stay).
+    pub support: Option<f32>,
+    /// Lobe count for the windowed-sinc family (`filter:lobes`) — the
+    /// same as `support`.
+    pub lobes: Option<u32>,
+    /// Window override for the windowed-sinc family (`filter:window`):
+    /// the window of this preset replaces the filter's own, over the
+    /// generic windowed-sinc support of 4 unless `support` / `lobes`
+    /// is set.
+    pub window: Option<ResampleFilter>,
+    /// Gaussian sigma (`filter:sigma`); the support follows as `4σ`.
+    pub sigma: Option<f32>,
+    /// `B` of the cubic `BC` family (`filter:b`); when `c` is not given,
+    /// `C = (1 − B) / 2` (the Keys line).
+    pub b: Option<f32>,
+    /// `C` of the cubic `BC` family (`filter:c`); when `b` is not given,
+    /// `B = 1 − 2C`.
+    pub c: Option<f32>,
+    /// Kaiser window `β` (default `6.5`).
+    pub kaiser_beta: Option<f32>,
+}
+
+impl Default for FilterOptions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FilterOptions {
+    /// No overrides.
+    pub fn new() -> Self {
+        Self {
+            blur: 1.0,
+            support: None,
+            lobes: None,
+            window: None,
+            sigma: None,
+            b: None,
+            c: None,
+            kaiser_beta: None,
+        }
+    }
+
+    /// Set the blur multiplier (non-positive or non-finite → `1.0`).
+    pub fn with_blur(mut self, blur: f32) -> Self {
+        self.blur = if blur.is_finite() && blur > 0.0 {
+            blur
+        } else {
+            1.0
+        };
+        self
+    }
+
+    /// Override the support radius.
+    pub fn with_support(mut self, support: f32) -> Self {
+        self.support = (support.is_finite() && support > 0.0).then_some(support);
+        self
+    }
+
+    /// Override the lobe count of a windowed sinc.
+    pub fn with_lobes(mut self, lobes: u32) -> Self {
+        self.lobes = (lobes > 0).then_some(lobes);
+        self
+    }
+
+    /// Replace the window of a windowed sinc.
+    pub fn with_window(mut self, window: ResampleFilter) -> Self {
+        self.window = Some(window);
+        self
+    }
+
+    /// Set the Gaussian sigma.
+    pub fn with_sigma(mut self, sigma: f32) -> Self {
+        self.sigma = (sigma.is_finite() && sigma > 0.0).then_some(sigma);
+        self
+    }
+
+    /// Set `B` of the cubic `BC` family.
+    pub fn with_b(mut self, b: f32) -> Self {
+        self.b = b.is_finite().then_some(b);
+        self
+    }
+
+    /// Set `C` of the cubic `BC` family.
+    pub fn with_c(mut self, c: f32) -> Self {
+        self.c = c.is_finite().then_some(c);
+        self
+    }
+
+    /// Set the Kaiser window `β`.
+    pub fn with_kaiser_beta(mut self, beta: f32) -> Self {
+        self.kaiser_beta = (beta.is_finite() && beta > 0.0).then_some(beta);
+        self
+    }
+}
+
+/// A window function `w(t)` on `t ∈ [−1, 1]` (zero outside).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Window {
+    Hann,
+    Hamming,
+    Blackman,
+    Welch,
+    Parzen,
+    Bohman,
+    Bartlett,
+    Kaiser {
+        beta: f32,
+    },
+    Cosine,
+    /// The Lanczos window `sinc(t)`.
+    Sinc,
+    /// The jinc window `jinc(t)`.
+    Jinc,
+}
+
+impl Window {
+    fn eval(self, t: f32) -> f32 {
+        let a = t.abs();
+        if a >= 1.0 {
+            return 0.0;
+        }
+        let pi = std::f32::consts::PI;
+        match self {
+            Window::Hann => 0.5 + 0.5 * (pi * a).cos(),
+            Window::Hamming => 0.54 + 0.46 * (pi * a).cos(),
+            Window::Blackman => 0.42 + 0.5 * (pi * a).cos() + 0.08 * (2.0 * pi * a).cos(),
+            Window::Welch => 1.0 - a * a,
+            Window::Parzen => {
+                if a <= 0.5 {
+                    1.0 - 6.0 * a * a + 6.0 * a * a * a
+                } else {
+                    2.0 * (1.0 - a).powi(3)
+                }
+            }
+            Window::Bohman => (1.0 - a) * (pi * a).cos() + (pi * a).sin() / pi,
+            Window::Bartlett => 1.0 - a,
+            Window::Kaiser { beta } => bessel_i0(beta * (1.0 - a * a).sqrt()) / bessel_i0(beta),
+            Window::Cosine => (pi * a / 2.0).cos(),
+            Window::Sinc => sinc(a),
+            Window::Jinc => jinc(a),
+        }
+    }
+}
+
+/// The weighting function `φ(x)` of a kernel (before the window).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Shape {
+    Box,
+    Triangle,
+    Bc { b: f32, c: f32 },
+    Quadratic,
+    CubicSpline,
+    Lagrange,
+    Gaussian { sigma: f32 },
+    Sinc,
+    Jinc,
+}
+
+impl Shape {
+    fn eval(self, x: f32) -> f32 {
+        let a = x.abs();
+        match self {
+            // Inclusive at the half-pixel edge: a 65 → 24 shrink puts a
+            // source centre exactly on the widened box's edge and magick
+            // counts it (measured 1/3 weight over three taps).
+            Shape::Box => {
+                if a <= 0.5 + 1e-5 {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Shape::Triangle => (1.0 - a).max(0.0),
+            Shape::Bc { b, c } => mitchell_netravali(x, b, c),
+            Shape::Quadratic => {
+                if a < 0.5 {
+                    0.75 - a * a
+                } else if a < 1.5 {
+                    0.5 * (a - 1.5) * (a - 1.5)
+                } else {
+                    0.0
+                }
+            }
+            Shape::CubicSpline => {
+                if a < 1.0 {
+                    1.0 - 0.2 * a - 1.8 * a * a + a * a * a
+                } else if a < 2.0 {
+                    (-5.0 * a * a * a + 27.0 * a * a - 46.0 * a + 24.0) / 15.0
+                } else {
+                    0.0
+                }
+            }
+            Shape::Lagrange => {
+                if a < 1.0 {
+                    (1.0 - a) * (1.0 + a) * (2.0 - a) / 2.0
+                } else if a < 2.0 {
+                    -(a - 1.0) * (2.0 - a) * (3.0 - a) / 6.0
+                } else {
+                    0.0
+                }
+            }
+            Shape::Gaussian { sigma } => (-a * a / (2.0 * sigma * sigma)).exp(),
+            Shape::Sinc => sinc(a),
+            Shape::Jinc => jinc(a),
+        }
+    }
+}
+
+/// A resolved separable kernel: `weight(x) = φ(x / blur) · w(x / (blur ·
+/// support))` on `|x| < blur · support`, zero outside. `point_sample`
+/// marks the Point filter, which never widens on shrink.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Kernel {
+    shape: Shape,
+    window: Option<Window>,
+    /// Support radius in unit-scale source pixels (before blur).
+    support: f32,
+    blur: f32,
+}
+
+impl Kernel {
+    /// The kernel for a public selector (`None` for the point-sampling
+    /// and area paths, which have their own drivers).
+    fn from_interpolation(interp: Interpolation, opts: &FilterOptions) -> Option<Self> {
         match interp {
             Interpolation::Lanczos { a } => {
-                let a = a.clamp(1, 8);
-                // A `fn` pointer cannot close over `a`, so route each
-                // supported lobe count to its own fixed-`a` evaluator.
+                let a = a.clamp(1, 8) as f32;
                 Some(Self {
-                    support: a as f32,
-                    phi: match a {
-                        1 => |x| lanczos(x, 1.0),
-                        2 => |x| lanczos(x, 2.0),
-                        3 => |x| lanczos(x, 3.0),
-                        4 => |x| lanczos(x, 4.0),
-                        5 => |x| lanczos(x, 5.0),
-                        6 => |x| lanczos(x, 6.0),
-                        7 => |x| lanczos(x, 7.0),
-                        _ => |x| lanczos(x, 8.0),
-                    },
+                    shape: Shape::Sinc,
+                    window: Some(Window::Sinc),
+                    support: a,
+                    blur: 1.0,
                 })
             }
-            // Mitchell–Netravali BC(1/3, 1/3).
             Interpolation::Mitchell => Some(Self {
+                shape: Shape::Bc {
+                    b: 1.0 / 3.0,
+                    c: 1.0 / 3.0,
+                },
+                window: None,
                 support: 2.0,
-                phi: |x| mitchell_netravali(x, 1.0 / 3.0, 1.0 / 3.0),
+                blur: 1.0,
             }),
-            // Cubic B-spline BC(1, 0).
             Interpolation::BSpline => Some(Self {
+                shape: Shape::Bc { b: 1.0, c: 0.0 },
+                window: None,
                 support: 2.0,
-                phi: |x| mitchell_netravali(x, 1.0, 0.0),
+                blur: 1.0,
             }),
+            Interpolation::Filter(ResampleFilter::Point) => None,
+            Interpolation::Filter(f) => Some(Self::build(f, opts)),
             _ => None,
         }
+    }
+
+    /// Resolve `filter` with `opts` applied.
+    fn build(filter: ResampleFilter, opts: &FilterOptions) -> Self {
+        use ResampleFilter as F;
+        let bc = |b: f32, c: f32| match (opts.b, opts.c) {
+            (Some(b), Some(c)) => Shape::Bc { b, c },
+            (Some(b), None) => Shape::Bc {
+                b,
+                c: (1.0 - b) / 2.0,
+            },
+            (None, Some(c)) => Shape::Bc {
+                b: 1.0 - 2.0 * c,
+                c,
+            },
+            (None, None) => Shape::Bc { b, c },
+        };
+        let shape = match filter {
+            F::Point | F::Box => Shape::Box,
+            F::Triangle => Shape::Triangle,
+            F::Hermite => bc(0.0, 0.0),
+            F::Quadratic => Shape::Quadratic,
+            F::Cubic | F::Spline => bc(1.0, 0.0),
+            F::Catrom => bc(0.0, 0.5),
+            F::Mitchell => bc(1.0 / 3.0, 1.0 / 3.0),
+            F::CubicSpline => Shape::CubicSpline,
+            F::Lagrange => Shape::Lagrange,
+            F::Gaussian => Shape::Gaussian {
+                sigma: opts.sigma.unwrap_or(0.5),
+            },
+            F::Robidoux => bc(
+                12.0 / (19.0 + 9.0 * std::f32::consts::SQRT_2),
+                113.0 / (58.0 + 216.0 * std::f32::consts::SQRT_2),
+            ),
+            F::RobidouxSharp => bc(
+                6.0 / (13.0 + 7.0 * std::f32::consts::SQRT_2),
+                7.0 / (2.0 + 12.0 * std::f32::consts::SQRT_2),
+            ),
+            F::Jinc => Shape::Jinc,
+            _ => Shape::Sinc,
+        };
+        let mut window = filter.window();
+        let mut support = match filter {
+            F::Gaussian => 4.0 * opts.sigma.unwrap_or(0.5),
+            _ => filter.default_support(),
+        };
+        if filter.is_windowed_sinc()
+            && let Some(w) = opts.window
+        {
+            window = match w {
+                F::Jinc => Some(Window::Jinc),
+                F::Box | F::Point | F::Sinc | F::SincFast => None,
+                other => other.window(),
+            };
+            support = 4.0;
+        }
+        if let Some(w) = window
+            && let Window::Kaiser { .. } = w
+            && let Some(beta) = opts.kaiser_beta
+        {
+            window = Some(Window::Kaiser { beta });
+        }
+        if let Some(l) = opts.lobes
+            && filter.is_windowed_sinc()
+        {
+            support = l as f32;
+        }
+        if let Some(s) = opts.support {
+            support = s;
+        }
+        Self {
+            shape,
+            window,
+            support,
+            blur: filter.default_blur() * opts.blur,
+        }
+    }
+
+    /// The support radius in source pixels at unit scale, blur applied.
+    fn radius(&self) -> f32 {
+        self.support * self.blur
+    }
+
+    /// The weight at signed distance `x` (unit-scale source pixels).
+    fn weight(&self, x: f32) -> f32 {
+        let xs = x / self.blur;
+        if xs.abs() > self.support {
+            return 0.0;
+        }
+        let w = match self.window {
+            Some(win) => win.eval(xs / self.support),
+            None => 1.0,
+        };
+        self.shape.eval(xs) * w
     }
 }
 
@@ -490,8 +1126,57 @@ fn sinc(x: f32) -> f32 {
         px.sin() / px
     }
 }
+
+/// `jinc(x) = 2 J₁(πx) / (πx)` (`jinc(0) = 1`), the cylindrical
+/// counterpart of the sinc.
+#[inline]
+fn jinc(x: f32) -> f32 {
+    if x.abs() < 1e-8 {
+        1.0
+    } else {
+        let px = std::f32::consts::PI * x;
+        2.0 * bessel_j1(px) / px
+    }
+}
+
+/// Bessel `J₁(x)` by its power series (converges for every finite `x`;
+/// the kernel only asks for `|x| ≤ π · support`).
+fn bessel_j1(x: f32) -> f32 {
+    let x = x as f64;
+    let mut sum = 0.0f64;
+    let mut term = x / 2.0;
+    let mut k = 0u32;
+    while k < 200 {
+        sum += term;
+        k += 1;
+        term *= -(x * x / 4.0) / (k as f64 * (k + 1) as f64);
+        if term.abs() < 1e-18 {
+            break;
+        }
+    }
+    sum as f32
+}
+
+/// Modified Bessel `I₀(x)` by its power series.
+fn bessel_i0(x: f32) -> f32 {
+    let x = x as f64;
+    let mut sum = 1.0f64;
+    let mut term = 1.0f64;
+    let mut k = 0u32;
+    while k < 200 {
+        k += 1;
+        term *= (x / (2.0 * k as f64)).powi(2);
+        sum += term;
+        if term < 1e-18 * sum {
+            break;
+        }
+    }
+    sum as f32
+}
+
 /// Lanczos windowed sinc with `a` lobes: `L(x) = sinc(x)·sinc(x/a)` on
 /// `|x| < a`, zero outside. `L(0) = 1`, `L(k) = 0` at non-zero integers.
+#[cfg(test)]
 #[inline]
 fn lanczos(x: f32, a: f32) -> f32 {
     if x.abs() >= a {
@@ -500,6 +1185,7 @@ fn lanczos(x: f32, a: f32) -> f32 {
         sinc(x) * sinc(x / a)
     }
 }
+
 /// The two-parameter Mitchell–Netravali cubic `BC(B, C)` (support `[−2, 2]`).
 ///
 /// Derived from the piecewise cubic that is `C¹` at `|x| = 1` and `|x| = 2`
@@ -530,6 +1216,7 @@ fn mitchell_netravali(x: f32, b: f32, c: f32) -> f32 {
     };
     v / 6.0
 }
+
 /// One axis of the general separable weighted-tap resampler: for each
 /// output index `k` build the list of `(source_index, weight)` taps whose
 /// kernel support overlaps `k`.
@@ -538,44 +1225,41 @@ fn mitchell_netravali(x: f32, b: f32, c: f32) -> f32 {
 /// `c = (k + 0.5)·scale − 0.5` (the same half-pixel-centred mapping the
 /// point-sampling path uses). On **downscale** (`scale > 1`) the kernel is
 /// stretched by `scale` — `weight ∝ φ((i − c)/scale)` over a support of
-/// `support·scale` source pixels — so the reconstruction filter's cutoff
+/// `radius·scale` source pixels — so the reconstruction filter's cutoff
 /// drops to the output Nyquist and the pass low-passes the input before
 /// decimating (alias-free). On upscale (`scale ≤ 1`) the kernel keeps its
-/// native unit width. Out-of-range taps clamp to the border sample and the
-/// weights are renormalised to sum to 1, so a flat field always reproduces.
-fn axis_contributions(dst_len: usize, src_len: usize, scale: f32, k: &ResampleKernel) -> Contribs {
+/// native unit width. Taps outside the picture are dropped and the
+/// remaining weights renormalised to sum to 1 (the edge rule `magick`
+/// follows: an impulse at pixel 0 reproduces its measured response), so
+/// a flat field always reproduces.
+fn axis_contributions(dst_len: usize, src_len: usize, scale: f32, k: &Kernel) -> Contribs {
     // Filter scale: widen on shrink, native on enlarge.
     let filt = scale.max(1.0);
-    let radius = k.support * filt;
+    let radius = k.radius() * filt;
     let mut per_out: Vec<Vec<(usize, f32)>> = Vec::with_capacity(dst_len);
     for out in 0..dst_len {
         let centre = (out as f32 + 0.5) * scale - 0.5;
-        let lo = (centre - radius).ceil() as isize;
-        let hi = (centre + radius).floor() as isize;
+        // A source centre can land exactly on the support edge (65 → 24
+        // puts one on the box edge); binary32 rounding must not drop it.
+        let lo = ((centre - radius - 1e-4).ceil() as isize).max(0);
+        let hi = ((centre + radius + 1e-4).floor() as isize).min(src_len as isize - 1);
         let mut taps: Vec<(usize, f32)> = Vec::new();
         let mut wsum = 0.0f32;
         let mut i = lo;
         while i <= hi {
-            let w = (k.phi)((i as f32 - centre) / filt);
+            let w = k.weight((i as f32 - centre) / filt);
             if w != 0.0 {
-                let si = i.clamp(0, src_len as isize - 1) as usize;
-                // Accumulate onto the clamped index so border taps fold
-                // their weight into the edge sample (partition-preserving).
-                if let Some(last) = taps.last_mut().filter(|t| t.0 == si) {
-                    last.1 += w;
-                } else {
-                    taps.push((si, w));
-                }
+                taps.push((i as usize, w));
                 wsum += w;
             }
             i += 1;
         }
-        if taps.is_empty() {
-            // Degenerate (all weights zero — e.g. a 1-px source): sample the
-            // nearest source pixel with unit weight.
+        if taps.is_empty() || wsum.abs() < 1e-12 {
+            // Degenerate (no tap inside the support, or the weights cancel):
+            // sample the nearest source pixel with unit weight.
             let si = centre.round().clamp(0.0, src_len as f32 - 1.0) as usize;
-            taps.push((si, 1.0));
-        } else if wsum != 0.0 {
+            taps = vec![(si, 1.0)];
+        } else {
             let inv = 1.0 / wsum;
             for t in &mut taps {
                 t.1 *= inv;
@@ -591,11 +1275,11 @@ struct Contribs {
     per_out: Vec<Vec<(usize, f32)>>,
 }
 
-/// General separable weighted-kernel resampler shared by the windowed-sinc
-/// (Lanczos) and parametric-cubic (Mitchell / B-spline) variants. A
-/// horizontal pass collapses the source columns onto `dw` weighted columns,
-/// then a vertical pass collapses the rows onto `dh`.
-fn resample_kernel(src: &Samples, dw: usize, dh: usize, kernel: ResampleKernel) -> Samples {
+/// General separable weighted-kernel resampler shared by every
+/// [`ResampleFilter`] and the windowed-sinc / parametric-cubic selectors.
+/// A horizontal pass collapses the source columns onto `dw` weighted
+/// columns, then a vertical pass collapses the rows onto `dh`.
+fn resample_kernel(src: &Samples, dw: usize, dh: usize, kernel: Kernel) -> Samples {
     let (sw, sh, ch) = (src.w, src.h, src.ch);
     let scale_x = sw as f32 / dw as f32;
     let scale_y = sh as f32 / dh as f32;

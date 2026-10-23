@@ -815,15 +815,65 @@ fn make_resize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
         // Parametric cubics.
         Some("mitchell") | Some("mitchell-netravali") => Interpolation::Mitchell,
         Some("b-spline") | Some("bspline") | Some("cubic-b-spline") => Interpolation::BSpline,
-        Some(other) => {
-            return Err(Error::invalid(format!(
-                "job: filter 'resize': unknown interpolation '{other}' \
-                 (expected 'nearest', 'bilinear', 'bicubic', 'area', \
-                 'lanczos' / 'lanczos2' / 'lanczos3', 'mitchell', or 'b-spline')"
-            )));
-        }
+        // ImageMagick's `-filter` names (`robidoux`, `hann`, `lanczos-sharp`, …).
+        Some(other) => match crate::ResampleFilter::from_name(other) {
+            Some(f) => Interpolation::Filter(f),
+            None => {
+                return Err(Error::invalid(format!(
+                    "job: filter 'resize': unknown interpolation '{other}' \
+                     (expected 'nearest', 'bilinear', 'bicubic', 'area', \
+                     'lanczos' / 'lanczos2' / 'lanczos3', 'mitchell', 'b-spline', \
+                     or an ImageMagick filter name such as 'robidoux' or 'hann')"
+                )));
+            }
+        },
     };
-    let f = Resize::new(w, h).with_interpolation(interp);
+    // `filter` names an ImageMagick filter outright (takes precedence).
+    let interp = match get_str("filter") {
+        Some(name) => crate::ResampleFilter::from_name(name)
+            .map(Interpolation::Filter)
+            .ok_or_else(|| {
+                Error::invalid(format!(
+                    "job: filter 'resize': unknown filter '{name}' (an ImageMagick filter name)"
+                ))
+            })?,
+        None => interp,
+    };
+    // Expert overrides (`-define filter:…`).
+    let get_f64 = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_f64());
+    let mut opts = crate::FilterOptions::new();
+    if let Some(v) = get_f64("blur") {
+        opts = opts.with_blur(v as f32);
+    }
+    if let Some(v) = get_f64("support") {
+        opts = opts.with_support(v as f32);
+    }
+    if let Some(v) = get_u64("lobes") {
+        opts = opts.with_lobes(v as u32);
+    }
+    if let Some(name) = get_str("window") {
+        let win = crate::ResampleFilter::from_name(name).ok_or_else(|| {
+            Error::invalid(format!(
+                "job: filter 'resize': unknown window '{name}' (an ImageMagick filter name)"
+            ))
+        })?;
+        opts = opts.with_window(win);
+    }
+    if let Some(v) = get_f64("sigma") {
+        opts = opts.with_sigma(v as f32);
+    }
+    if let Some(v) = get_f64("b") {
+        opts = opts.with_b(v as f32);
+    }
+    if let Some(v) = get_f64("c") {
+        opts = opts.with_c(v as f32);
+    }
+    if let Some(v) = get_f64("kaiser_beta").or_else(|| get_f64("beta")) {
+        opts = opts.with_kaiser_beta(v as f32);
+    }
+    let f = Resize::new(w, h)
+        .with_interpolation(interp)
+        .with_filter_options(opts);
     let in_port = video_in_port(inputs);
     let out_port = match &in_port.params {
         PortParams::Video {
