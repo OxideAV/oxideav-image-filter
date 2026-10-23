@@ -9,10 +9,7 @@
 //! `high_clip` knobs are explicit here because IM's defaults aren't
 //! universally useful and letting callers pick is clearer.
 
-use crate::{
-    PixelFilter, VideoStreamParams, is_supported_format, level::build_level_lut,
-    tonal_lut::apply_tone_lut,
-};
+use crate::{PixelFilter, VideoStreamParams, level::build_level_lut, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Two-pass auto-levels.
@@ -54,7 +51,7 @@ impl Normalize {
 
 impl PixelFilter for Normalize {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     fn apply_pixels(
@@ -62,11 +59,12 @@ impl PixelFilter for Normalize {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Normalize does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let (lo, hi) = (self.low_clip, self.high_clip);
+            return crate::deep::run(input, params, |img| {
+                let (b, w) = scan_range_float(&img, lo, hi);
+                Ok(img.map_tone(|v| crate::level::level_tone(v, b, w, 1.0)))
+            });
         }
         let (lo, hi) = scan_range(input, params, self.low_clip, self.high_clip);
         let lut = build_level_lut(lo, hi, 1.0);
@@ -74,6 +72,61 @@ impl PixelFilter for Normalize {
         apply_tone_lut(&mut out, &lut, params.format, params.width, params.height);
         Ok(out)
     }
+}
+
+/// The float picture's `[lo, hi]` on a 65 536-bin histogram of the
+/// clamped tone (`(2R + 5G + B) / 8` for colour, the grey sample
+/// otherwise), same clip budgets as the 8-bit scan, as normalised
+/// endpoints.
+fn scan_range_float(img: &crate::deep::FloatImage, low_clip: f32, high_clip: f32) -> (f32, f32) {
+    const BINS: usize = 65536;
+    let mut hist = vec![0u32; BINS];
+    let mut total = 0u32;
+    let ch = img.channels();
+    let cc = img.color_channels();
+    for px in img.samples().chunks_exact(ch) {
+        let tone = if cc >= 3 {
+            (2.0 * px[0] + 5.0 * px[1] + px[2]) / 8.0
+        } else {
+            px[0]
+        };
+        let bin = (tone.clamp(0.0, 1.0) * (BINS - 1) as f32).round() as usize;
+        hist[bin.min(BINS - 1)] += 1;
+        total += 1;
+    }
+    if total == 0 {
+        return (0.0, 1.0);
+    }
+    let lo_budget = (total as f32 * low_clip).round() as u32;
+    let hi_budget = (total as f32 * high_clip).round() as u32;
+    let mut acc = 0u32;
+    let mut lo = 0usize;
+    for (i, h) in hist.iter().enumerate() {
+        acc += *h;
+        if acc > lo_budget {
+            lo = i;
+            break;
+        }
+    }
+    acc = 0;
+    let mut hi = BINS - 1;
+    for (i, h) in hist.iter().enumerate().rev() {
+        acc += *h;
+        if acc > hi_budget {
+            hi = i;
+            break;
+        }
+    }
+    if hi <= lo {
+        if lo < BINS - 1 {
+            hi = lo + 1;
+        } else {
+            lo = BINS - 2;
+            hi = BINS - 1;
+        }
+    }
+    let full = (BINS - 1) as f32;
+    (lo as f32 / full, hi as f32 / full)
 }
 
 fn scan_range(
@@ -88,6 +141,26 @@ fn scan_range(
     let mut total: u32 = 0;
 
     match params.format {
+        PixelFormat::Ya8 => {
+            // Grey tone, alpha skipped.
+            let p = &frame.planes[0];
+            for y in 0..h {
+                for v in p.data[y * p.stride..y * p.stride + 2 * w].iter().step_by(2) {
+                    hist[*v as usize] += 1;
+                    total += 1;
+                }
+            }
+        }
+        PixelFormat::Cmyk | PixelFormat::CmykInverted => {
+            // Every ink is a tone.
+            let p = &frame.planes[0];
+            for y in 0..h {
+                for v in &p.data[y * p.stride..y * p.stride + 4 * w] {
+                    hist[*v as usize] += 1;
+                    total += 1;
+                }
+            }
+        }
         PixelFormat::Gray8
         | PixelFormat::Yuv420P
         | PixelFormat::Yuv422P

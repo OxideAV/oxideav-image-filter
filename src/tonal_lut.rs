@@ -80,6 +80,28 @@ pub(crate) fn apply_tone_lut(
             }
             // chroma untouched
         }
-        _ => {} // caller is expected to have rejected this via is_supported
+        PixelFormat::Ya8 => {
+            // Grey tone remapped, alpha preserved.
+            let p = &mut frame.planes[0];
+            let stride = p.stride;
+            for y in 0..h {
+                let row = &mut p.data[y * stride..y * stride + 2 * w];
+                for x in 0..w {
+                    row[2 * x] = lut[row[2 * x] as usize];
+                }
+            }
+        }
+        PixelFormat::Cmyk | PixelFormat::CmykInverted => {
+            // Four inks, each a tone channel of its own (a per-channel
+            // operator on a CMYK picture runs on every ink).
+            let p = &mut frame.planes[0];
+            let stride = p.stride;
+            for y in 0..h {
+                for v in &mut p.data[y * stride..y * stride + 4 * w] {
+                    *v = lut[*v as usize];
+                }
+            }
+        }
+        _ => {} // caller is expected to have rejected this via the layout gate
     }
 }

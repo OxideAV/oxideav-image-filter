@@ -100,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "oxideav-image-filter"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "oxideav-core",
  "oxideav-pixfmt",

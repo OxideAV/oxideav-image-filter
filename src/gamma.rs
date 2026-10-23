@@ -7,7 +7,7 @@
 //! in parameter semantics while being implemented from the textbook
 //! formula (no source borrowed).
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
+use crate::{PixelFilter, VideoStreamParams, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Apply a power-law gamma curve to the tone channels.
@@ -39,7 +39,7 @@ impl Gamma {
 
 impl PixelFilter for Gamma {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -53,17 +53,23 @@ impl PixelFilter for Gamma {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Gamma does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let inv = 1.0 / self.gamma;
+            return crate::deep::map_tone(input, params, |v| gamma_tone(v, inv));
         }
         let lut = build_gamma_lut(self.gamma);
         let mut out = input.clone();
         apply_tone_lut(&mut out, &lut, params.format, params.width, params.height);
         Ok(out)
     }
+}
+
+/// `v^(1/γ)` on a normalised tone; non-positive tones stay at `0`
+/// (a negative base has no real power), tones above `1` keep their
+/// headroom.
+#[inline]
+fn gamma_tone(v: f32, inv_gamma: f32) -> f32 {
+    if v <= 0.0 { 0.0 } else { v.powf(inv_gamma) }
 }
 
 fn build_gamma_lut(gamma: f32) -> [u8; 256] {

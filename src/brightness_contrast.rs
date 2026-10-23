@@ -10,7 +10,7 @@
 //!
 //! Both `B` and `C` live in `-100..=100`. Applied via a 256-entry LUT.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
+use crate::{PixelFilter, VideoStreamParams, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Combined brightness and contrast adjustment.
@@ -43,7 +43,7 @@ impl BrightnessContrast {
 
 impl PixelFilter for BrightnessContrast {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -57,11 +57,11 @@ impl PixelFilter for BrightnessContrast {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: BrightnessContrast does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let gain = 1.0 + self.contrast / 100.0;
+            let offset = (128.0 + self.brightness * 1.28) / 255.0;
+            let pivot = 128.0 / 255.0;
+            return crate::deep::map_tone(input, params, |v| (v - pivot) * gain + offset);
         }
         let lut = build_lut(self.brightness, self.contrast);
         let mut out = input.clone();

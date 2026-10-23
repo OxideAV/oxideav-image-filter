@@ -20,9 +20,20 @@
 //! is the input label. A filter that changes layout (an edge detector
 //! emitting `Gray8`) or a `Pal8` source (quantising back would be a
 //! lossy decision, not a filter) leaves the output in the hop layout,
-//! and the registry label says so. Deep layouts (10/12/14/16-bit words,
-//! float) never take the hop: that would narrow samples silently, and
-//! the filter refuses them with a typed error instead.
+//! and the registry label says so.
+//!
+//! # The float hop
+//!
+//! Deep layouts (10/12/14/16-bit words, float) never take the packed-RGB
+//! hop — that would narrow samples silently. A filter whose native paths
+//! include the packed float layouts (`RgbaF32Le` / `RgbF32Le` /
+//! `GrayF32Le`, see [`crate::deep`]) takes every deep layout the same
+//! way instead: converted to the first of those three it takes (a pure
+//! normalisation for the integer RGB / grey / GBR families, the matrix
+//! at depth for YUV), filtered in binary32, and converted back
+//! (saturating to the word's full scale) when the filter keeps the hop
+//! layout. A filter without a float path refuses deep layouts with a
+//! typed error.
 
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 use oxideav_pixfmt::{ConvertContext, ConvertOptions, FrameInfo, convert_with, supports};
@@ -47,21 +58,48 @@ pub(crate) enum Route {
 /// `Bgra` / `Yuva420P` / `Ya8` source keeps its alpha, grey last.
 const HOP_TARGETS: [PixelFormat; 3] = [PixelFormat::Rgba, PixelFormat::Rgb24, PixelFormat::Gray8];
 
-/// The hop a filter takes for an 8-bit layout outside its native set,
-/// if any.
+/// The float-hop layouts for the deep (16-bit word and float) sources,
+/// same preference order.
+const DEEP_HOP_TARGETS: [PixelFormat; 3] = [
+    PixelFormat::RgbaF32Le,
+    PixelFormat::RgbF32Le,
+    PixelFormat::GrayF32Le,
+];
+
+/// The hop a filter takes for a layout outside its native set, if any:
+/// 8-bit storage hops to packed 8-bit, deep storage to packed float — a
+/// hop never narrows a sample.
 fn hop_for<F: PixelFilter + ?Sized>(f: &F, fmt: PixelFormat) -> Option<Route> {
-    // Only 8-bit storage hops: a 16-bit word or a float would be
-    // narrowed on the way in.
-    match layout::sample_kind(fmt) {
-        Some(SampleKind::U8) | None => {}
-        Some(SampleKind::U16 { .. }) | Some(SampleKind::F32) => return None,
+    let mut targets = match layout::sample_kind(fmt) {
+        Some(SampleKind::U8) | None => HOP_TARGETS,
+        Some(SampleKind::U16 { .. }) | Some(SampleKind::F32) => DEEP_HOP_TARGETS,
+    };
+    // A grey source without alpha hops to grey when the filter takes
+    // it: a colour filter run on a replicated grey would otherwise tint
+    // its channels differently and the way back would take the luma.
+    if is_plain_gray(fmt) {
+        targets.reverse();
     }
     let accepted = f.accepted_formats();
-    let via = HOP_TARGETS
+    let via = targets
         .into_iter()
         .find(|t| accepted.contains(t) && supports(fmt, *t))?;
     let back = fmt != PixelFormat::Pal8 && f.output_format(via) == via && supports(via, fmt);
     Some(Route::Hop { via, back })
+}
+
+/// Grey layouts without alpha (the sources whose natural hop is grey).
+fn is_plain_gray(fmt: PixelFormat) -> bool {
+    matches!(
+        fmt,
+        PixelFormat::Gray8
+            | PixelFormat::Gray10Le
+            | PixelFormat::Gray12Le
+            | PixelFormat::Gray16Le
+            | PixelFormat::GrayF32Le
+            | PixelFormat::MonoBlack
+            | PixelFormat::MonoWhite
+    )
 }
 
 /// Short type name of a filter for error messages

@@ -18,7 +18,7 @@
 //! preserved on RGBA) is the same as for [`Gamma`](crate::Gamma) and
 //! friends — see [`apply_tone_lut`](crate::tonal_lut::apply_tone_lut).
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
+use crate::{PixelFilter, VideoStreamParams, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Sigmoid-curve contrast filter.
@@ -59,7 +59,7 @@ impl SigmoidalContrast {
 
 impl PixelFilter for SigmoidalContrast {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -73,17 +73,51 @@ impl PixelFilter for SigmoidalContrast {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: SigmoidalContrast does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let curve = SigmoidCurve::new(self.contrast, self.midpoint);
+            return crate::deep::map_tone(input, params, |v| curve.apply(v));
         }
-
         let lut = build_lut(self.contrast, self.midpoint);
         let mut out = input.clone();
         apply_tone_lut(&mut out, &lut, params.format, params.width, params.height);
         Ok(out)
+    }
+}
+
+/// The normalised sigmoid curve `(s(x) − s(0)) / (s(1) − s(0))` with
+/// `s(x) = 1 / (1 + exp(−α (x − β)))`, identity when `α ≈ 0` or the
+/// curve is degenerate. Output clamped to `[0, 1]`.
+#[derive(Clone, Copy)]
+struct SigmoidCurve {
+    alpha: f32,
+    beta: f32,
+    s0: f32,
+    denom: f32,
+    identity: bool,
+}
+
+impl SigmoidCurve {
+    fn new(contrast: f32, midpoint: f32) -> Self {
+        let alpha = contrast;
+        let beta = (midpoint / 255.0).clamp(0.0, 1.0);
+        let s0 = sigmoid(0.0, alpha, beta);
+        let s1 = sigmoid(1.0, alpha, beta);
+        let denom = s1 - s0;
+        Self {
+            alpha,
+            beta,
+            s0,
+            denom,
+            identity: contrast.abs() < 1e-6 || denom.abs() < 1e-12,
+        }
+    }
+
+    #[inline]
+    fn apply(&self, x: f32) -> f32 {
+        if self.identity {
+            return x;
+        }
+        ((sigmoid(x, self.alpha, self.beta) - self.s0) / self.denom).clamp(0.0, 1.0)
     }
 }
 

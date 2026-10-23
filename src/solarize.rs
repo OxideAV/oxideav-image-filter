@@ -11,7 +11,7 @@
 //! The documented CLI spells this `-solarize N%`; the CLI is responsible for
 //! mapping percent syntax to the `u8` threshold taken here.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
+use crate::{PixelFilter, VideoStreamParams, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Invert every sample above `threshold` ("solarise" effect).
@@ -40,7 +40,7 @@ impl Solarize {
 
 impl PixelFilter for Solarize {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -54,11 +54,15 @@ impl PixelFilter for Solarize {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Solarize does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let t = self.threshold as f32;
+            return crate::deep::map_tone(input, params, |v| {
+                if crate::deep::code8(v) >= t {
+                    1.0 - v
+                } else {
+                    v
+                }
+            });
         }
         let lut = build_solarize_lut(self.threshold);
         let mut out = input.clone();

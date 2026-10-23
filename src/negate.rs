@@ -8,7 +8,7 @@
 //! negative; parameter syntax mirrors the documented `-negate` CLI flag so
 //! the CLI layer can forward user input directly.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Invert pixel values ("photo negative").
@@ -31,7 +31,7 @@ impl Negate {
 
 impl PixelFilter for Negate {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -45,14 +45,24 @@ impl PixelFilter for Negate {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Negate does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            return crate::deep::map_tone(input, params, |v| 1.0 - v);
         }
         let mut out = input.clone();
         match params.format {
+            PixelFormat::Ya8 | PixelFormat::Cmyk | PixelFormat::CmykInverted => {
+                let mut lut = [0u8; 256];
+                for (i, e) in lut.iter_mut().enumerate() {
+                    *e = 255 - i as u8;
+                }
+                crate::tonal_lut::apply_tone_lut(
+                    &mut out,
+                    &lut,
+                    params.format,
+                    params.width,
+                    params.height,
+                );
+            }
             PixelFormat::Gray8 => {
                 let p = &mut out.planes[0];
                 let stride = p.stride;
@@ -112,7 +122,7 @@ impl PixelFilter for Negate {
                 }
                 // Chroma planes are intentionally left as-is.
             }
-            _ => unreachable!("is_supported gate already rejected this format"),
+            _ => unreachable!("the layout gate already rejected this format"),
         }
         Ok(out)
     }

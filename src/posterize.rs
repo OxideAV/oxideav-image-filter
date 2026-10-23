@@ -11,7 +11,7 @@
 //!
 //! Matches the documented `-posterize N` parameter convention semantics.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
+use crate::{PixelFilter, VideoStreamParams, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Posterise each channel to `levels` intensity buckets.
@@ -45,7 +45,7 @@ impl Posterize {
 
 impl PixelFilter for Posterize {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -59,11 +59,15 @@ impl PixelFilter for Posterize {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Posterize does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let n = self.levels as f32;
+            return crate::deep::map_tone(input, params, |v| {
+                // Same bucket rule as the 8-bit table on the 8-bit code of
+                // the tone, so a widened picture lands in the same bucket.
+                let code = crate::deep::code8(v.clamp(0.0, 1.0));
+                let bucket = (code * n / 256.0).floor().min(n - 1.0);
+                bucket / (n - 1.0)
+            });
         }
         let lut = build_posterize_lut(self.levels);
         let mut out = input.clone();

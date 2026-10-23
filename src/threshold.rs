@@ -5,7 +5,7 @@
 //! parameter syntax mirrors the documented `-threshold N` CLI flag (the CLI
 //! is responsible for mapping percent syntax to a `u8`).
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Binary threshold.
@@ -36,7 +36,7 @@ impl Threshold {
 
 impl PixelFilter for Threshold {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -50,18 +50,35 @@ impl PixelFilter for Threshold {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Threshold does not yet handle {:?}",
-                params.format
-            )));
-        }
         let t = self.threshold;
+        if crate::deep::is_float(params.format) {
+            let tf = t as f32;
+            return crate::deep::map_tone(input, params, |v| {
+                if crate::deep::code8(v) >= tf {
+                    1.0
+                } else {
+                    0.0
+                }
+            });
+        }
         let mut out = input.clone();
         let w = params.width as usize;
         let h = params.height as usize;
 
         match params.format {
+            PixelFormat::Ya8 | PixelFormat::Cmyk | PixelFormat::CmykInverted => {
+                let mut lut = [0u8; 256];
+                for (i, e) in lut.iter_mut().enumerate() {
+                    *e = if i as u8 >= t { 255 } else { 0 };
+                }
+                crate::tonal_lut::apply_tone_lut(
+                    &mut out,
+                    &lut,
+                    params.format,
+                    params.width,
+                    params.height,
+                );
+            }
             PixelFormat::Gray8 => {
                 let p = &mut out.planes[0];
                 let stride = p.stride;
@@ -115,7 +132,7 @@ impl PixelFilter for Threshold {
                     p.data.fill(128);
                 }
             }
-            _ => unreachable!("is_supported gate already rejected this format"),
+            _ => unreachable!("the layout gate already rejected this format"),
         }
         Ok(out)
     }

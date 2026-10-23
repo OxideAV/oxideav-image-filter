@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- deep path (#8): `deep::FloatImage` and the float hop — a filter that takes the packed float layouts (`GrayF32Le` / `RgbF32Le` / `RgbaF32Le`) natively now takes every 16-bit and float layout (`Rgb48Le`, `Rgba64Le`, `Gray16Le`, `Ya16Le`, the 10/12/14/16-bit planar YUV(A) and GBR(A) families, planar float) through `oxideav-pixfmt`, filtered in binary32 with no intermediate quantisation; `layout::FLOAT` / `*_DEEP` / `TONAL` sets
+- deep path on the tonal family: `Level`, `Gamma`, `Negate`, `Threshold`, `SigmoidalContrast`, `BrightnessContrast`, `Solarize`, `Posterize`, `Clamp`, `Function`, `CrossProcess`, `Normalize`; the same family takes `Ya8` and `Cmyk` / `CmykInverted` natively (every ink a tone channel)
+- `Level::normalized(black, white, gamma)`: endpoints in normalised units, outside `[0, 1]` or reversed; a float picture keeps the out-of-range result
+- `tests/deep_parity.rs`: every filter with a float path agrees on a widened 16-bit / float picture with its 8-bit result to within one 8-bit code; a 16-bit level → gamma chain does not band
+
+### Other
+
 - edition 2024, MSRV 1.95
+- grey sources without alpha hop to the grey target first (a replicated grey through a colour filter would tint its channels)
 
 ## [0.1.3](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.2...v0.1.3) - 2026-10-21
 

@@ -41,6 +41,87 @@ pub const YUV8_CLASSIC: &[PixelFormat] = &[
     PixelFormat::YuvJ444P,
 ];
 
+/// The three packed float layouts every deep path is written for:
+/// `GrayF32Le`, `RgbF32Le`, `RgbaF32Le` (see [`crate::deep`]). A filter
+/// that lists them takes every 16-bit and float layout through the
+/// float hop.
+pub const FLOAT: &[PixelFormat] = &[
+    PixelFormat::GrayF32Le,
+    PixelFormat::RgbF32Le,
+    PixelFormat::RgbaF32Le,
+];
+
+/// [`PACKED_8BIT`] plus [`FLOAT`].
+pub const PACKED_8BIT_DEEP: &[PixelFormat] = &[
+    PixelFormat::Gray8,
+    PixelFormat::Rgb24,
+    PixelFormat::Rgba,
+    PixelFormat::GrayF32Le,
+    PixelFormat::RgbF32Le,
+    PixelFormat::RgbaF32Le,
+];
+
+/// [`PACKED_RGB`] plus the colour float layouts (`RgbF32Le`, `RgbaF32Le`).
+pub const PACKED_RGB_DEEP: &[PixelFormat] = &[
+    PixelFormat::Rgb24,
+    PixelFormat::Rgba,
+    PixelFormat::RgbF32Le,
+    PixelFormat::RgbaF32Le,
+];
+
+/// `Rgba` and `RgbaF32Le` (straight-alpha operators).
+pub const RGBA_DEEP: &[PixelFormat] = &[PixelFormat::Rgba, PixelFormat::RgbaF32Le];
+
+/// `Gray8` and `GrayF32Le`.
+pub const GRAY_DEEP: &[PixelFormat] = &[PixelFormat::Gray8, PixelFormat::GrayF32Le];
+
+/// [`GRAY8_RGBA`] plus their float counterparts.
+pub const GRAY8_RGBA_DEEP: &[PixelFormat] = &[
+    PixelFormat::Gray8,
+    PixelFormat::Rgba,
+    PixelFormat::GrayF32Le,
+    PixelFormat::RgbaF32Le,
+];
+
+/// [`CLASSIC`] plus [`FLOAT`]: the per-plane classics with a deep path.
+pub const CLASSIC_DEEP: &[PixelFormat] = &[
+    PixelFormat::Gray8,
+    PixelFormat::Rgb24,
+    PixelFormat::Rgba,
+    PixelFormat::Yuv420P,
+    PixelFormat::Yuv422P,
+    PixelFormat::Yuv444P,
+    PixelFormat::YuvJ420P,
+    PixelFormat::YuvJ422P,
+    PixelFormat::YuvJ444P,
+    PixelFormat::GrayF32Le,
+    PixelFormat::RgbF32Le,
+    PixelFormat::RgbaF32Le,
+];
+
+/// The per-channel tonal family (`Level`, `Gamma`, `Negate`,
+/// `Threshold`, …): [`CLASSIC_DEEP`] plus the 8-bit layouts whose
+/// channels are tones to be remapped one by one — `Ya8` (grey + alpha)
+/// and `Cmyk` / `CmykInverted` (four inks, each remapped on its own as
+/// a per-channel operator runs on a CMYK picture).
+pub const TONAL: &[PixelFormat] = &[
+    PixelFormat::Gray8,
+    PixelFormat::Rgb24,
+    PixelFormat::Rgba,
+    PixelFormat::Yuv420P,
+    PixelFormat::Yuv422P,
+    PixelFormat::Yuv444P,
+    PixelFormat::YuvJ420P,
+    PixelFormat::YuvJ422P,
+    PixelFormat::YuvJ444P,
+    PixelFormat::Ya8,
+    PixelFormat::Cmyk,
+    PixelFormat::CmykInverted,
+    PixelFormat::GrayF32Le,
+    PixelFormat::RgbF32Le,
+    PixelFormat::RgbaF32Le,
+];
+
 /// The original six-layout set (`Gray8`, `Rgb24`, `Rgba`, `Yuv420P`,
 /// `Yuv422P`, `Yuv444P`) exactly as the first filters gated it.
 pub const LEGACY: &[PixelFormat] = &[

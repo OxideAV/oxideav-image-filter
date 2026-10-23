@@ -25,7 +25,7 @@
 //! to the G-channel curve (the "neutral" sigmoid). Alpha is preserved
 //! on RGBA. Other formats return [`Error::unsupported`].
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
+use crate::{PixelFilter, VideoStreamParams, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Cross-processed film-look filter.
@@ -74,7 +74,7 @@ impl CrossProcess {
 
 impl PixelFilter for CrossProcess {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -88,24 +88,40 @@ impl PixelFilter for CrossProcess {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: CrossProcess does not yet handle {:?}",
-                params.format
-            )));
-        }
         let amount = self.amount.clamp(0.0, 1.0);
         let contrast = self.contrast.max(0.1);
         let warmth = self.warmth.clamp(-1.0, 1.0);
 
         // Build three per-channel LUTs.
+        if crate::deep::is_float(params.format) {
+            let curves = [
+                (contrast * 1.1, warmth * 0.4, 0.55),
+                (contrast, 0.0, 0.5),
+                (contrast * 0.9, -warmth * 0.4, 0.45),
+            ];
+            return crate::deep::run(input, params, |mut img| {
+                if img.color_channels() == 1 {
+                    img.map_tone_in_place(|v| curve(v, contrast, 0.0, 0.5, amount));
+                } else {
+                    img.map_pixels_in_place(|px| {
+                        for (v, &(c, b, p)) in px.iter_mut().zip(curves.iter()) {
+                            *v = curve(*v, c, b, p, amount);
+                        }
+                    });
+                }
+                Ok(img)
+            });
+        }
         let r_lut = build_lut(contrast * 1.1, warmth * 0.4, 0.55, amount);
         let g_lut = build_lut(contrast, 0.0, 0.5, amount);
         let b_lut = build_lut(contrast * 0.9, -warmth * 0.4, 0.45, amount);
 
         match params.format {
-            PixelFormat::Gray8 => {
-                // Single channel ⇒ use the neutral (G) curve.
+            PixelFormat::Gray8
+            | PixelFormat::Ya8
+            | PixelFormat::Cmyk
+            | PixelFormat::CmykInverted => {
+                // Single tone channel(s) ⇒ use the neutral (G) curve.
                 let mut out = input.clone();
                 apply_tone_lut(&mut out, &g_lut, params.format, params.width, params.height);
                 Ok(out)
@@ -160,17 +176,24 @@ impl PixelFilter for CrossProcess {
 /// One per-channel LUT. `contrast` is the sigmoid slope, `bias` shifts
 /// the curve toward warm (positive) or cool (negative), `pivot` is the
 /// nominal mid-grey position, and `amount` lerps with identity.
+/// One channel's curve on a normalised tone: the sigmoid of
+/// `contrast · (v − pivot)` normalised to `[0, 1]` by its `0..1`
+/// endpoints, shifted by `bias`, mixed with the input by `amount`.
+#[inline]
+fn curve(v: f32, contrast: f32, bias: f32, pivot: f32, amount: f32) -> f32 {
+    let s = sigmoid(contrast * (v - pivot));
+    let s0 = sigmoid(contrast * (0.0 - pivot));
+    let s1 = sigmoid(contrast * (1.0 - pivot));
+    let s = ((s - s0) / (s1 - s0)).clamp(0.0, 1.0);
+    let biased = (s + bias).clamp(0.0, 1.0);
+    v * (1.0 - amount) + biased * amount
+}
+
 fn build_lut(contrast: f32, bias: f32, pivot: f32, amount: f32) -> [u8; 256] {
     let mut lut = [0u8; 256];
     for (i, e) in lut.iter_mut().enumerate() {
         let v = i as f32 / 255.0;
-        let s = sigmoid(contrast * (v - pivot));
-        // Normalise sigmoid back to [0, 1] using its 0..1 endpoints.
-        let s0 = sigmoid(contrast * (0.0 - pivot));
-        let s1 = sigmoid(contrast * (1.0 - pivot));
-        let s = ((s - s0) / (s1 - s0)).clamp(0.0, 1.0);
-        let biased = (s + bias).clamp(0.0, 1.0);
-        let mixed = v * (1.0 - amount) + biased * amount;
+        let mixed = curve(v, contrast, bias, pivot, amount);
         *e = (mixed * 255.0).round().clamp(0.0, 255.0) as u8;
     }
     lut

@@ -17,7 +17,7 @@
 //! - `Yuv*P`: only the Y plane is clamped; chroma pass-through (chroma
 //!   has its own legal range that doesn't match 0/255 endpoints).
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
+use crate::{PixelFilter, VideoStreamParams, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Clamp every tone sample into `[low, high]`.
@@ -59,7 +59,7 @@ impl Clamp {
 
 impl PixelFilter for Clamp {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -73,14 +73,12 @@ impl PixelFilter for Clamp {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Clamp does not yet handle {:?}",
-                params.format
-            )));
-        }
         let lo = self.low;
         let hi = self.high;
+        if crate::deep::is_float(params.format) {
+            let (lo, hi) = (lo as f32 / 255.0, hi as f32 / 255.0);
+            return crate::deep::map_tone(input, params, |v| v.clamp(lo, hi));
+        }
         let mut lut = [0u8; 256];
         for (i, slot) in lut.iter_mut().enumerate() {
             *slot = (i as u8).clamp(lo, hi);

@@ -719,6 +719,7 @@ pub mod crystallize;
 pub mod curves;
 pub mod cyanotype;
 pub mod cycle;
+pub mod deep;
 pub mod deskew;
 pub mod despeckle;
 pub mod difference;

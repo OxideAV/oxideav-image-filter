@@ -29,7 +29,7 @@
 //! transform every channel; `Rgba` preserves alpha; `Yuv*P` only the
 //! Y plane.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
+use crate::{PixelFilter, VideoStreamParams, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Which mathematical kind the [`Function`] filter applies.
@@ -85,7 +85,7 @@ impl Function {
 
 impl PixelFilter for Function {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -99,11 +99,12 @@ impl PixelFilter for Function {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Function does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let (op, args) = (self.op, self.args.clone());
+            return crate::deep::map_tone(input, params, |v| {
+                let y = eval(op, &args, v);
+                if y.is_finite() { y } else { 0.0 }
+            });
         }
         let lut = build_lut(self.op, &self.args);
         let mut out = input.clone();

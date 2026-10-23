@@ -10,7 +10,7 @@
 //! with endpoints clamped at 0 and 255 to avoid divide-by-zero when
 //! `white == black`. Mirrors the documented `-level LOW,MID,HIGH` CLI.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, tonal_lut::apply_tone_lut};
+use crate::{PixelFilter, VideoStreamParams, tonal_lut::apply_tone_lut};
 use oxideav_core::{Error, VideoFrame};
 
 /// Linear/gamma levels adjustment.
@@ -24,8 +24,10 @@ use oxideav_core::{Error, VideoFrame};
 ///   after the linear remap; `< 1.0` darkens them.
 #[derive(Clone, Copy, Debug)]
 pub struct Level {
-    black: u8,
-    white: u8,
+    /// Input black point, normalised (`0.0` = code 0, `1.0` = full scale).
+    black: f32,
+    /// Input white point, normalised.
+    white: f32,
     gamma: f32,
 }
 
@@ -49,16 +51,77 @@ impl Level {
             (254, 255)
         };
         Self {
-            black: b,
-            white: w,
+            black: b as f32 / 255.0,
+            white: w as f32 / 255.0,
             gamma: gamma.max(1e-6),
         }
+    }
+
+    /// Build a levels adjustment from **normalised** endpoints: `0.0` is
+    /// code 0 and `1.0` full scale on every depth, and the endpoints may
+    /// lie outside `[0, 1]` (`-level -20%,120%` style stretches) or be
+    /// reversed (which inverts the tone). Endpoints closer than `1e-6`
+    /// are nudged apart. On a float picture the output keeps its
+    /// out-of-range headroom; on an integer picture it saturates at the
+    /// word's full scale.
+    pub fn normalized(black: f32, white: f32, gamma: f32) -> Self {
+        let black = if black.is_finite() { black } else { 0.0 };
+        let mut white = if white.is_finite() { white } else { 1.0 };
+        if (white - black).abs() < 1e-6 {
+            white = black + 1e-6;
+        }
+        Self {
+            black,
+            white,
+            gamma: if gamma.is_finite() {
+                gamma.max(1e-6)
+            } else {
+                1.0
+            },
+        }
+    }
+
+    /// The normalised input black point.
+    pub fn black_point(&self) -> f32 {
+        self.black
+    }
+
+    /// The normalised input white point.
+    pub fn white_point(&self) -> f32 {
+        self.white
+    }
+
+    /// The mid-tone gamma.
+    pub fn gamma(&self) -> f32 {
+        self.gamma
+    }
+
+    /// The levels curve on one normalised tone.
+    #[inline]
+    pub fn tone(&self, v: f32) -> f32 {
+        level_tone(v, self.black, self.white, 1.0 / self.gamma)
+    }
+}
+
+/// `((v − black) / (white − black))^(1/γ)`: linear remap unclamped
+/// (headroom and negative excursions survive), the power applied to the
+/// positive part only (a negative base has no real power) — so with
+/// `γ = 1` the curve is a pure affine stretch.
+#[inline]
+pub(crate) fn level_tone(v: f32, black: f32, white: f32, inv_gamma: f32) -> f32 {
+    let t = (v - black) / (white - black);
+    if inv_gamma == 1.0 {
+        t
+    } else if t <= 0.0 {
+        0.0
+    } else {
+        t.powf(inv_gamma)
     }
 }
 
 impl PixelFilter for Level {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::TONAL
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -72,16 +135,44 @@ impl PixelFilter for Level {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Level does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::map_tone(input, params, |v| me.tone(v));
         }
-        let lut = build_level_lut(self.black, self.white, self.gamma);
+        let lut = match self.u8_endpoints() {
+            // Endpoints on the 8-bit grid: the exact integer table.
+            Some((b, w)) => build_level_lut(b, w, self.gamma),
+            None => {
+                let mut lut = [0u8; 256];
+                for (i, entry) in lut.iter_mut().enumerate() {
+                    let mapped = self.tone(i as f32 / 255.0) * 255.0;
+                    *entry = if mapped.is_nan() {
+                        0
+                    } else {
+                        mapped.round().clamp(0.0, 255.0) as u8
+                    };
+                }
+                lut
+            }
+        };
         let mut out = input.clone();
         apply_tone_lut(&mut out, &lut, params.format, params.width, params.height);
         Ok(out)
+    }
+}
+
+impl Level {
+    /// The endpoints as 8-bit codes when both sit on the 8-bit grid in
+    /// order (`black < white`).
+    fn u8_endpoints(&self) -> Option<(u8, u8)> {
+        let b = self.black * 255.0;
+        let w = self.white * 255.0;
+        let on_grid = |x: f32| (0.0..=255.0).contains(&x) && (x - x.round()).abs() < 1e-4;
+        if on_grid(b) && on_grid(w) && b < w {
+            Some((b.round() as u8, w.round() as u8))
+        } else {
+            None
+        }
     }
 }
 
