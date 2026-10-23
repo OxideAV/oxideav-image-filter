@@ -53,7 +53,7 @@ impl Implode {
 
 impl PixelFilter for Implode {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -61,6 +61,41 @@ impl PixelFilter for Implode {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let factor = self.factor;
+            return crate::deep::run(input, params, |img| {
+                if factor.abs() < 1e-9 {
+                    return Ok(img);
+                }
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                let mut out = img.clone();
+                let cx = (w as f32 - 1.0) * 0.5;
+                let cy = (h as f32 - 1.0) * 0.5;
+                let max_r = (w.min(h) as f32) * 0.5;
+                for py in 0..h {
+                    let dy = py as f32 - cy;
+                    for px in 0..w {
+                        let dx = px as f32 - cx;
+                        let r = if max_r > 0.0 {
+                            (dx * dx + dy * dy).sqrt() / max_r
+                        } else {
+                            0.0
+                        };
+                        if r >= 1.0 || max_r == 0.0 {
+                            continue;
+                        }
+                        let s = 1.0 - factor * (1.0 - r);
+                        let scale = s * s;
+                        img.bilinear_into(
+                            cx + dx * scale,
+                            cy + dy * scale,
+                            out.pixel_mut(px as u32, py as u32),
+                        );
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,

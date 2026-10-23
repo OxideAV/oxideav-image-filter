@@ -115,6 +115,15 @@ fn tolerance(name: &str) -> (i32, f32) {
         // sample equal to its rounded neighbourhood mean lands on the
         // other side once the mean is exact.
         "AdaptiveThreshold" | "Niblack" => (255, 0.10),
+        // Quadrant selection on near-tied variances: the 8-bit path
+        // compares variances in 8-bit units, the float path in
+        // normalised units, and a tie decided the other way swaps the
+        // whole quadrant mean in.
+        "Kuwahara" => (255, 0.15),
+        // False-colour ramps up to eight codes per luma code: the 8-bit
+        // path truncates its luma to a code, so one code of luma is up
+        // to eight codes of ramp.
+        "Heatmap" => (8, 1.0),
         _ => (1, 0.0),
     }
 }

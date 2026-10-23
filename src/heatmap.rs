@@ -78,7 +78,7 @@ impl Heatmap {
 
 impl PixelFilter for Heatmap {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -92,6 +92,10 @@ impl PixelFilter for Heatmap {
     fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
         match input {
             oxideav_core::PixelFormat::Rgba => oxideav_core::PixelFormat::Rgba,
+            oxideav_core::PixelFormat::RgbaF32Le => oxideav_core::PixelFormat::RgbaF32Le,
+            oxideav_core::PixelFormat::GrayF32Le | oxideav_core::PixelFormat::RgbF32Le => {
+                oxideav_core::PixelFormat::RgbF32Le
+            }
             _ => oxideav_core::PixelFormat::Rgb24,
         }
     }
@@ -101,6 +105,28 @@ impl PixelFilter for Heatmap {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let ramp = self.ramp;
+            return crate::deep::run(input, params, |img| {
+                let ch = img.channels();
+                let cc = img.color_channels();
+                let out_ch = if img.has_alpha() { 4 } else { 3 };
+                let mut data =
+                    Vec::with_capacity(img.width() as usize * img.height() as usize * out_ch);
+                for px in img.samples().chunks_exact(ch) {
+                    let v = if cc >= 3 {
+                        (77.0 * px[0] + 150.0 * px[1] + 29.0 * px[2]) / 256.0
+                    } else {
+                        px[0]
+                    };
+                    data.extend_from_slice(&ramp_sample(ramp, v));
+                    if out_ch == 4 {
+                        data.push(px[3]);
+                    }
+                }
+                crate::deep::FloatImage::from_samples(img.width(), img.height(), out_ch, data)
+            });
+        }
         let lut = build_lut(self.ramp);
         let w = params.width as usize;
         let h = params.height as usize;
@@ -212,6 +238,66 @@ fn luma(r: u8, g: u8, b: u8) -> u8 {
 /// Piecewise-linear interpolation: build a 256-entry `[R, G, B]` table
 /// by walking the provided keyframes (each at a normalised position
 /// `t ∈ [0, 1]`).
+/// The ramp colour at `t ∈ [0, 1]` (normalised, unrounded).
+fn keyframes_sample(stops: &[(f32, [u8; 3])], t: f32) -> [f32; 3] {
+    let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
+    let mut a = 0usize;
+    while a + 1 < stops.len() && stops[a + 1].0 < t {
+        a += 1;
+    }
+    let b = (a + 1).min(stops.len() - 1);
+    let span = (stops[b].0 - stops[a].0).max(1e-6);
+    let local = ((t - stops[a].0) / span).clamp(0.0, 1.0);
+    let mut out = [0f32; 3];
+    for (c, o) in out.iter_mut().enumerate() {
+        let p = stops[a].1[c] as f32 / 255.0;
+        let q = stops[b].1[c] as f32 / 255.0;
+        *o = p + (q - p) * local;
+    }
+    out
+}
+
+/// The keyframes of `ramp` (the 8-bit table is built from the same).
+fn ramp_keyframes(ramp: HeatmapRamp) -> &'static [(f32, [u8; 3])] {
+    match ramp {
+        HeatmapRamp::Jet => &[
+            (0.0, [0, 0, 128]),
+            (0.125, [0, 0, 255]),
+            (0.375, [0, 255, 255]),
+            (0.625, [255, 255, 0]),
+            (0.875, [255, 0, 0]),
+            (1.0, [128, 0, 0]),
+        ],
+        HeatmapRamp::Viridis => &[
+            (0.0, [68, 1, 84]),
+            (0.25, [59, 82, 139]),
+            (0.5, [33, 145, 140]),
+            (0.75, [94, 201, 98]),
+            (1.0, [253, 231, 37]),
+        ],
+        HeatmapRamp::Plasma => &[
+            (0.0, [13, 8, 135]),
+            (0.25, [126, 3, 168]),
+            (0.5, [204, 71, 120]),
+            (0.75, [248, 149, 64]),
+            (1.0, [240, 249, 33]),
+        ],
+        HeatmapRamp::Hot => &[
+            (0.0, [0, 0, 0]),
+            (0.4, [255, 0, 0]),
+            (0.75, [255, 255, 0]),
+            (1.0, [255, 255, 255]),
+        ],
+        HeatmapRamp::Cool => &[(0.0, [0, 255, 255]), (1.0, [255, 0, 255])],
+        HeatmapRamp::Grayscale => &[(0.0, [0, 0, 0]), (1.0, [255, 255, 255])],
+    }
+}
+
+/// The ramp colour of `ramp` at tone `t` (normalised).
+fn ramp_sample(ramp: HeatmapRamp, t: f32) -> [f32; 3] {
+    keyframes_sample(ramp_keyframes(ramp), t)
+}
+
 fn build_from_keyframes(stops: &[(f32, [u8; 3])]) -> Vec<[u8; 3]> {
     let mut lut = vec![[0u8; 3]; 256];
     for (i, slot) in lut.iter_mut().enumerate() {

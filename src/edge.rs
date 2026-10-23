@@ -1,7 +1,7 @@
 //! Sobel edge-magnitude filter. Returns a `Gray8` frame containing
 //! `|Gx| + |Gy|` per pixel (clamped to 0..=255).
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Sobel edge detector.
@@ -35,12 +35,16 @@ impl Edge {
 
 impl PixelFilter for Edge {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -48,11 +52,14 @@ impl PixelFilter for Edge {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Edge does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            return crate::deep::run(input, params, |img| {
+                let grey = crate::laplacian::luma_float(&img);
+                Ok(crate::edge_multi::gradient_float(
+                    &grey,
+                    crate::edge_multi::EdgeKernel::Sobel,
+                ))
+            });
         }
 
         let w = params.width as usize;

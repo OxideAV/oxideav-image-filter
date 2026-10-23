@@ -64,7 +64,7 @@ impl Wave {
 
 impl PixelFilter for Wave {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -72,6 +72,23 @@ impl PixelFilter for Wave {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (amp, wavelength) = (self.amplitude, self.wavelength);
+            return crate::deep::run(input, params, |img| {
+                if amp.abs() < 1e-9 || wavelength <= 0.0 {
+                    return Ok(img);
+                }
+                let mut out = img.clone();
+                let k = std::f32::consts::TAU / wavelength;
+                for py in 0..img.height() {
+                    for px in 0..img.width() {
+                        let sy = py as f32 - amp * (px as f32 * k).sin();
+                        img.bilinear_into(px as f32, sy, out.pixel_mut(px, py));
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,

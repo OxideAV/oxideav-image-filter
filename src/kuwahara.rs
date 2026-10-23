@@ -57,7 +57,7 @@ impl Kuwahara {
 
 impl PixelFilter for Kuwahara {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -65,6 +65,59 @@ impl PixelFilter for Kuwahara {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let r = self.radius as i64;
+            return crate::deep::run(input, params, |img| {
+                let mut out = img.clone();
+                let cc = img.color_channels();
+                let luma_of = |px: &[f32]| {
+                    if cc >= 3 {
+                        0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2]
+                    } else {
+                        px[0]
+                    }
+                };
+                for y in 0..img.height() as i64 {
+                    for x in 0..img.width() as i64 {
+                        let quads = [
+                            (x - r, x, y - r, y),
+                            (x, x + r, y - r, y),
+                            (x - r, x, y, y + r),
+                            (x, x + r, y, y + r),
+                        ];
+                        let mut best_var = f32::INFINITY;
+                        let mut best_mean = [0f32; 3];
+                        for (x0, x1, y0, y1) in quads {
+                            let mut sum = [0f32; 3];
+                            let (mut sum_l, mut sum_l2, mut n) = (0f32, 0f32, 0f32);
+                            for yy in y0..=y1 {
+                                for xx in x0..=x1 {
+                                    let mut px = [0f32; 3];
+                                    for (c, v) in px.iter_mut().enumerate().take(cc) {
+                                        *v = img.sample_clamped(xx, yy, c);
+                                    }
+                                    for c in 0..cc {
+                                        sum[c] += px[c];
+                                    }
+                                    let l = luma_of(&px[..cc]);
+                                    sum_l += l;
+                                    sum_l2 += l * l;
+                                    n += 1.0;
+                                }
+                            }
+                            let mean_l = sum_l / n;
+                            let var = (sum_l2 / n - mean_l * mean_l).max(0.0);
+                            if var < best_var {
+                                best_var = var;
+                                best_mean = [sum[0] / n, sum[1] / n, sum[2] / n];
+                            }
+                        }
+                        out.pixel_mut(x as u32, y as u32)[..cc].copy_from_slice(&best_mean[..cc]);
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

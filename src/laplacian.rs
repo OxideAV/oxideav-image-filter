@@ -20,7 +20,7 @@
 //! a luma plane first, then the Laplacian is applied. Output is
 //! always `Gray8`.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Laplacian (second-derivative) filter.
@@ -47,12 +47,16 @@ impl Laplacian {
 
 impl PixelFilter for Laplacian {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -60,11 +64,24 @@ impl PixelFilter for Laplacian {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Laplacian does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            return crate::deep::run(input, params, |img| {
+                let grey = luma_float(&img);
+                let (w, h) = (grey.width(), grey.height());
+                let mut out = crate::deep::FloatImage::new(w, h, 1);
+                if w < 3 || h < 3 {
+                    return Ok(out);
+                }
+                for y in 0..h {
+                    for x in 0..w {
+                        let p =
+                            |dx: i64, dy: i64| grey.sample_clamped(x as i64 + dx, y as i64 + dy, 0);
+                        let resp = 4.0 * p(0, 0) - p(-1, 0) - p(1, 0) - p(0, -1) - p(0, 1);
+                        out.pixel_mut(x, y)[0] = resp.abs().min(1.0);
+                    }
+                }
+                Ok(out)
+            });
         }
         let w = params.width as usize;
         let h = params.height as usize;
@@ -78,6 +95,25 @@ impl PixelFilter for Laplacian {
             }],
         })
     }
+}
+
+/// The `(1, 2, 1) / 4` luma of a float picture as a one-channel picture.
+pub(crate) fn luma_float(img: &crate::deep::FloatImage) -> crate::deep::FloatImage {
+    let ch = img.channels();
+    let cc = img.color_channels();
+    let data = img
+        .samples()
+        .chunks_exact(ch)
+        .map(|px| {
+            if cc >= 3 {
+                (px[0] + 2.0 * px[1] + px[2]) / 4.0
+            } else {
+                px[0]
+            }
+        })
+        .collect();
+    crate::deep::FloatImage::from_samples(img.width(), img.height(), 1, data)
+        .expect("sample count matches")
 }
 
 pub(crate) fn build_luma_plane(

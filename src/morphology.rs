@@ -30,7 +30,7 @@
 //! `Planes` selector if a luma-only mode is needed.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{ImageFilter, PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which extremum the morphology pass takes over its window.
@@ -110,7 +110,7 @@ impl Morphology {
 
 impl PixelFilter for Morphology {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -118,11 +118,17 @@ impl PixelFilter for Morphology {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Morphology does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            if self.iterations == 0 {
+                return Ok(input.clone());
+            }
+            let (op, iterations, offsets) = (self.op, self.iterations, self.element.offsets());
+            return crate::deep::run(input, params, |mut img| {
+                for _ in 0..iterations {
+                    img = morph_float(&img, op, offsets);
+                }
+                Ok(img)
+            });
         }
         if self.iterations == 0 {
             return Ok(input.clone());
@@ -177,7 +183,7 @@ pub struct MorphologyChain {
 
 impl PixelFilter for MorphologyChain {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -256,7 +262,7 @@ impl MorphologyEdge {
 
 impl PixelFilter for MorphologyEdge {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -264,6 +270,37 @@ impl PixelFilter for MorphologyEdge {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (op, offsets) = (self.op, self.element.offsets());
+            return crate::deep::run(input, params, |img| {
+                let (a, b) = match op {
+                    EdgeOp::EdgeIn => {
+                        (img.clone(), morph_float(&img, MorphologyOp::Erode, offsets))
+                    }
+                    EdgeOp::EdgeOut => (
+                        morph_float(&img, MorphologyOp::Dilate, offsets),
+                        img.clone(),
+                    ),
+                    EdgeOp::EdgeMagnitude => (
+                        morph_float(&img, MorphologyOp::Dilate, offsets),
+                        morph_float(&img, MorphologyOp::Erode, offsets),
+                    ),
+                };
+                let mut out = a;
+                let cc = out.color_channels();
+                let ch = out.channels();
+                for (pa, pb) in out
+                    .samples_mut()
+                    .chunks_exact_mut(ch)
+                    .zip(b.samples().chunks_exact(ch))
+                {
+                    for c in 0..cc {
+                        pa[c] = (pa[c] - pb[c]).max(0.0);
+                    }
+                }
+                Ok(out)
+            });
+        }
         // Reuse the same code path as `Morphology` for both passes.
         let dilated_or_erode = match self.op {
             EdgeOp::EdgeIn => Morphology::erode(self.element, 1).apply(input, params)?,
@@ -377,6 +414,37 @@ fn sub_plane(
             }
         }
     }
+}
+
+/// One dilate / erode pass on a float picture: the max / min over the
+/// structuring element on every colour channel (replicate edges), alpha
+/// untouched.
+pub(crate) fn morph_float(
+    img: &crate::deep::FloatImage,
+    op: MorphologyOp,
+    offsets: &[(i32, i32)],
+) -> crate::deep::FloatImage {
+    let mut out = img.clone();
+    let cc = img.color_channels();
+    for y in 0..img.height() {
+        for x in 0..img.width() {
+            for c in 0..cc {
+                let mut acc = match op {
+                    MorphologyOp::Dilate => f32::NEG_INFINITY,
+                    MorphologyOp::Erode => f32::INFINITY,
+                };
+                for (dx, dy) in offsets {
+                    let v = img.sample_clamped(x as i64 + *dx as i64, y as i64 + *dy as i64, c);
+                    acc = match op {
+                        MorphologyOp::Dilate => acc.max(v),
+                        MorphologyOp::Erode => acc.min(v),
+                    };
+                }
+                out.pixel_mut(x, y)[c] = acc;
+            }
+        }
+    }
+    out
 }
 
 fn morph_plane(

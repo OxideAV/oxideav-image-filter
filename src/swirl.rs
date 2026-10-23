@@ -52,7 +52,7 @@ impl Swirl {
 
 impl PixelFilter for Swirl {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -60,6 +60,39 @@ impl PixelFilter for Swirl {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let degrees = self.degrees;
+            return crate::deep::run(input, params, |img| {
+                if degrees.abs() < 1e-9 {
+                    return Ok(img);
+                }
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                let mut out = img.clone();
+                let cx = (w as f32 - 1.0) * 0.5;
+                let cy = (h as f32 - 1.0) * 0.5;
+                let max_r = (w.min(h) as f32) * 0.5;
+                let radians = degrees.to_radians();
+                for py in 0..h {
+                    let dy = py as f32 - cy;
+                    for px in 0..w {
+                        let dx = px as f32 - cx;
+                        let r = if max_r > 0.0 {
+                            (dx * dx + dy * dy).sqrt() / max_r
+                        } else {
+                            0.0
+                        };
+                        if r >= 1.0 || max_r == 0.0 {
+                            continue;
+                        }
+                        let (sin_a, cos_a) = (radians * (1.0 - r)).sin_cos();
+                        let sx = cx + dx * cos_a - dy * sin_a;
+                        let sy = cy + dx * sin_a + dy * cos_a;
+                        img.bilinear_into(sx, sy, out.pixel_mut(px as u32, py as u32));
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,

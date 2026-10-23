@@ -129,7 +129,7 @@ impl Distort {
 
 impl PixelFilter for Distort {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -137,6 +137,53 @@ impl PixelFilter for Distort {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            if !self.k1.is_finite()
+                || !self.k2.is_finite()
+                || !self.p1.is_finite()
+                || !self.p2.is_finite()
+            {
+                return Err(Error::invalid(
+                    "oxideav-image-filter: Distort coefficients must be finite",
+                ));
+            }
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                let fill = crate::deep::background(me.background, img.channels());
+                let mut out = img.filled_like(img.width(), img.height(), &fill);
+                let (cx, cy) = me
+                    .centre
+                    .unwrap_or(((w as f32 - 1.0) * 0.5, (h as f32 - 1.0) * 0.5));
+                let r_norm = me
+                    .r_norm
+                    .unwrap_or((w.min(h).max(1) as f32) * 0.5)
+                    .max(f32::EPSILON);
+                let inv_r = 1.0 / r_norm;
+                const EPS: f32 = 1e-4;
+                for py in 0..h {
+                    let dy = (py as f32 - cy) * inv_r;
+                    for px in 0..w {
+                        let dx = (px as f32 - cx) * inv_r;
+                        let r2 = dx * dx + dy * dy;
+                        let scale = 1.0 + me.k1 * r2 + me.k2 * r2 * r2;
+                        let dx_t = 2.0 * me.p1 * dx * dy + me.p2 * (r2 + 2.0 * dx * dx);
+                        let dy_t = me.p1 * (r2 + 2.0 * dy * dy) + 2.0 * me.p2 * dx * dy;
+                        let sx = cx + (dx * scale + dx_t) * r_norm;
+                        let sy = cy + (dy * scale + dy_t) * r_norm;
+                        if sx < -EPS
+                            || sx > (w as f32 - 1.0) + EPS
+                            || sy < -EPS
+                            || sy > (h as f32 - 1.0) + EPS
+                        {
+                            continue;
+                        }
+                        img.bilinear_into(sx, sy, out.pixel_mut(px as u32, py as u32));
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,

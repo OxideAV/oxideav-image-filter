@@ -61,7 +61,7 @@ impl PixelFilter for Rotate {
         if snap_quarter(self.degrees).is_some() {
             crate::layout::BYTE_ADDRESSABLE
         } else {
-            crate::layout::CLASSIC
+            crate::layout::CLASSIC_DEEP
         }
     }
 
@@ -74,6 +74,38 @@ impl PixelFilter for Rotate {
         // so we don't accumulate bilinear drift from f32 sin/cos.
         if let Some(out) = quarter_turn(input, params, self.degrees) {
             return Ok(out);
+        }
+        if crate::deep::is_float(params.format) {
+            let theta = self.degrees.to_radians();
+            let (sin_t, cos_t) = theta.sin_cos();
+            let (new_w, new_h) =
+                rotated_bounds(params.width as f32, params.height as f32, sin_t, cos_t);
+            let bg = self.background.unwrap_or(match params.format {
+                PixelFormat::RgbaF32Le => [0, 0, 0, 0],
+                _ => [0, 0, 0, 255],
+            });
+            return crate::deep::run(input, params, |img| {
+                let fill = crate::deep::background(bg, img.channels());
+                let mut out = img.filled_like(new_w, new_h, &fill);
+                let (sw, sh) = (img.width() as f32, img.height() as f32);
+                let scx = (sw - 1.0) * 0.5;
+                let scy = (sh - 1.0) * 0.5;
+                let dcx = (new_w as f32 - 1.0) * 0.5;
+                let dcy = (new_h as f32 - 1.0) * 0.5;
+                for y in 0..new_h {
+                    let dy = y as f32 - dcy;
+                    for x in 0..new_w {
+                        let dx = x as f32 - dcx;
+                        let sx = dx * cos_t - dy * sin_t + scx;
+                        let sy = dx * sin_t + dy * cos_t + scy;
+                        if sx < 0.0 || sy < 0.0 || sx > sw - 1.0 || sy > sh - 1.0 {
+                            continue;
+                        }
+                        img.bilinear_into(sx, sy, out.pixel_mut(x, y));
+                    }
+                }
+                Ok(out)
+            });
         }
 
         // Convert "clockwise degrees in image coordinates" to the

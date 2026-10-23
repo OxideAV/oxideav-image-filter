@@ -143,6 +143,38 @@ impl GradientMap {
         stops[stops.len() - 1].color
     }
 
+    /// [`Self::sample`] in normalised units with no 8-bit rounding of
+    /// the mixed colour.
+    pub fn sample_f(&self, t: f32) -> [f32; 3] {
+        let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
+        let stops = &self.stops;
+        let f = |c: [u8; 3]| c.map(|v| v as f32 / 255.0);
+        if t <= stops[0].position {
+            return f(stops[0].color);
+        }
+        if t >= stops[stops.len() - 1].position {
+            return f(stops[stops.len() - 1].color);
+        }
+        for i in 0..stops.len() - 1 {
+            let a = stops[i];
+            let b = stops[i + 1];
+            if t >= a.position && t <= b.position {
+                let span = b.position - a.position;
+                if span <= 0.0 {
+                    return f(b.color);
+                }
+                let k = (t - a.position) / span;
+                let (ca, cb) = (f(a.color), f(b.color));
+                return [
+                    ca[0] + (cb[0] - ca[0]) * k,
+                    ca[1] + (cb[1] - ca[1]) * k,
+                    ca[2] + (cb[2] - ca[2]) * k,
+                ];
+            }
+        }
+        f(stops[stops.len() - 1].color)
+    }
+
     fn build_lut(&self) -> [[u8; 3]; 256] {
         let mut lut = [[0u8; 3]; 256];
         for (i, e) in lut.iter_mut().enumerate() {
@@ -165,7 +197,7 @@ fn rec601(r: u8, g: u8, b: u8) -> u8 {
 
 impl PixelFilter for GradientMap {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -178,6 +210,7 @@ impl PixelFilter for GradientMap {
     fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
         match input {
             oxideav_core::PixelFormat::Gray8 => oxideav_core::PixelFormat::Rgb24,
+            oxideav_core::PixelFormat::GrayF32Le => oxideav_core::PixelFormat::RgbF32Le,
             other => other,
         }
     }
@@ -187,6 +220,27 @@ impl PixelFilter for GradientMap {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            return crate::deep::run(input, params, |img| {
+                let ch = img.channels();
+                let cc = img.color_channels();
+                let out_ch = if img.has_alpha() { 4 } else { 3 };
+                let mut data =
+                    Vec::with_capacity(img.width() as usize * img.height() as usize * out_ch);
+                for px in img.samples().chunks_exact(ch) {
+                    let l = if cc >= 3 {
+                        0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2]
+                    } else {
+                        px[0]
+                    };
+                    data.extend_from_slice(&self.sample_f(l));
+                    if out_ch == 4 {
+                        data.push(px[3]);
+                    }
+                }
+                crate::deep::FloatImage::from_samples(img.width(), img.height(), out_ch, data)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

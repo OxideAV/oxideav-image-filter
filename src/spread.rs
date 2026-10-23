@@ -61,7 +61,7 @@ impl Spread {
 
 impl PixelFilter for Spread {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -69,6 +69,36 @@ impl PixelFilter for Spread {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (radius, seed) = (self.radius, self.seed);
+            return crate::deep::run(input, params, |img| {
+                if radius == 0 {
+                    return Ok(img);
+                }
+                let r = radius as i64;
+                let span = (2 * r + 1) as u32;
+                let mut out = img.clone();
+                for py in 0..img.height() {
+                    for px in 0..img.width() {
+                        let mut h64 = seed
+                            .wrapping_add((px as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+                            .wrapping_add((py as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+                        h64 ^= h64 >> 30;
+                        h64 = h64.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                        h64 ^= h64 >> 27;
+                        h64 = h64.wrapping_mul(0x94D0_49BB_1331_11EB);
+                        h64 ^= h64 >> 31;
+                        let dx = ((h64 as u32) % span) as i64 - r;
+                        let dy = (((h64 >> 32) as u32) % span) as i64 - r;
+                        let sx = (px as i64 + dx).clamp(0, img.width() as i64 - 1) as u32;
+                        let sy = (py as i64 + dy).clamp(0, img.height() as i64 - 1) as u32;
+                        let src = img.pixel(sx, sy).to_vec();
+                        out.pixel_mut(px, py).copy_from_slice(&src);
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,

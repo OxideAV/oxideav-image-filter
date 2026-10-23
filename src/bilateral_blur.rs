@@ -158,7 +158,7 @@ fn bilateral_plane(
 
 impl PixelFilter for BilateralBlur {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -166,6 +166,42 @@ impl PixelFilter for BilateralBlur {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let radius = self.radius as i64;
+            let spatial = self.spatial_kernel();
+            let n = (2 * radius + 1) as usize;
+            let sr = self.sigma_range.max(1e-3);
+            let inv_2sr2 = 1.0 / (2.0 * sr * sr);
+            return crate::deep::run(input, params, |img| {
+                if radius == 0 {
+                    return Ok(img);
+                }
+                let mut out = img.clone();
+                let cc = img.color_channels();
+                for y in 0..img.height() {
+                    for x in 0..img.width() {
+                        for c in 0..cc {
+                            let cv = img.pixel(x, y)[c];
+                            let (mut sum, mut wsum) = (0.0f32, 0.0f32);
+                            for j in -radius..=radius {
+                                for i in -radius..=radius {
+                                    let sample = img.sample_clamped(x as i64 + i, y as i64 + j, c);
+                                    let ws = spatial
+                                        [((j + radius) as usize) * n + (i + radius) as usize];
+                                    // The range sigma is in 8-bit units.
+                                    let dr = (sample - cv) * 255.0;
+                                    let wt = ws * (-(dr * dr) * inv_2sr2).exp();
+                                    sum += sample * wt;
+                                    wsum += wt;
+                                }
+                            }
+                            out.pixel_mut(x, y)[c] = if wsum > 0.0 { sum / wsum } else { cv };
+                        }
+                    }
+                }
+                Ok(out)
+            });
+        }
         let (bpp, channels, has_alpha) = match params.format {
             PixelFormat::Gray8 => (1usize, 1usize, false),
             PixelFormat::Rgb24 => (3, 3, false),

@@ -80,7 +80,7 @@ impl ShadowHighlight {
 
 impl PixelFilter for ShadowHighlight {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -88,6 +88,14 @@ impl PixelFilter for ShadowHighlight {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (sa, ha) = (self.shadow_amount, self.highlight_amount);
+            return crate::deep::map_tone(input, params, |x| {
+                let shadow_w = if x < 0.5 { 1.0 - 2.0 * x } else { 0.0 };
+                let highlight_w = if x > 0.5 { 2.0 * x - 1.0 } else { 0.0 };
+                (x + sa * shadow_w * 0.5 - ha * highlight_w * 0.5).clamp(0.0, 1.0)
+            });
+        }
         let lut = self.build_lut();
         match params.format {
             PixelFormat::Gray8 => {

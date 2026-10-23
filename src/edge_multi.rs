@@ -23,7 +23,7 @@
 //! `[0, 255]`. Same input format coverage as [`Edge`] (Gray8 / Rgb24 /
 //! Rgba / planar YUV — RGB is reduced to a luma proxy first).
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Choice of gradient kernel for [`EdgeDetect`].
@@ -67,12 +67,16 @@ impl EdgeDetect {
 
 impl PixelFilter for EdgeDetect {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -80,11 +84,11 @@ impl PixelFilter for EdgeDetect {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: EdgeDetect does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let kernel = self.kernel;
+            return crate::deep::run(input, params, |img| {
+                Ok(gradient_float(&crate::laplacian::luma_float(&img), kernel))
+            });
         }
         let w = params.width as usize;
         let h = params.height as usize;
@@ -150,6 +154,50 @@ fn build_luma(f: &VideoFrame, params: VideoStreamParams) -> Result<Vec<u8>, Erro
         }
     }
     Ok(out)
+}
+
+/// `|gx| + |gy|` of `kernel` on a one-channel float picture (Scharr
+/// scaled by `1/4`), saturated at `1.0`; zero on pictures narrower than
+/// the kernel's minimum, as the 8-bit path.
+pub(crate) fn gradient_float(
+    grey: &crate::deep::FloatImage,
+    kernel: EdgeKernel,
+) -> crate::deep::FloatImage {
+    let (w, h) = (grey.width(), grey.height());
+    let mut out = crate::deep::FloatImage::new(w, h, 1);
+    if w < 2 || h < 2 {
+        return out;
+    }
+    for y in 0..h {
+        for x in 0..w {
+            let p = |dx: i64, dy: i64| grey.sample_clamped(x as i64 + dx, y as i64 + dy, 0);
+            let (gx, gy) = match kernel {
+                EdgeKernel::Sobel => (
+                    -p(-1, -1) - 2.0 * p(-1, 0) - p(-1, 1) + p(1, -1) + 2.0 * p(1, 0) + p(1, 1),
+                    -p(-1, -1) - 2.0 * p(0, -1) - p(1, -1) + p(-1, 1) + 2.0 * p(0, 1) + p(1, 1),
+                ),
+                EdgeKernel::Prewitt => (
+                    -p(-1, -1) - p(-1, 0) - p(-1, 1) + p(1, -1) + p(1, 0) + p(1, 1),
+                    -p(-1, -1) - p(0, -1) - p(1, -1) + p(-1, 1) + p(0, 1) + p(1, 1),
+                ),
+                EdgeKernel::Scharr => (
+                    (-3.0 * p(-1, -1) - 10.0 * p(-1, 0) - 3.0 * p(-1, 1)
+                        + 3.0 * p(1, -1)
+                        + 10.0 * p(1, 0)
+                        + 3.0 * p(1, 1))
+                        / 4.0,
+                    (-3.0 * p(-1, -1) - 10.0 * p(0, -1) - 3.0 * p(1, -1)
+                        + 3.0 * p(-1, 1)
+                        + 10.0 * p(0, 1)
+                        + 3.0 * p(1, 1))
+                        / 4.0,
+                ),
+                EdgeKernel::Roberts => (p(0, 0) - p(1, 1), p(1, 0) - p(0, 1)),
+            };
+            out.pixel_mut(x, y)[0] = (gx.abs() + gy.abs()).min(1.0);
+        }
+    }
+    out
 }
 
 fn px(luma: &[u8], w: usize, h: usize, x: i32, y: i32) -> i32 {

@@ -64,7 +64,7 @@ impl SplitTone {
 
 impl PixelFilter for SplitTone {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -78,6 +78,26 @@ impl PixelFilter for SplitTone {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let amount = self.amount.clamp(0.0, 1.0);
+            let bal = self.balance.clamp(-1.0, 1.0);
+            let shadow_scale = (1.0 - bal).clamp(0.0, 1.0);
+            let highlight_scale = (1.0 + bal).clamp(0.0, 1.0);
+            let sc = self.shadow_color.map(|v| v as f32 / 255.0);
+            let hc = self.highlight_color.map(|v| v as f32 / 255.0);
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    let v = 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2];
+                    let sw = (1.0 - 2.0 * v).max(0.0) * shadow_scale * amount;
+                    let hw = (2.0 * v - 1.0).max(0.0) * highlight_scale * amount;
+                    let kw = (1.0 - sw - hw).max(0.0);
+                    for c in 0..3 {
+                        px[c] = kw * px[c] + sw * sc[c] + hw * hc[c];
+                    }
+                });
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

@@ -125,7 +125,7 @@ impl SelectiveColor {
 
 impl PixelFilter for SelectiveColor {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -139,6 +139,44 @@ impl PixelFilter for SelectiveColor {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let bands = [
+                HueBand::Reds,
+                HueBand::Yellows,
+                HueBand::Greens,
+                HueBand::Cyans,
+                HueBand::Blues,
+                HueBand::Magentas,
+            ];
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    let (r, g, b) = (px[0], px[1], px[2]);
+                    let (mut hh, mut s, mut l) = rgb_to_hsl_f(r, g, b);
+                    if !(r == g && g == b) {
+                        let h_norm = ((hh % 360.0) + 360.0) % 360.0;
+                        let bin = (h_norm / 60.0).floor() as usize % 6;
+                        let next_bin = (bin + 1) % 6;
+                        let t = (h_norm - bin as f32 * 60.0) / 60.0;
+                        let left = self.band_for(bands[bin]);
+                        let right = self.band_for(bands[next_bin]);
+                        let dh = left.hue_shift_degrees * (1.0 - t) + right.hue_shift_degrees * t;
+                        let ds = left.saturation_shift * (1.0 - t) + right.saturation_shift * t;
+                        let dl = left.lightness_shift * (1.0 - t) + right.lightness_shift * t;
+                        hh = (hh + dh) % 360.0;
+                        if hh < 0.0 {
+                            hh += 360.0;
+                        }
+                        s = (s + ds).clamp(0.0, 1.0);
+                        l = (l + dl).clamp(0.0, 1.0);
+                    }
+                    let (r2, g2, b2) = hsl_to_rgb_f(hh, s, l);
+                    px[0] = r2;
+                    px[1] = g2;
+                    px[2] = b2;
+                });
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),
@@ -219,9 +257,11 @@ impl PixelFilter for SelectiveColor {
 // module self-contained.
 
 fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
-    let rf = r as f32 / 255.0;
-    let gf = g as f32 / 255.0;
-    let bf = b as f32 / 255.0;
+    rgb_to_hsl_f(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
+}
+
+/// HSL (hue in degrees) of a normalised RGB triple.
+fn rgb_to_hsl_f(rf: f32, gf: f32, bf: f32) -> (f32, f32, f32) {
     let max = rf.max(gf).max(bf);
     let min = rf.min(gf).min(bf);
     let l = (max + min) * 0.5;
@@ -247,9 +287,15 @@ fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
 }
 
 fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+    let (r, g, b) = hsl_to_rgb_f(h, s, l);
+    let q = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    (q(r), q(g), q(b))
+}
+
+/// Normalised RGB of an HSL triple (hue in degrees).
+fn hsl_to_rgb_f(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
     if s == 0.0 {
-        let v = (l * 255.0).round().clamp(0.0, 255.0) as u8;
-        return (v, v, v);
+        return (l, l, l);
     }
     let q = if l < 0.5 {
         l * (1.0 + s)
@@ -261,11 +307,7 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
     let r = hue_to_rgb(p, q, hk + 1.0 / 3.0);
     let g = hue_to_rgb(p, q, hk);
     let b = hue_to_rgb(p, q, hk - 1.0 / 3.0);
-    (
-        (r * 255.0).round().clamp(0.0, 255.0) as u8,
-        (g * 255.0).round().clamp(0.0, 255.0) as u8,
-        (b * 255.0).round().clamp(0.0, 255.0) as u8,
-    )
+    (r, g, b)
 }
 
 fn hue_to_rgb(p: f32, q: f32, t: f32) -> f32 {

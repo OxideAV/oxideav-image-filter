@@ -108,7 +108,7 @@ impl Polar {
 
 impl PixelFilter for Polar {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -116,6 +116,43 @@ impl PixelFilter for Polar {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                let mut out = img.clone();
+                let cx = me.cx.unwrap_or((w as f32 - 1.0) * 0.5);
+                let cy = me.cy.unwrap_or((h as f32 - 1.0) * 0.5);
+                let auto_max_r =
+                    ((w.max(1) as f32 - 1.0 - cx).hypot(h.max(1) as f32 - 1.0 - cy)).max(1.0);
+                let max_r = me.max_radius.unwrap_or(auto_max_r).max(1.0);
+                let two_pi = std::f32::consts::TAU;
+                for py in 0..h {
+                    for px in 0..w {
+                        let (sx, sy) = match me.direction {
+                            PolarDirection::Polar => {
+                                let r = (py as f32 / h as f32) * max_r;
+                                let angle = (px as f32 / w as f32) * two_pi;
+                                let (sin_a, cos_a) = angle.sin_cos();
+                                (cx + r * sin_a, cy - r * cos_a)
+                            }
+                            PolarDirection::DePolar => {
+                                let dx = px as f32 - cx;
+                                let dy = py as f32 - cy;
+                                let r = (dx * dx + dy * dy).sqrt();
+                                let mut a = dx.atan2(-dy);
+                                if a < 0.0 {
+                                    a += two_pi;
+                                }
+                                (a / two_pi * w as f32, (r / max_r) * h as f32)
+                            }
+                        };
+                        img.bilinear_into(sx, sy, out.pixel_mut(px as u32, py as u32));
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,

@@ -235,6 +235,52 @@ impl FloatImage {
         self.data[(y * self.width as usize + x) * self.channels + c]
     }
 
+    /// Bilinear sample at the continuous position `(sx, sy)` (clamped
+    /// into the picture), every channel, written to `dst`.
+    pub fn bilinear_into(&self, sx: f32, sy: f32, dst: &mut [f32]) {
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let x = if sx.is_nan() {
+            0.0
+        } else {
+            sx.clamp(0.0, (w - 1) as f32)
+        };
+        let y = if sy.is_nan() {
+            0.0
+        } else {
+            sy.clamp(0.0, (h - 1) as f32)
+        };
+        let x0 = x.floor() as usize;
+        let y0 = y.floor() as usize;
+        let x1 = (x0 + 1).min(w - 1);
+        let y1 = (y0 + 1).min(h - 1);
+        let fx = x - x0 as f32;
+        let fy = y - y0 as f32;
+        let ch = self.channels;
+        let p00 = &self.data[(y0 * w + x0) * ch..(y0 * w + x0) * ch + ch];
+        let p10 = &self.data[(y0 * w + x1) * ch..(y0 * w + x1) * ch + ch];
+        let p01 = &self.data[(y1 * w + x0) * ch..(y1 * w + x0) * ch + ch];
+        let p11 = &self.data[(y1 * w + x1) * ch..(y1 * w + x1) * ch + ch];
+        for c in 0..ch.min(dst.len()) {
+            dst[c] = p00[c] * (1.0 - fx) * (1.0 - fy)
+                + p10[c] * fx * (1.0 - fy)
+                + p01[c] * (1.0 - fx) * fy
+                + p11[c] * fx * fy;
+        }
+    }
+
+    /// A `width × height` picture of this picture's channel count
+    /// filled with `fill` (one value per channel, alpha last).
+    pub fn filled_like(&self, width: u32, height: u32, fill: &[f32]) -> Self {
+        let mut out = Self::new(width, height, self.channels);
+        for px in out.data.chunks_exact_mut(self.channels) {
+            for (v, f) in px.iter_mut().zip(fill.iter()) {
+                *v = *f;
+            }
+        }
+        out
+    }
+
     /// Apply `tone` to every colour channel of every pixel, leaving
     /// alpha untouched.
     pub fn map_tone(mut self, tone: impl Fn(f32) -> f32) -> Self {
@@ -358,6 +404,18 @@ pub fn code8(v: f32) -> f32 {
     let c = v * 255.0;
     let r = c.round();
     if (c - r).abs() < 1e-4 { r } else { c }
+}
+
+/// An 8-bit RGBA background colour as the fill of a `channels`-channel
+/// float picture (grey takes the red component, alpha `1.0` when the
+/// picture has none).
+pub fn background(bg: [u8; 4], channels: usize) -> Vec<f32> {
+    let f = bg.map(|v| v as f32 / 255.0);
+    match channels {
+        1 => vec![f[0]],
+        3 => vec![f[0], f[1], f[2]],
+        _ => vec![f[0], f[1], f[2], f[3]],
+    }
 }
 
 /// Run `kernel` on a packed-float frame: unpack, apply, repack. The

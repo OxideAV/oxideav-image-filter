@@ -95,7 +95,7 @@ fn pixelate_plane(src: &VideoPlane, w: usize, h: usize, bpp: usize, block: usize
 
 impl PixelFilter for Pixelate {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -103,6 +103,44 @@ impl PixelFilter for Pixelate {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let block = self.block.max(1) as usize;
+            return crate::deep::run(input, params, |img| {
+                if block <= 1 {
+                    return Ok(img);
+                }
+                let (w, h, ch) = (img.width() as usize, img.height() as usize, img.channels());
+                let mut out = img.clone();
+                let mut ty = 0;
+                while ty < h {
+                    let mut tx = 0;
+                    while tx < w {
+                        let y_end = (ty + block).min(h);
+                        let x_end = (tx + block).min(w);
+                        let count = ((y_end - ty) * (x_end - tx)) as f32;
+                        let mut mean = vec![0f32; ch];
+                        for yy in ty..y_end {
+                            for xx in tx..x_end {
+                                for (m, v) in mean.iter_mut().zip(img.pixel(xx as u32, yy as u32)) {
+                                    *m += v;
+                                }
+                            }
+                        }
+                        for m in &mut mean {
+                            *m /= count;
+                        }
+                        for yy in ty..y_end {
+                            for xx in tx..x_end {
+                                out.pixel_mut(xx as u32, yy as u32).copy_from_slice(&mean);
+                            }
+                        }
+                        tx += block;
+                    }
+                    ty += block;
+                }
+                Ok(out)
+            });
+        }
         let block = self.block.max(1) as usize;
         match params.format {
             PixelFormat::Gray8 => {

@@ -336,15 +336,24 @@ impl Curve {
     }
 
     fn build_lut(&self, mode: CurveInterpolation) -> [u8; 256] {
+        let table = self.build_table(mode, 256);
+        let mut lut = [0u8; 256];
+        for (slot, y) in lut.iter_mut().zip(table.iter()) {
+            *slot = y.clamp(0.0, 255.0).round() as u8;
+        }
+        lut
+    }
+
+    /// The curve sampled at `samples` evenly spaced abscissae over
+    /// `0..=255` (`y` in 8-bit units, unrounded, clamped to `[0, 255]`).
+    /// `samples = 256` is the 8-bit table; the float path samples finer.
+    pub(crate) fn build_table(&self, mode: CurveInterpolation, samples: usize) -> Vec<f32> {
+        let step = 255.0 / (samples.max(2) - 1) as f32;
         let pts = self.ensure_endpoints();
         let n = pts.len();
         if n < 2 {
             // Trivial: identity.
-            let mut lut = [0u8; 256];
-            for (v, slot) in lut.iter_mut().enumerate() {
-                *slot = v as u8;
-            }
-            return lut;
+            return (0..samples).map(|v| v as f32 * step).collect();
         }
         // The §4 spline family (natural / clamped / not-a-knot) takes a
         // different path: a tridiagonal solve for the per-knot second
@@ -352,23 +361,24 @@ impl Curve {
         // three differ only in the §4.2 boundary rows.
         match mode {
             CurveInterpolation::NaturalCubic => {
-                return Self::build_spline_lut(&pts, n, SplineBoundary::Natural);
+                return Self::build_spline_table(&pts, n, SplineBoundary::Natural, samples);
             }
             CurveInterpolation::ClampedCubic {
                 start_slope_q8,
                 end_slope_q8,
             } => {
-                return Self::build_spline_lut(
+                return Self::build_spline_table(
                     &pts,
                     n,
                     SplineBoundary::Clamped {
                         s0: start_slope_q8 as f32 / 256.0,
                         s1: end_slope_q8 as f32 / 256.0,
                     },
+                    samples,
                 );
             }
             CurveInterpolation::NotAKnotCubic => {
-                return Self::build_spline_lut(&pts, n, SplineBoundary::NotAKnot);
+                return Self::build_spline_table(&pts, n, SplineBoundary::NotAKnot, samples);
             }
             _ => {}
         }
@@ -523,10 +533,10 @@ impl Curve {
             }
         }
 
-        let mut lut = [0u8; 256];
+        let mut table = Vec::with_capacity(samples);
         let mut seg = 0;
-        for (v, slot) in lut.iter_mut().enumerate() {
-            let x = v as f32;
+        for v in 0..samples {
+            let x = v as f32 * step;
             while seg + 1 < n && pts[seg + 1].0 < x {
                 seg += 1;
             }
@@ -552,9 +562,9 @@ impl Curve {
                     h00 * y0 + h10 * dx * tangents[i] + h01 * y1 + h11 * dx * tangents[j]
                 }
             };
-            *slot = y.clamp(0.0, 255.0).round() as u8;
+            table.push(y.clamp(0.0, 255.0));
         }
-        lut
+        table
     }
 
     /// Shared per-knot tangent builder for the §3.3 alpha-Catmull-Rom
@@ -843,7 +853,13 @@ impl Curve {
     ///    `P(x) = y_i + (Δ_i − h_i·(2M_i + M_{i+1})/6)·t
     ///          + (M_i / 2)·t² + ((M_{i+1} − M_i)/(6 h_i))·t³`
     ///    with `t = x − x_i`.
-    fn build_spline_lut(pts: &[(f32, f32)], n: usize, boundary: SplineBoundary) -> [u8; 256] {
+    fn build_spline_table(
+        pts: &[(f32, f32)],
+        n: usize,
+        boundary: SplineBoundary,
+        samples: usize,
+    ) -> Vec<f32> {
+        let step = 255.0 / (samples.max(2) - 1) as f32;
         // n ≥ 2 is guaranteed by `build_lut`'s early-return. With
         // exactly 2 points there are no interior knots so the natural /
         // not-a-knot forms have M ≡ 0 (straight line) and the clamped
@@ -865,10 +881,10 @@ impl Curve {
 
         // §4.4 evaluation: walk x = 0..=255 and pick segment `i` such
         // that `pts[i].0 ≤ x < pts[i+1].0`.
-        let mut lut = [0u8; 256];
+        let mut table = Vec::with_capacity(samples);
         let mut seg = 0;
-        for (v, slot) in lut.iter_mut().enumerate() {
-            let x = v as f32;
+        for v in 0..samples {
+            let x = v as f32 * step;
             while seg + 1 < n && pts[seg + 1].0 < x {
                 seg += 1;
             }
@@ -893,9 +909,9 @@ impl Curve {
                 let c3 = (mj - mi) / (6.0 * hi);
                 y0 + c1 * dt + c2 * dt * dt + c3 * dt * dt * dt
             };
-            *slot = y.clamp(0.0, 255.0).round() as u8;
+            table.push(y.clamp(0.0, 255.0));
         }
-        lut
+        table
     }
 }
 
@@ -967,7 +983,7 @@ impl Curves {
 
 impl PixelFilter for Curves {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -981,6 +997,40 @@ impl PixelFilter for Curves {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // 4 096-sample tables, linearly interpolated: the curve at
+            // 16-bit resolution without a 65 536-entry build per channel.
+            const SAMPLES: usize = 4096;
+            let master = self.master.build_table(self.interpolation, SAMPLES);
+            let table = |c: &Option<Curve>| {
+                c.as_ref()
+                    .map(|c| c.build_table(self.interpolation, SAMPLES))
+                    .unwrap_or_else(|| master.clone())
+            };
+            let tables = [table(&self.red), table(&self.green), table(&self.blue)];
+            let lookup = |t: &[f32], v: f32| -> f32 {
+                let pos = if v.is_nan() {
+                    0.0
+                } else {
+                    v.clamp(0.0, 1.0) * (SAMPLES - 1) as f32
+                };
+                let i = (pos.floor() as usize).min(SAMPLES - 2);
+                let f = pos - i as f32;
+                (t[i] * (1.0 - f) + t[i + 1] * f) / 255.0
+            };
+            return crate::deep::run(input, params, |mut img| {
+                if img.color_channels() == 1 {
+                    img.map_tone_in_place(|v| lookup(&master, v));
+                } else {
+                    img.map_pixels_in_place(|px| {
+                        for (v, t) in px.iter_mut().zip(tables.iter()) {
+                            *v = lookup(t, *v);
+                        }
+                    });
+                }
+                Ok(img)
+            });
+        }
         let (lr, lg, lb) = self.luts();
         match params.format {
             PixelFormat::Gray8 => {

@@ -93,7 +93,7 @@ impl BarrelInverse {
 
 impl PixelFilter for BarrelInverse {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -101,6 +101,58 @@ impl PixelFilter for BarrelInverse {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            if !self.a.is_finite()
+                || !self.b.is_finite()
+                || !self.c.is_finite()
+                || !self.d.is_finite()
+            {
+                return Err(Error::invalid(
+                    "oxideav-image-filter: BarrelInverse coefficients must be finite",
+                ));
+            }
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                let fill = crate::deep::background(me.background, img.channels());
+                let mut out = img.filled_like(img.width(), img.height(), &fill);
+                let (cx, cy) = me
+                    .centre
+                    .unwrap_or(((w as f32 - 1.0) * 0.5, (h as f32 - 1.0) * 0.5));
+                let r_norm = me
+                    .r_norm
+                    .unwrap_or((w.min(h).max(1) as f32) * 0.5)
+                    .max(f32::EPSILON);
+                let inv_r = 1.0 / r_norm;
+                const EPS: f32 = 1e-4;
+                for py in 0..h {
+                    let dy_n = (py as f32 - cy) * inv_r;
+                    for px in 0..w {
+                        let dx_n = (px as f32 - cx) * inv_r;
+                        let r = (dx_n * dx_n + dy_n * dy_n).sqrt();
+                        let scale = me.a * r * r * r + me.b * r * r + me.c * r + me.d;
+                        let (sx, sy) = if r > f32::EPSILON && scale.abs() > f32::EPSILON {
+                            let r_sample = r / scale;
+                            (
+                                cx + dx_n / r * r_sample * r_norm,
+                                cy + dy_n / r * r_sample * r_norm,
+                            )
+                        } else {
+                            (px as f32, py as f32)
+                        };
+                        if sx < -EPS
+                            || sx > (w as f32 - 1.0) + EPS
+                            || sy < -EPS
+                            || sy > (h as f32 - 1.0) + EPS
+                        {
+                            continue;
+                        }
+                        img.bilinear_into(sx, sy, out.pixel_mut(px as u32, py as u32));
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,

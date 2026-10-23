@@ -85,7 +85,7 @@ impl Affine {
 
 impl PixelFilter for Affine {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -93,6 +93,32 @@ impl PixelFilter for Affine {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (matrix, bg, size) = (self.matrix, self.background, self.output_size);
+            return crate::deep::run(input, params, |img| {
+                let (src_w, src_h) = (img.width(), img.height());
+                let (dst_w, dst_h) = size.unwrap_or((src_w, src_h));
+                let fill = crate::deep::background(bg, img.channels());
+                let mut out = img.filled_like(dst_w, dst_h, &fill);
+                let inv = invert_affine(matrix)
+                    .ok_or_else(|| Error::invalid("Affine: matrix is singular (det == 0)"))?;
+                const EPS: f32 = 1e-4;
+                for py in 0..dst_h {
+                    for px in 0..dst_w {
+                        let (sx, sy) = apply_affine(inv, px as f32, py as f32);
+                        if sx < -EPS
+                            || sx > (src_w as f32 - 1.0) + EPS
+                            || sy < -EPS
+                            || sy > (src_h as f32 - 1.0) + EPS
+                        {
+                            continue;
+                        }
+                        img.bilinear_into(sx, sy, out.pixel_mut(px, py));
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,

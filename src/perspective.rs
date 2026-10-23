@@ -96,7 +96,7 @@ impl Perspective {
 
 impl PixelFilter for Perspective {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -104,6 +104,39 @@ impl PixelFilter for Perspective {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let forward = solve_homography(&self.src_corners, &self.dst_corners)
+                .ok_or_else(|| Error::invalid("Perspective: source corners are degenerate"))?;
+            let inverse = invert_3x3(&forward).ok_or_else(|| {
+                Error::invalid("Perspective: forward homography is non-invertible")
+            })?;
+            let (bg, size) = (self.background, self.output_size);
+            return crate::deep::run(input, params, |img| {
+                let (src_w, src_h) = (img.width(), img.height());
+                let (dst_w, dst_h) = size.unwrap_or((src_w, src_h));
+                let fill = crate::deep::background(bg, img.channels());
+                let mut out = img.filled_like(dst_w, dst_h, &fill);
+                const EPS: f32 = 1e-4;
+                for py in 0..dst_h {
+                    for px in 0..dst_w {
+                        let (sx, sy, w_h) = apply_homography(&inverse, px as f32, py as f32);
+                        if w_h.abs() < 1e-9 {
+                            continue;
+                        }
+                        let (sx, sy) = (sx / w_h, sy / w_h);
+                        if sx < -EPS
+                            || sx > (src_w as f32 - 1.0) + EPS
+                            || sy < -EPS
+                            || sy > (src_h as f32 - 1.0) + EPS
+                        {
+                            continue;
+                        }
+                        img.bilinear_into(sx, sy, out.pixel_mut(px, py));
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,
