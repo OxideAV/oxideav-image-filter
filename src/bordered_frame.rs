@@ -69,7 +69,7 @@ impl BorderedFrame {
 
 impl PixelFilter for BorderedFrame {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -77,6 +77,22 @@ impl PixelFilter for BorderedFrame {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                let ow = img.width() + me.left + me.right;
+                let oh = img.height() + me.top + me.bottom;
+                let fill = crate::deep::background(me.colour, img.channels());
+                let mut out = img.filled_like(ow, oh, &fill);
+                for y in 0..img.height() {
+                    for x in 0..img.width() {
+                        let px = img.pixel(x, y).to_vec();
+                        out.pixel_mut(x + me.left, y + me.top).copy_from_slice(&px);
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3,

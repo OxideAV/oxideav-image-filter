@@ -21,7 +21,7 @@
 //! Same as [`Edge`](crate::Edge): any supported input is collapsed
 //! to a luma plane up front.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format, laplacian::build_luma_plane};
+use crate::{PixelFilter, VideoStreamParams, laplacian::build_luma_plane};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Canny edge detector.
@@ -65,12 +65,16 @@ impl Canny {
 
 impl PixelFilter for Canny {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -78,11 +82,78 @@ impl PixelFilter for Canny {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Canny does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                // The pipeline runs in 8-bit units: the thresholds are codes.
+                let mut grey = crate::laplacian::luma_float(&img);
+                if me.radius > 0 {
+                    let k = make_gaussian_kernel(me.radius as usize, me.sigma);
+                    grey = crate::deep::convolve_separable(&grey, &k, &k, true);
+                }
+                let (w, h) = (grey.width() as usize, grey.height() as usize);
+                let mut mag = vec![0f32; w * h];
+                let mut dir = vec![0u8; w * h];
+                if w >= 3 && h >= 3 {
+                    for y in 0..h {
+                        for x in 0..w {
+                            let p = |dx: i64, dy: i64| {
+                                grey.sample_clamped(x as i64 + dx, y as i64 + dy, 0) * 255.0
+                            };
+                            let gx = -p(-1, -1) - 2.0 * p(-1, 0) - p(-1, 1)
+                                + p(1, -1)
+                                + 2.0 * p(1, 0)
+                                + p(1, 1);
+                            let gy = -p(-1, -1) - 2.0 * p(0, -1) - p(1, -1)
+                                + p(-1, 1)
+                                + 2.0 * p(0, 1)
+                                + p(1, 1);
+                            mag[y * w + x] = (gx * gx + gy * gy).sqrt();
+                            dir[y * w + x] = quantise_angle_f(gx, gy);
+                        }
+                    }
+                }
+                let mut suppressed = vec![0f32; w * h];
+                if w >= 3 && h >= 3 {
+                    for y in 1..h - 1 {
+                        for x in 1..w - 1 {
+                            let i = y * w + x;
+                            let m = mag[i];
+                            let (a, b) = match dir[i] {
+                                0 => (mag[i - 1], mag[i + 1]),
+                                1 => (mag[i + w - 1], mag[i - w + 1]),
+                                2 => (mag[i - w], mag[i + w]),
+                                _ => (mag[i - w - 1], mag[i + w + 1]),
+                            };
+                            if m >= a && m >= b {
+                                suppressed[i] = m;
+                            }
+                        }
+                    }
+                }
+                let (lo, hi) = (me.low as f32, me.high as f32);
+                let mut out = vec![0f32; w * h];
+                let mut stack: Vec<usize> = Vec::new();
+                for i in 0..w * h {
+                    if suppressed[i] >= hi {
+                        out[i] = 1.0;
+                        stack.push(i);
+                    }
+                }
+                while let Some(i) = stack.pop() {
+                    let (x, y) = (i % w, i / w);
+                    for ny in y.saturating_sub(1)..=(y + 1).min(h - 1) {
+                        for nx in x.saturating_sub(1)..=(x + 1).min(w - 1) {
+                            let j = ny * w + nx;
+                            if out[j] == 0.0 && suppressed[j] >= lo {
+                                out[j] = 1.0;
+                                stack.push(j);
+                            }
+                        }
+                    }
+                }
+                crate::deep::FloatImage::from_samples(grey.width(), grey.height(), 1, out)
+            });
         }
         let w = params.width as usize;
         let h = params.height as usize;
@@ -187,6 +258,22 @@ fn sobel_with_dir(luma: &[u8], w: usize, h: usize) -> (Vec<u32>, Vec<u8>) {
 /// 1 = NE-SW diagonal
 /// 2 = vertical (N-S neighbours)
 /// 3 = NW-SE diagonal
+/// [`quantise_angle`] on float gradients.
+fn quantise_angle_f(gx: f32, gy: f32) -> u8 {
+    if gx == 0.0 && gy == 0.0 {
+        return 0;
+    }
+    let a = gy.atan2(gx).to_degrees().rem_euclid(180.0);
+    if !(22.5..157.5).contains(&a) {
+        0
+    } else if a < 67.5 {
+        1
+    } else if a < 112.5 {
+        2
+    } else {
+        3
+    }
+}
 fn quantise_angle(gx: i32, gy: i32) -> u8 {
     if gx == 0 && gy == 0 {
         return 0;

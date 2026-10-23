@@ -115,7 +115,7 @@ fn linear_to_srgb(x: f32) -> u8 {
 
 impl PixelFilter for ReinhardExtended {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -129,6 +129,41 @@ impl PixelFilter for ReinhardExtended {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let l_white_cfg = self.l_white;
+            return crate::deep::run(input, params, |mut img| {
+                const EPS: f32 = 1.0e-6;
+                let lin = crate::deep::linear_rgb(&img);
+                let lum: Vec<f32> = lin
+                    .iter()
+                    .map(|c| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
+                    .collect();
+                let l_max = lum.iter().cloned().fold(0.0f32, f32::max);
+                let l_white = if l_white_cfg > 0.0 {
+                    l_white_cfg
+                } else if l_max > 0.0 {
+                    l_max
+                } else {
+                    1.0
+                };
+                let white2 = l_white * l_white;
+                let mapped: Vec<[f32; 3]> = lin
+                    .iter()
+                    .zip(&lum)
+                    .map(|(c, &l_w)| {
+                        let l_d = if l_w > 0.0 {
+                            (l_w * (1.0 + l_w / white2)) / (1.0 + l_w)
+                        } else {
+                            0.0
+                        };
+                        let g = if l_w > EPS { l_d / l_w } else { 0.0 };
+                        [c[0] * g, c[1] * g, c[2] * g]
+                    })
+                    .collect();
+                crate::deep::store_linear_rgb(&mut img, &mapped);
+                Ok(img)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

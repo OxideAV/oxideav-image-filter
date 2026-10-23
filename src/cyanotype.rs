@@ -75,7 +75,7 @@ fn luma(r: u8, g: u8, b: u8) -> f32 {
 
 impl PixelFilter for Cyanotype {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -88,6 +88,7 @@ impl PixelFilter for Cyanotype {
     fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
         match input {
             oxideav_core::PixelFormat::Gray8 => oxideav_core::PixelFormat::Rgb24,
+            oxideav_core::PixelFormat::GrayF32Le => oxideav_core::PixelFormat::RgbF32Le,
             other => other,
         }
     }
@@ -97,6 +98,27 @@ impl PixelFilter for Cyanotype {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let s = self.strength.clamp(0.0, 1.0);
+            let lo = self.shadow.map(|v| v as f32 / 255.0);
+            let hi = self.highlight.map(|v| v as f32 / 255.0);
+            return crate::deep::run(input, params, |img| {
+                let src = if img.channels() == 1 {
+                    img.to_rgba().to_channels(3)
+                } else {
+                    img
+                };
+                let mut out = src;
+                out.map_pixels_in_place(|px| {
+                    let l = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
+                    for c in 0..3 {
+                        let cy = lo[c] + l * (hi[c] - lo[c]);
+                        px[c] = (1.0 - s) * px[c] + s * cy;
+                    }
+                });
+                Ok(out)
+            });
+        }
         if input.planes.is_empty() {
             return Err(Error::invalid(
                 "oxideav-image-filter: Cyanotype requires a non-empty input plane",

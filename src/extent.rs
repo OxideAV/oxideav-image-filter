@@ -20,7 +20,7 @@
 //! pipeline.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Re-window the input onto a `(width, height)` canvas with an
@@ -67,7 +67,7 @@ impl Extent {
 
 impl PixelFilter for Extent {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -75,11 +75,38 @@ impl PixelFilter for Extent {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Extent does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            if self.width == 0 || self.height == 0 {
+                return Err(Error::invalid(
+                    "oxideav-image-filter: Extent width/height must be > 0",
+                ));
+            }
+            let (dw, dh, ox, oy, bg) = (
+                self.width,
+                self.height,
+                self.offset_x,
+                self.offset_y,
+                self.background,
+            );
+            return crate::deep::run(input, params, |img| {
+                let fill = crate::deep::background(bg, img.channels());
+                let mut out = img.filled_like(dw, dh, &fill);
+                for y in 0..dh as i64 {
+                    let sy = y - oy as i64;
+                    if sy < 0 || sy >= img.height() as i64 {
+                        continue;
+                    }
+                    for x in 0..dw as i64 {
+                        let sx = x - ox as i64;
+                        if sx < 0 || sx >= img.width() as i64 {
+                            continue;
+                        }
+                        let src = img.pixel(sx as u32, sy as u32).to_vec();
+                        out.pixel_mut(x as u32, y as u32).copy_from_slice(&src);
+                    }
+                }
+                Ok(out)
+            });
         }
         if self.width == 0 || self.height == 0 {
             return Err(Error::invalid(

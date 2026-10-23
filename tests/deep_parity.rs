@@ -120,6 +120,11 @@ fn tolerance(name: &str) -> (i32, f32) {
         // normalised units, and a tie decided the other way swaps the
         // whole quadrant mean in.
         "Kuwahara" => (255, 0.15),
+        // Hysteresis thresholds on a magnitude the 8-bit path rounds.
+        "Canny" => (255, 0.05),
+        // The 8-bit height field truncates its luma to a code before the
+        // normal is taken, so small gradients tilt the normal by a code.
+        "Shade(color)" => (8, 0.15),
         // False-colour ramps up to eight codes per luma code: the 8-bit
         // path truncates its luma to a code, so one code of luma is up
         // to eight codes of ramp.

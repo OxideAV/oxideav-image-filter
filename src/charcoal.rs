@@ -22,7 +22,7 @@
 //! `radius = 0` (the default) skips the pre-blur entirely.
 
 use crate::blur::gaussian_kernel;
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Charcoal-sketch stylise filter.
@@ -74,12 +74,16 @@ impl Charcoal {
 
 impl PixelFilter for Charcoal {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -87,11 +91,36 @@ impl PixelFilter for Charcoal {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Charcoal does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let (factor, radius) = (self.factor, self.radius);
+            return crate::deep::run(input, params, |img| {
+                let mut grey = crate::laplacian::luma_float(&img);
+                if radius > 0 {
+                    let kernel = gaussian_kernel(radius.max(1), (radius as f32).max(1.0) * 0.5);
+                    grey = crate::deep::convolve_separable(&grey, &kernel, &kernel, true);
+                }
+                let (w, h) = (grey.width(), grey.height());
+                let mut out = crate::deep::FloatImage::new(w, h, 1);
+                out.samples_mut().fill(1.0);
+                if w < 3 || h < 3 {
+                    return Ok(out);
+                }
+                for y in 1..h - 1 {
+                    for x in 1..w - 1 {
+                        let p =
+                            |dx: i64, dy: i64| grey.sample_clamped(x as i64 + dx, y as i64 + dy, 0);
+                        let gx = -p(-1, -1) + p(1, -1) - 2.0 * p(-1, 0) + 2.0 * p(1, 0) - p(-1, 1)
+                            + p(1, 1);
+                        let gy = -p(-1, -1) - 2.0 * p(0, -1) - p(1, -1)
+                            + p(-1, 1)
+                            + 2.0 * p(0, 1)
+                            + p(1, 1);
+                        let mag = ((gx.abs() + gy.abs()) * factor).min(1.0);
+                        out.pixel_mut(x, y)[0] = 1.0 - mag;
+                    }
+                }
+                Ok(out)
+            });
         }
         let w = params.width as usize;
         let h = params.height as usize;

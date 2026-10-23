@@ -25,7 +25,7 @@
 //! frame holding the background colour (matching `Trim`'s behaviour).
 
 use crate::blur::bytes_per_plane_pixel;
-use crate::{Crop, ImageFilter, PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{Crop, ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Auto-trim filter — pick the dominant colour and crop to its
@@ -53,7 +53,7 @@ impl AutoTrim {
 
 impl PixelFilter for AutoTrim {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -61,11 +61,52 @@ impl PixelFilter for AutoTrim {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: AutoTrim does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let fuzz = self.fuzz as f32 / 255.0;
+            let img = crate::deep::FloatImage::from_frame(input, params)?;
+            // Background: the most voted 16-level bin per channel (the
+            // 8-bit path's vote), as the bin's centre.
+            let ch = img.channels();
+            let cc = img.color_channels();
+            let bg: Vec<f32> = if cc == 1 {
+                let mut votes = [0u32; 16];
+                for px in img.samples().chunks_exact(ch) {
+                    votes[((crate::deep::code8(px[0]).clamp(0.0, 255.0) as u32) >> 4) as usize] +=
+                        1;
+                }
+                let best = votes
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, v)| **v)
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                vec![((best as u32) << 4 | 0x08) as f32 / 255.0]
+            } else {
+                let mut votes = vec![0u32; 16 * 16 * 16];
+                for px in img.samples().chunks_exact(ch) {
+                    let q =
+                        |v: f32| ((crate::deep::code8(v).clamp(0.0, 255.0) as u32) >> 4) as usize;
+                    votes[q(px[0]) * 256 + q(px[1]) * 16 + q(px[2])] += 1;
+                }
+                let best = votes
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, v)| **v)
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                let c = |b: usize| (((b as u32) << 4) | 0x08) as f32 / 255.0;
+                let mut v = vec![c(best / 256), c((best % 256) / 16), c(best % 16)];
+                if ch == 4 {
+                    v.push(1.0);
+                }
+                v
+            };
+            let bbox = crate::trim::bbox_float(&img, &bg, fuzz);
+            let (x, y, w, h) = bbox.unwrap_or((0, 0, 1, 1));
+            if x == 0 && y == 0 && w == params.width && h == params.height {
+                return Ok(input.clone());
+            }
+            return Crop::new(x, y, w, h).apply(input, params);
         }
         if params.width == 0 || params.height == 0 {
             return Ok(input.clone());

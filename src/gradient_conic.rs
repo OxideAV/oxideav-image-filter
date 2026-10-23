@@ -71,7 +71,7 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
 
 impl PixelFilter for GradientConic {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -79,6 +79,28 @@ impl PixelFilter for GradientConic {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                let (w, h) = (img.width(), img.height());
+                let ch = img.channels();
+                let inner = crate::deep::background(me.inner, ch);
+                let outer = crate::deep::background(me.outer, ch);
+                let mut out = crate::deep::FloatImage::new(w, h, ch);
+                let cx = me.centre_x * (w - 1) as f32;
+                let cy = me.centre_y * (h - 1) as f32;
+                for y in 0..h {
+                    for x in 0..w {
+                        let theta = (y as f32 - cy).atan2(x as f32 - cx).to_degrees();
+                        let t = (theta - me.start_angle).rem_euclid(360.0) / 360.0;
+                        for ((o, a), b) in out.pixel_mut(x, y).iter_mut().zip(&inner).zip(&outer) {
+                            *o = a + (b - a) * t;
+                        }
+                    }
+                }
+                Ok(out)
+            });
+        }
         let w = params.width as usize;
         let h = params.height as usize;
         if w == 0 || h == 0 {

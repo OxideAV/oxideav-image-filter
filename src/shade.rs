@@ -154,14 +154,18 @@ fn shade_intensity_map(field: &[u8], w: usize, h: usize, az_deg: f32, el_deg: f3
 
 impl PixelFilter for Shade {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// The relief is a single `Gray8` plane unless colour pass-through
     /// (`with_color(true)`) modulates the input, which keeps its layout.
     fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
         if self.gray_only {
-            oxideav_core::PixelFormat::Gray8
+            if crate::deep::is_float(input) {
+                oxideav_core::PixelFormat::GrayF32Le
+            } else {
+                oxideav_core::PixelFormat::Gray8
+            }
         } else {
             input
         }
@@ -172,6 +176,50 @@ impl PixelFilter for Shade {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (az, el, gray_only) =
+                (self.azimuth_degrees, self.elevation_degrees, self.gray_only);
+            return crate::deep::run(input, params, |img| {
+                // The height field is the luma in 8-bit units, as the
+                // normal's slope scale is defined on 8-bit codes.
+                let grey = crate::laplacian::luma_float(&img);
+                let field: Vec<f32> = grey.samples().iter().map(|v| v * 255.0).collect();
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                let (az, el) = (az.to_radians(), el.to_radians());
+                let (lx, ly, lz) = (el.cos() * az.cos(), el.cos() * az.sin(), el.sin());
+                let mut intensity = vec![0f32; w * h];
+                for y in 0..h {
+                    for x in 0..w {
+                        let xm = x.saturating_sub(1);
+                        let xp = (x + 1).min(w - 1);
+                        let ym = y.saturating_sub(1);
+                        let yp = (y + 1).min(h - 1);
+                        let gx = (field[y * w + xp] - field[y * w + xm]) / 2.0;
+                        let gy = (field[yp * w + x] - field[ym * w + x]) / 2.0;
+                        let (nx, ny, nz) = (-gx, -gy, 1.0f32);
+                        let nlen = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-6);
+                        intensity[y * w + x] = ((nx * lx + ny * ly + nz * lz) / nlen).max(0.0);
+                    }
+                }
+                if gray_only {
+                    return crate::deep::FloatImage::from_samples(
+                        img.width(),
+                        img.height(),
+                        1,
+                        intensity,
+                    );
+                }
+                let mut out = img;
+                let cc = out.color_channels();
+                let ch = out.channels();
+                for (px, i) in out.samples_mut().chunks_exact_mut(ch).zip(&intensity) {
+                    for v in &mut px[..cc] {
+                        *v *= *i;
+                    }
+                }
+                Ok(out)
+            });
+        }
         let supported = matches!(
             params.format,
             PixelFormat::Gray8

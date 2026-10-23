@@ -60,7 +60,7 @@ impl PosterizeChannels {
 
 impl PixelFilter for PosterizeChannels {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -74,6 +74,29 @@ impl PixelFilter for PosterizeChannels {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let levels = [self.r_levels, self.g_levels, self.b_levels];
+            let alpha_levels = self.alpha_levels;
+            let bucket = |v: f32, n: u32| {
+                let n = n.max(2) as f32;
+                let code = crate::deep::code8(v.clamp(0.0, 1.0));
+                (code * n / 256.0).floor().min(n - 1.0) / (n - 1.0)
+            };
+            return crate::deep::run(input, params, |mut img| {
+                let cc = img.color_channels();
+                let has_alpha = img.has_alpha();
+                let ch = img.channels();
+                for px in img.samples_mut().chunks_exact_mut(ch) {
+                    for c in 0..cc {
+                        px[c] = bucket(px[c], levels[c.min(2)]);
+                    }
+                    if has_alpha && let Some(n) = alpha_levels {
+                        px[3] = bucket(px[3], n);
+                    }
+                }
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Gray8 => (1usize, false),
             PixelFormat::Rgb24 => (3, false),

@@ -418,6 +418,62 @@ pub fn background(bg: [u8; 4], channels: usize) -> Vec<f32> {
     }
 }
 
+/// IEC 61966-2-1 sRGB decode of a normalised tone (the piecewise curve;
+/// tones above `1.0` follow the power segment unclamped).
+#[inline]
+pub fn srgb_decode(x: f32) -> f32 {
+    if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// IEC 61966-2-1 sRGB encode of a linear value clamped to `[0, 1]`.
+#[inline]
+pub fn srgb_encode(x: f32) -> f32 {
+    let x = if x.is_nan() { 0.0 } else { x.clamp(0.0, 1.0) };
+    let y = if x <= 0.003_130_8 {
+        x * 12.92
+    } else {
+        1.055 * x.powf(1.0 / 2.4) - 0.055
+    };
+    y.clamp(0.0, 1.0)
+}
+
+/// Decode every colour channel of a picture from sRGB to linear light,
+/// returning the linear RGB triples (grey replicated) alongside the
+/// picture's alpha (or `1.0`).
+pub fn linear_rgb(img: &FloatImage) -> Vec<[f32; 3]> {
+    let ch = img.channels;
+    img.data
+        .chunks_exact(ch)
+        .map(|px| {
+            if ch >= 3 {
+                [srgb_decode(px[0]), srgb_decode(px[1]), srgb_decode(px[2])]
+            } else {
+                let v = srgb_decode(px[0]);
+                [v, v, v]
+            }
+        })
+        .collect()
+}
+
+/// Write linear RGB triples back into `img`'s colour channels, sRGB
+/// encoded (grey takes the green component), alpha untouched.
+pub fn store_linear_rgb(img: &mut FloatImage, rgb: &[[f32; 3]]) {
+    let ch = img.channels;
+    for (px, lin) in img.data.chunks_exact_mut(ch).zip(rgb) {
+        if ch >= 3 {
+            px[0] = srgb_encode(lin[0]);
+            px[1] = srgb_encode(lin[1]);
+            px[2] = srgb_encode(lin[2]);
+        } else {
+            px[0] = srgb_encode(lin[1]);
+        }
+    }
+}
+
 /// Run `kernel` on a packed-float frame: unpack, apply, repack. The
 /// one-liner every filter's deep path is built on.
 pub fn run(

@@ -65,7 +65,7 @@ impl EmbossDirectional {
 
 impl PixelFilter for EmbossDirectional {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -73,6 +73,22 @@ impl PixelFilter for EmbossDirectional {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let a = self.azimuth_degrees.to_radians();
+            let (lx, ly, depth) = (a.cos(), a.sin(), self.depth);
+            let mut kernel = [0f32; 9];
+            for dy in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    kernel[((dy + 1) * 3 + dx + 1) as usize] =
+                        ((dx as f32) * lx + (-(dy as f32)) * ly) * depth;
+                }
+            }
+            return crate::deep::run(input, params, |img| {
+                let mut out = crate::deep::convolve_2d(&img, &kernel, 3);
+                out.map_tone_in_place(|v| v + 128.0 / 255.0);
+                Ok(out)
+            });
+        }
         // 3×3 kernel — weights = (dx, -dy) · (cos a, sin a). The minus
         // sign on dy converts from image / screen y (down-positive) to
         // math y (up-positive).

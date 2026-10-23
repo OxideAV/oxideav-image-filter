@@ -61,7 +61,7 @@ impl Vignette {
 
 impl PixelFilter for Vignette {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -69,6 +69,39 @@ impl PixelFilter for Vignette {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (fx, fy, radius, sigma_cfg) = (self.x, self.y, self.radius.max(0.0), self.sigma);
+            return crate::deep::run(input, params, |mut img| {
+                let (w, h) = (img.width(), img.height());
+                let cx = fx * w as f32;
+                let cy = fy * h as f32;
+                let sigma = if sigma_cfg > 0.0 {
+                    sigma_cfg
+                } else {
+                    0.65 * w.min(h) as f32
+                };
+                let two_sigma_sq = 2.0 * sigma * sigma;
+                let cc = img.color_channels();
+                for py in 0..h {
+                    let dy = py as f32 + 0.5 - cy;
+                    for px in 0..w {
+                        let dx = px as f32 + 0.5 - cx;
+                        let excess = ((dx * dx + dy * dy).sqrt() - radius).max(0.0);
+                        let weight = if two_sigma_sq > 0.0 {
+                            (-(excess * excess) / two_sigma_sq).exp()
+                        } else if excess == 0.0 {
+                            1.0
+                        } else {
+                            0.0
+                        };
+                        for v in &mut img.pixel_mut(px, py)[..cc] {
+                            *v *= weight;
+                        }
+                    }
+                }
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

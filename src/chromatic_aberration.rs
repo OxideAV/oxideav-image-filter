@@ -74,7 +74,7 @@ impl ChromaticAberration {
 
 impl PixelFilter for ChromaticAberration {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -82,6 +82,30 @@ impl PixelFilter for ChromaticAberration {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                let mut out = img.clone();
+                for y in 0..img.height() {
+                    for x in 0..img.width() {
+                        let r = img.sample_clamped(
+                            x as i64 - me.r_dx as i64,
+                            y as i64 - me.r_dy as i64,
+                            0,
+                        );
+                        let b = img.sample_clamped(
+                            x as i64 - me.b_dx as i64,
+                            y as i64 - me.b_dy as i64,
+                            2,
+                        );
+                        let px = out.pixel_mut(x, y);
+                        px[0] = r;
+                        px[2] = b;
+                    }
+                }
+                Ok(out)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

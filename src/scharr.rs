@@ -73,7 +73,7 @@
 //! above.
 
 use crate::laplacian::build_luma_plane;
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// How to combine the two gradient responses into a single edge
@@ -123,12 +123,16 @@ impl Scharr {
 
 impl PixelFilter for Scharr {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -136,11 +140,33 @@ impl PixelFilter for Scharr {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Scharr does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let mag = self.magnitude;
+            return crate::deep::run(input, params, |img| {
+                let grey = crate::laplacian::luma_float(&img);
+                let (w, h) = (grey.width(), grey.height());
+                let mut out = crate::deep::FloatImage::new(w, h, 1);
+                for y in 0..h {
+                    for x in 0..w {
+                        let p =
+                            |dx: i64, dy: i64| grey.sample_clamped(x as i64 + dx, y as i64 + dy, 0);
+                        let gx = -3.0 * p(-1, -1) + 3.0 * p(1, -1) - 10.0 * p(-1, 0)
+                            + 10.0 * p(1, 0)
+                            - 3.0 * p(-1, 1)
+                            + 3.0 * p(1, 1);
+                        let gy = -3.0 * p(-1, -1) - 10.0 * p(0, -1) - 3.0 * p(1, -1)
+                            + 3.0 * p(-1, 1)
+                            + 10.0 * p(0, 1)
+                            + 3.0 * p(1, 1);
+                        let g = match mag {
+                            ScharrMagnitude::L2 => (gx * gx + gy * gy).sqrt() / 4.0,
+                            ScharrMagnitude::L1 => (gx.abs() + gy.abs()) / 4.0,
+                        };
+                        out.pixel_mut(x, y)[0] = g.clamp(0.0, 1.0);
+                    }
+                }
+                Ok(out)
+            });
         }
         let w = params.width as usize;
         let h = params.height as usize;

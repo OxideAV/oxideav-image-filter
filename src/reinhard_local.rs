@@ -236,7 +236,7 @@ fn blur_field(src: &[f32], w: usize, h: usize, sigma: f32) -> Vec<f32> {
 
 impl PixelFilter for ReinhardLocal {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -244,6 +244,72 @@ impl PixelFilter for ReinhardLocal {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |mut img| {
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                let n = w * h;
+                let lin = crate::deep::linear_rgb(&img);
+                let lum: Vec<f32> = lin
+                    .iter()
+                    .map(|c| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
+                    .collect();
+                let log_sum: f64 = lum.iter().map(|&l| ((me.delta + l) as f64).ln()).sum();
+                let log_avg = (log_sum / n.max(1) as f64).exp() as f32;
+                let log_avg = if log_avg > 0.0 { log_avg } else { me.delta };
+                let scale_factor = me.key / log_avg;
+                let l_s: Vec<f32> = lum.iter().map(|l| l * scale_factor).collect();
+                const ALPHA1: f32 = 0.353_553_4;
+                const ALPHA2_RATIO: f32 = 1.6;
+                const SCALE_RATIO: f32 = 1.6;
+                let kk = me.scales as usize;
+                let mut v1_stack: Vec<Vec<f32>> = Vec::with_capacity(kk);
+                let mut v_stack: Vec<Vec<f32>> = Vec::with_capacity(kk);
+                for k in 0..kk {
+                    let s = me.initial_scale * SCALE_RATIO.powi(k as i32);
+                    let sigma_c = (ALPHA1 * s) / std::f32::consts::SQRT_2;
+                    let sigma_sur = (ALPHA1 * ALPHA2_RATIO * s) / std::f32::consts::SQRT_2;
+                    let v1 = blur_field(&l_s, w, h, sigma_c);
+                    let v2 = blur_field(&l_s, w, h, sigma_sur);
+                    let denom_stab = (2.0f32.powf(me.phi) * me.key) / (s * s);
+                    let v: Vec<f32> = (0..n)
+                        .map(|i| {
+                            let denom = denom_stab + v1[i];
+                            if denom > 0.0 {
+                                (v1[i] - v2[i]) / denom
+                            } else {
+                                0.0
+                            }
+                        })
+                        .collect();
+                    v1_stack.push(v1);
+                    v_stack.push(v);
+                }
+                const EPS_DIV: f32 = 1.0e-6;
+                let mapped: Vec<[f32; 3]> = (0..n)
+                    .map(|i| {
+                        let mut sel = 0usize;
+                        for (k, v_at_scale) in v_stack.iter().enumerate() {
+                            if v_at_scale[i].abs() < me.epsilon {
+                                sel = k;
+                            } else {
+                                break;
+                            }
+                        }
+                        let v1_sel = v1_stack[sel][i];
+                        let l_d = if l_s[i] > 0.0 {
+                            l_s[i] / (1.0 + v1_sel)
+                        } else {
+                            0.0
+                        };
+                        let g = if lum[i] > EPS_DIV { l_d / lum[i] } else { 0.0 };
+                        [lin[i][0] * g, lin[i][1] * g, lin[i][2] * g]
+                    })
+                    .collect();
+                crate::deep::store_linear_rgb(&mut img, &mapped);
+                Ok(img)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

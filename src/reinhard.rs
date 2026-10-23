@@ -118,7 +118,7 @@ fn linear_to_srgb(x: f32) -> u8 {
 
 impl PixelFilter for Reinhard {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -126,6 +126,41 @@ impl PixelFilter for Reinhard {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (key, white, sat) = (self.key, self.white, self.saturation);
+            return crate::deep::run(input, params, |mut img| {
+                const EPS: f32 = 1.0e-4;
+                let lin = crate::deep::linear_rgb(&img);
+                let lum: Vec<f32> = lin
+                    .iter()
+                    .map(|c| 0.27 * c[0] + 0.67 * c[1] + 0.06 * c[2])
+                    .collect();
+                let log_sum: f64 = lum.iter().map(|&l| (l as f64 + EPS as f64).ln()).sum();
+                let log_avg = (log_sum / lum.len().max(1) as f64).exp() as f32;
+                let scale = key / log_avg.max(EPS);
+                let white2 = white * white;
+                let unit_sat = sat == 1.0;
+                let mapped: Vec<[f32; 3]> = lin
+                    .iter()
+                    .zip(&lum)
+                    .map(|(c, &l)| {
+                        let l_w = l.max(EPS);
+                        let l_s = l_w * scale;
+                        let l_d = (l_s * (1.0 + l_s / white2)) / (1.0 + l_s);
+                        let recolour = |v: f32| -> f32 {
+                            if unit_sat {
+                                v * (l_d / l_w)
+                            } else {
+                                (v / l_w).max(0.0).powf(sat) * l_d
+                            }
+                        };
+                        [recolour(c[0]), recolour(c[1]), recolour(c[2])]
+                    })
+                    .collect();
+                crate::deep::store_linear_rgb(&mut img, &mapped);
+                Ok(img)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

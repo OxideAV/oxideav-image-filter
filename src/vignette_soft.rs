@@ -67,7 +67,7 @@ impl VignetteSoft {
 
 impl PixelFilter for VignetteSoft {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -75,6 +75,42 @@ impl PixelFilter for VignetteSoft {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (fx, fy, inner, outer_cfg) = (self.x, self.y, self.inner, self.outer);
+            return crate::deep::run(input, params, |mut img| {
+                let (w, h) = (img.width(), img.height());
+                let cx = fx * w as f32;
+                let cy = fy * h as f32;
+                let corners = [
+                    cx.hypot(cy),
+                    (w as f32 - cx).hypot(cy),
+                    cx.hypot(h as f32 - cy),
+                    (w as f32 - cx).hypot(h as f32 - cy),
+                ];
+                let max_r = corners.iter().cloned().fold(0.0_f32, f32::max).max(1e-3);
+                let outer = outer_cfg.max(inner + 1e-6);
+                let span = outer - inner;
+                let cc = img.color_channels();
+                for py in 0..h {
+                    let dy = py as f32 + 0.5 - cy;
+                    for px in 0..w {
+                        let dx = px as f32 + 0.5 - cx;
+                        let d = (dx * dx + dy * dy).sqrt() / max_r;
+                        let weight = if d <= inner {
+                            1.0
+                        } else if d >= outer {
+                            0.0
+                        } else {
+                            0.5 * (1.0 + (std::f32::consts::PI * (d - inner) / span).cos())
+                        };
+                        for v in &mut img.pixel_mut(px, py)[..cc] {
+                            *v *= weight;
+                        }
+                    }
+                }
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

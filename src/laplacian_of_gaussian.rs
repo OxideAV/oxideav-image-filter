@@ -111,7 +111,7 @@
 //! hand-computed from the formulae above.
 
 use crate::laplacian::build_luma_plane;
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Output mode for the Laplacian-of-Gaussian filter.
@@ -222,12 +222,16 @@ impl LaplacianOfGaussian {
 
 impl PixelFilter for LaplacianOfGaussian {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -235,11 +239,81 @@ impl PixelFilter for LaplacianOfGaussian {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: LaplacianOfGaussian does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            if !(self.sigma.is_finite() && self.sigma > 0.0) {
+                return Err(Error::invalid(
+                    "LaplacianOfGaussian: sigma must be > 0".to_string(),
+                ));
+            }
+            if !self.output_gain.is_finite() {
+                return Err(Error::invalid(
+                    "LaplacianOfGaussian: output_gain must be finite".to_string(),
+                ));
+            }
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                // The response is taken in 8-bit units: gain and the
+                // zero-crossing slope threshold are defined on codes.
+                let grey = crate::laplacian::luma_float(&img);
+                let (w, h) = (grey.width() as usize, grey.height() as usize);
+                let radius = me
+                    .radius
+                    .unwrap_or_else(|| (me.sigma.ceil() as u32 * 3).clamp(1, 16))
+                    .clamp(1, 16) as usize;
+                let kernel = log_kernel(radius, me.sigma);
+                let n = 2 * radius + 1;
+                let mut response = vec![0f32; w * h];
+                for y in 0..h {
+                    for x in 0..w {
+                        let mut acc = 0.0f32;
+                        for j in 0..n {
+                            for i in 0..n {
+                                acc += kernel[j * n + i]
+                                    * grey.sample_clamped(
+                                        x as i64 + i as i64 - radius as i64,
+                                        y as i64 + j as i64 - radius as i64,
+                                        0,
+                                    )
+                                    * 255.0;
+                            }
+                        }
+                        response[y * w + x] = acc;
+                    }
+                }
+                let out: Vec<f32> = match me.mode {
+                    LogMode::Magnitude => response
+                        .iter()
+                        .map(|&v| ((v * me.output_gain).abs() / 255.0).min(1.0))
+                        .collect(),
+                    LogMode::ZeroCrossings => {
+                        let g: Vec<f32> = response.iter().map(|&v| v * me.output_gain).collect();
+                        let mut out = vec![0f32; w * h];
+                        for y in 0..h {
+                            for x in 0..w {
+                                let here = g[y * w + x];
+                                let here_pos = here > 0.0;
+                                let mut mark = false;
+                                for (dx, dy) in [(1i64, 0i64), (-1, 0), (0, 1), (0, -1)] {
+                                    let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+                                    if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
+                                        continue;
+                                    }
+                                    let there = g[ny as usize * w + nx as usize];
+                                    if here_pos != (there > 0.0)
+                                        && (here - there).abs() >= me.slope_threshold
+                                    {
+                                        mark = true;
+                                        break;
+                                    }
+                                }
+                                out[y * w + x] = if mark { 1.0 } else { 0.0 };
+                            }
+                        }
+                        out
+                    }
+                };
+                crate::deep::FloatImage::from_samples(grey.width(), grey.height(), 1, out)
+            });
         }
         if !(self.sigma.is_finite() && self.sigma > 0.0) {
             return Err(Error::invalid(

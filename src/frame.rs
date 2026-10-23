@@ -90,7 +90,7 @@ fn shadow(c: u8) -> u8 {
 
 impl PixelFilter for Frame {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -98,6 +98,81 @@ impl PixelFilter for Frame {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                let (in_w, in_h) = (img.width() as usize, img.height() as usize);
+                let (bw, bh) = (me.width as usize, me.height as usize);
+                let (out_w, out_h) = (in_w + 2 * bw, in_h + 2 * bh);
+                let ch = img.channels();
+                let matte = crate::deep::background(me.matte, ch);
+                let hi: Vec<f32> = matte
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &v)| {
+                        if i < 3 && ch > 1 || (ch == 1 && i == 0) {
+                            (v * 1.5).min(1.0)
+                        } else {
+                            v
+                        }
+                    })
+                    .collect();
+                let lo: Vec<f32> = matte
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &v)| {
+                        if i < 3 && ch > 1 || (ch == 1 && i == 0) {
+                            v * 0.5
+                        } else {
+                            v
+                        }
+                    })
+                    .collect();
+                let mut out = img.filled_like(out_w as u32, out_h as u32, &matte);
+                let outer_x = (me.outer_bevel as usize).min(bw);
+                let outer_y = (me.outer_bevel as usize).min(bh);
+                let inner_x = (me.inner_bevel as usize).min(bw.saturating_sub(outer_x));
+                let inner_y = (me.inner_bevel as usize).min(bh.saturating_sub(outer_y));
+                let put = |out: &mut crate::deep::FloatImage, x: usize, y: usize, px: &[f32]| {
+                    out.pixel_mut(x as u32, y as u32).copy_from_slice(px);
+                };
+                for k in 0..outer_y {
+                    for x in k..(out_w - k) {
+                        put(&mut out, x, k, &hi);
+                        put(&mut out, x, out_h - 1 - k, &lo);
+                    }
+                }
+                for k in 0..outer_x {
+                    for y in k..(out_h - k) {
+                        put(&mut out, k, y, &hi);
+                        put(&mut out, out_w - 1 - k, y, &lo);
+                    }
+                }
+                for k in 0..inner_y {
+                    let yy_top = bh - inner_y + k;
+                    let yy_bot = out_h - 1 - (bh - inner_y + k);
+                    for x in (bw - inner_x + k)..(out_w - (bw - inner_x + k)) {
+                        put(&mut out, x, yy_top, &lo);
+                        put(&mut out, x, yy_bot, &hi);
+                    }
+                }
+                for k in 0..inner_x {
+                    let xx_left = bw - inner_x + k;
+                    let xx_right = out_w - 1 - (bw - inner_x + k);
+                    for y in (bh - inner_y + k)..(out_h - (bh - inner_y + k)) {
+                        put(&mut out, xx_left, y, &lo);
+                        put(&mut out, xx_right, y, &hi);
+                    }
+                }
+                for sy in 0..in_h {
+                    for sx in 0..in_w {
+                        let px = img.pixel(sx as u32, sy as u32).to_vec();
+                        put(&mut out, bw + sx, bh + sy, &px);
+                    }
+                }
+                Ok(out)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

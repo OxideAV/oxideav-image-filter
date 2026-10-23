@@ -87,7 +87,7 @@ impl ZoomBlur {
 
 impl PixelFilter for ZoomBlur {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -95,6 +95,38 @@ impl PixelFilter for ZoomBlur {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                let (w, h) = (img.width(), img.height());
+                let mut out = img.clone();
+                let cx = me.centre_x * w as f32;
+                let cy = me.centre_y * h as f32;
+                let samples = me.samples.max(2) as usize;
+                let strength = me.strength.clamp(0.0, 1.0);
+                let ch = img.channels();
+                let mut acc = vec![0f32; ch];
+                let mut tmp = vec![0f32; ch];
+                for y in 0..h {
+                    for x in 0..w {
+                        let (vx, vy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+                        acc.fill(0.0);
+                        for s in 0..samples {
+                            let t = s as f32 / (samples - 1) as f32;
+                            let k = 1.0 - t * strength;
+                            img.bilinear_into(cx + vx * k - 0.5, cy + vy * k - 0.5, &mut tmp);
+                            for (acc, v) in acc.iter_mut().zip(&tmp) {
+                                *acc += v;
+                            }
+                        }
+                        for (o, a) in out.pixel_mut(x, y).iter_mut().zip(&acc) {
+                            *o = a / samples as f32;
+                        }
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

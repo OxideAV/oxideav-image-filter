@@ -86,7 +86,7 @@ impl RadialBlur {
 
 impl PixelFilter for RadialBlur {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -94,6 +94,45 @@ impl PixelFilter for RadialBlur {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |img| {
+                let (w, h) = (img.width(), img.height());
+                let mut out = img.clone();
+                let cx = me.centre_x * w as f32;
+                let cy = me.centre_y * h as f32;
+                let samples = me.samples.max(2) as usize;
+                let total_rad = me.angle_degrees.to_radians();
+                let ch = img.channels();
+                let mut acc = vec![0f32; ch];
+                let mut tmp = vec![0f32; ch];
+                for y in 0..h {
+                    for x in 0..w {
+                        let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+                        let (dx, dy) = (px - cx, py - cy);
+                        let r = (dx * dx + dy * dy).sqrt();
+                        let base_a = dy.atan2(dx);
+                        acc.fill(0.0);
+                        for s in 0..samples {
+                            let t = s as f32 / (samples - 1) as f32;
+                            let a = base_a + (t - 0.5) * total_rad;
+                            img.bilinear_into(
+                                cx + r * a.cos() - 0.5,
+                                cy + r * a.sin() - 0.5,
+                                &mut tmp,
+                            );
+                            for (acc, v) in acc.iter_mut().zip(&tmp) {
+                                *acc += v;
+                            }
+                        }
+                        for (o, a) in out.pixel_mut(x, y).iter_mut().zip(&acc) {
+                            *o = a / samples as f32;
+                        }
+                    }
+                }
+                Ok(out)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

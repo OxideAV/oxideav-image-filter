@@ -41,7 +41,7 @@ impl Canvas {
 
 impl PixelFilter for Canvas {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -49,6 +49,13 @@ impl PixelFilter for Canvas {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let colour = self.colour;
+            return crate::deep::run(input, params, |img| {
+                let fill = crate::deep::background(colour, img.channels());
+                Ok(img.filled_like(img.width(), img.height(), &fill))
+            });
+        }
         let w = params.width as usize;
         let h = params.height as usize;
         let [r, g, b, a] = self.colour;

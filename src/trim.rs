@@ -13,7 +13,7 @@
 //! IM's `-fuzz N` semantics on `[0, 255]` channels.
 
 use crate::blur::bytes_per_plane_pixel;
-use crate::{Crop, ImageFilter, PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{Crop, ImageFilter, PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Crop the frame down to the bounding box of pixels that differ from
@@ -52,7 +52,7 @@ impl Trim {
 
 impl PixelFilter for Trim {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -60,11 +60,19 @@ impl PixelFilter for Trim {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Trim does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let (fuzz, bg_override) = (self.fuzz as f32 / 255.0, self.background);
+            let img = crate::deep::FloatImage::from_frame(input, params)?;
+            let bg: Vec<f32> = match bg_override {
+                Some(c) => crate::deep::background(c, img.channels()),
+                None => img.pixel(0, 0).to_vec(),
+            };
+            let bbox = bbox_float(&img, &bg, fuzz);
+            let (x, y, w, h) = bbox.unwrap_or((0, 0, 1, 1));
+            if x == 0 && y == 0 && w == params.width && h == params.height {
+                return Ok(input.clone());
+            }
+            return Crop::new(x, y, w, h).apply(input, params);
         }
         if params.width == 0 || params.height == 0 {
             return Ok(input.clone());
@@ -78,6 +86,34 @@ impl PixelFilter for Trim {
         }
         Crop::new(x, y, w, h).apply(input, params)
     }
+}
+
+/// The bounding box of the pixels that differ from `bg` by more than
+/// `fuzz` on any channel (`None` when nothing does).
+pub(crate) fn bbox_float(
+    img: &crate::deep::FloatImage,
+    bg: &[f32],
+    fuzz: f32,
+) -> Option<(u32, u32, u32, u32)> {
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = (u32::MAX, 0u32, u32::MAX, 0u32);
+    let mut any = false;
+    for y in 0..img.height() {
+        for x in 0..img.width() {
+            let differs = img
+                .pixel(x, y)
+                .iter()
+                .zip(bg)
+                .any(|(v, b)| (v - b).abs() > fuzz + 1e-6);
+            if differs {
+                any = true;
+                min_x = min_x.min(x);
+                max_x = max_x.max(x);
+                min_y = min_y.min(y);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+    any.then(|| (min_x, min_y, max_x - min_x + 1, max_y - min_y + 1))
 }
 
 fn compute_bbox(

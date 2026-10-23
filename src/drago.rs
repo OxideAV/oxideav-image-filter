@@ -164,7 +164,7 @@ fn linear_to_srgb(x: f32) -> u8 {
 
 impl PixelFilter for Drago {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -172,6 +172,57 @@ impl PixelFilter for Drago {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |mut img| {
+                const LOG_AVG_DELTA: f32 = 1.0e-6;
+                let lin = crate::deep::linear_rgb(&img);
+                let lum_orig: Vec<f32> = lin
+                    .iter()
+                    .map(|c| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
+                    .collect();
+                let n = lum_orig.len().max(1);
+                let log_sum: f64 = lum_orig
+                    .iter()
+                    .map(|&l| ((LOG_AVG_DELTA + l.max(0.0)) as f64).ln())
+                    .sum();
+                let key = if me.key > 0.0 {
+                    me.key
+                } else if me.key < 0.0 {
+                    ((log_sum / n as f64).exp() as f32).max(LOG_AVG_DELTA)
+                } else {
+                    1.0
+                };
+                let lum: Vec<f32> = lum_orig
+                    .iter()
+                    .map(|l| if key != 1.0 { l / key } else { *l })
+                    .collect();
+                let lwmax = lum.iter().cloned().fold(0.0f32, f32::max).max(1.0e-6);
+                let ld_max_norm = me.ld_max * 0.01;
+                let log_lwmax_plus_1 = (lwmax + 1.0).log10().max(1.0e-6);
+                let log_bias_exp = me.bias.ln() / 0.5f32.ln();
+                let mapped: Vec<[f32; 3]> = (0..lum.len())
+                    .map(|i| {
+                        let lw = lum[i].max(0.0);
+                        let ratio = (lw / lwmax).clamp(0.0, 1.0);
+                        let denom = (2.0 + 8.0 * ratio.powf(log_bias_exp)).log10().max(1.0e-6);
+                        let ld = me.display_scale
+                            * ld_max_norm
+                            * ((lw + 1.0).log10() / log_lwmax_plus_1)
+                            / denom;
+                        let lw_orig = lum_orig[i].max(0.0);
+                        let scale = if lw_orig > 1.0e-6 {
+                            (ld / lw_orig).max(0.0)
+                        } else {
+                            0.0
+                        };
+                        [lin[i][0] * scale, lin[i][1] * scale, lin[i][2] * scale]
+                    })
+                    .collect();
+                crate::deep::store_linear_rgb(&mut img, &mapped);
+                Ok(img)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

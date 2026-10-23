@@ -106,7 +106,7 @@ fn linear_to_srgb(x: f32) -> u8 {
 
 impl PixelFilter for Hable {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -120,6 +120,14 @@ impl PixelFilter for Hable {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let bias = self.exposure_bias;
+            let f_white = hable_curve(self.white).max(1.0e-6);
+            return crate::deep::map_tone(input, params, |v| {
+                let lin = crate::deep::srgb_decode(v) * bias;
+                crate::deep::srgb_encode(hable_curve(lin) / f_white)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

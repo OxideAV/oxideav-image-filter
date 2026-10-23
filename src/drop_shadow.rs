@@ -83,7 +83,7 @@ impl DropShadow {
 
 impl PixelFilter for DropShadow {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::RGBA_ONLY
+        crate::layout::RGBA_DEEP
     }
 
     fn apply_pixels(
@@ -91,6 +91,74 @@ impl PixelFilter for DropShadow {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = self.clone();
+            return crate::deep::run(input, params, |img| {
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                let mask: Vec<f32> = img
+                    .samples()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|px| px[3])
+                    .collect();
+                let blurred = if me.radius == 0 {
+                    mask
+                } else {
+                    let r = me.radius as i64;
+                    let n = (2 * r + 1) as f32;
+                    let mut tmp = vec![0f32; w * h];
+                    for y in 0..h {
+                        for x in 0..w {
+                            let mut acc = 0.0;
+                            for dx in -r..=r {
+                                acc +=
+                                    mask[y * w + (x as i64 + dx).clamp(0, w as i64 - 1) as usize];
+                            }
+                            tmp[y * w + x] = acc / n;
+                        }
+                    }
+                    let mut out = vec![0f32; w * h];
+                    for y in 0..h {
+                        for x in 0..w {
+                            let mut acc = 0.0;
+                            for dy in -r..=r {
+                                acc += tmp[(y as i64 + dy).clamp(0, h as i64 - 1) as usize * w + x];
+                            }
+                            out[y * w + x] = acc / n;
+                        }
+                    }
+                    out
+                };
+                let opacity = me.opacity.clamp(0.0, 1.0);
+                let sh = me.colour.map(|v| v as f32 / 255.0);
+                let mut out = img.clone();
+                for y in 0..h {
+                    for x in 0..w {
+                        let sx = x as i64 - me.offset_x as i64;
+                        let sy = y as i64 - me.offset_y as i64;
+                        let sh_a = if sx >= 0 && sx < w as i64 && sy >= 0 && sy < h as i64 {
+                            blurred[sy as usize * w + sx as usize] * opacity
+                        } else {
+                            0.0
+                        };
+                        let s = img.pixel(x as u32, y as u32);
+                        let s_a = s[3];
+                        let out_a = s_a + sh_a * (1.0 - s_a);
+                        let o = out.pixel_mut(x as u32, y as u32);
+                        for c in 0..3 {
+                            o[c] = if out_a < 1e-6 {
+                                0.0
+                            } else {
+                                (s[c] * s_a + sh[c] * sh_a * (1.0 - s_a)) / out_a
+                            };
+                        }
+                        o[3] = out_a;
+                    }
+                }
+                Ok(out)
+            });
+        }
         if params.format != PixelFormat::Rgba {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: DropShadow requires Rgba, got {:?}",
