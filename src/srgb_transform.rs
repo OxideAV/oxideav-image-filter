@@ -151,6 +151,23 @@ impl SrgbTransform {
         self
     }
 
+    /// The transfer curve on one normalised tone (input clamped to
+    /// `[0, 1]`, as the curves are only defined there).
+    #[inline]
+    fn tone(&self, x: f32) -> f32 {
+        let y = match (self.curve, self.direction) {
+            (SrgbCurve::Srgb, SrgbDirection::Encode) => srgb_encode(x),
+            (SrgbCurve::Srgb, SrgbDirection::Decode) => srgb_decode(x),
+            (SrgbCurve::Gamma { .. }, SrgbDirection::Encode) => {
+                x.clamp(0.0, 1.0).powf(1.0 / self.curve.gamma_value())
+            }
+            (SrgbCurve::Gamma { .. }, SrgbDirection::Decode) => {
+                x.clamp(0.0, 1.0).powf(self.curve.gamma_value())
+            }
+        };
+        y.clamp(0.0, 1.0)
+    }
+
     fn build_lut(&self) -> [u8; 256] {
         let mut lut = [0u8; 256];
         for (v, slot) in lut.iter_mut().enumerate() {
@@ -175,7 +192,7 @@ impl SrgbTransform {
 
 impl PixelFilter for SrgbTransform {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -189,6 +206,10 @@ impl PixelFilter for SrgbTransform {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::map_tone(input, params, |x| me.tone(x));
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1,
             PixelFormat::Rgb24 => 3,

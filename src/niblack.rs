@@ -232,12 +232,16 @@ fn box_sum_i64(src: &[i64], w: usize, h: usize, radius: usize) -> Vec<i64> {
 
 impl PixelFilter for Niblack {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -245,6 +249,43 @@ impl PixelFilter for Niblack {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            if !self.k.is_finite() {
+                return Err(Error::invalid("Niblack: k must be finite".to_string()));
+            }
+            let (radius, k, invert) = (self.radius as usize, self.k, self.invert);
+            return crate::deep::run(input, params, |img| {
+                // Luma with the 8-bit path's (1, 2, 1) / 4 weights.
+                let ch = img.channels();
+                let cc = img.color_channels();
+                let luma: Vec<f32> = img
+                    .samples()
+                    .chunks_exact(ch)
+                    .map(|px| {
+                        if cc >= 3 {
+                            (px[0] + 2.0 * px[1] + px[2]) / 4.0
+                        } else {
+                            px[0]
+                        }
+                    })
+                    .collect();
+                let grey =
+                    crate::deep::FloatImage::from_samples(img.width(), img.height(), 1, luma)?;
+                let n = ((2 * radius + 1) * (2 * radius + 1)) as f32;
+                let thresh = crate::deep::neighbourhood(&grey, radius, radius, |w| {
+                    let mean = w.iter().sum::<f32>() / n;
+                    let var = (w.iter().map(|v| v * v).sum::<f32>() / n - mean * mean).max(0.0);
+                    mean + k * var.sqrt()
+                });
+                let data = grey
+                    .samples()
+                    .iter()
+                    .zip(thresh.samples())
+                    .map(|(&s, &t)| if (s >= t) ^ invert { 1.0 } else { 0.0 })
+                    .collect();
+                crate::deep::FloatImage::from_samples(grey.width(), grey.height(), 1, data)
+            });
+        }
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "Niblack: pixel format {:?} is not supported",

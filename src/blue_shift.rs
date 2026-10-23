@@ -61,7 +61,7 @@ impl BlueShift {
 
 impl PixelFilter for BlueShift {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -75,6 +75,19 @@ impl PixelFilter for BlueShift {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let f = self.factor.max(1e-6);
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    let lo = px[0].min(px[1]).min(px[2]);
+                    let hi = px[0].max(px[1]).max(px[2]);
+                    px[0] = lo / f;
+                    px[1] = lo / f;
+                    px[2] = hi / f;
+                });
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

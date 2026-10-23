@@ -56,6 +56,20 @@ impl ColorBalance {
         Self { lift, gamma, gain }
     }
 
+    /// The lift / gamma / gain curve of channel `c` on a normalised tone:
+    /// `clamp((max(x · gain + lift, 0))^(1/γ), 0, 1)`.
+    #[inline]
+    fn tone(&self, c: usize, x: f32) -> f32 {
+        let gamma = if self.gamma[c].is_finite() && self.gamma[c] > 0.0 {
+            self.gamma[c]
+        } else {
+            1.0
+        };
+        let y = (x * self.gain[c] + self.lift[c]).max(0.0);
+        let y = if y > 0.0 { y.powf(1.0 / gamma) } else { 0.0 };
+        y.clamp(0.0, 1.0)
+    }
+
     fn build_luts(&self) -> [[u8; 256]; 3] {
         let mut luts = [[0u8; 256]; 3];
         for (c, lut) in luts.iter_mut().enumerate() {
@@ -83,7 +97,7 @@ impl ColorBalance {
 
 impl PixelFilter for ColorBalance {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -97,6 +111,18 @@ impl PixelFilter for ColorBalance {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let me = *self;
+            return crate::deep::run(input, params, |mut img| {
+                let cc = img.color_channels();
+                img.map_pixels_in_place(|px| {
+                    for (c, v) in px.iter_mut().enumerate().take(cc) {
+                        *v = me.tone(c, *v);
+                    }
+                });
+                Ok(img)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1,
             PixelFormat::Rgb24 => 3,

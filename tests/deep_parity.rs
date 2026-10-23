@@ -109,7 +109,12 @@ fn narrow_f32(f: &VideoFrame) -> Vec<u8> {
 /// on the threshold once the blur is no longer rounded between passes.
 fn tolerance(name: &str) -> (i32, f32) {
     match name {
+        // |o − blur| ≥ threshold, blur rounded between passes at 8 bits.
         "Clarity" => (255, 0.05),
+        // Local-mean thresholds: the 8-bit mean is an integer, so a
+        // sample equal to its rounded neighbourhood mean lands on the
+        // other side once the mean is exact.
+        "AdaptiveThreshold" | "Niblack" => (255, 0.10),
         _ => (1, 0.0),
     }
 }

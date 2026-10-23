@@ -153,12 +153,16 @@ fn local_mean(src: &[u8], w: usize, h: usize, radius: usize) -> Vec<u16> {
 
 impl PixelFilter for AdaptiveThreshold {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -166,6 +170,38 @@ impl PixelFilter for AdaptiveThreshold {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (radius, offset) = (self.radius as usize, self.offset as f32 / 255.0);
+            return crate::deep::run(input, params, |img| {
+                // Luma with the 8-bit path's (77, 150, 29) / 256 weights.
+                let ch = img.channels();
+                let cc = img.color_channels();
+                let luma: Vec<f32> = img
+                    .samples()
+                    .chunks_exact(ch)
+                    .map(|px| {
+                        if cc >= 3 {
+                            (77.0 * px[0] + 150.0 * px[1] + 29.0 * px[2]) / 256.0
+                        } else {
+                            px[0]
+                        }
+                    })
+                    .collect();
+                let grey =
+                    crate::deep::FloatImage::from_samples(img.width(), img.height(), 1, luma)?;
+                let n = ((2 * radius + 1) * (2 * radius + 1)) as f32;
+                let mean = crate::deep::neighbourhood(&grey, radius, radius, |w| {
+                    w.iter().sum::<f32>() / n
+                });
+                let data = grey
+                    .samples()
+                    .iter()
+                    .zip(mean.samples())
+                    .map(|(&s, &m)| if s >= m + offset { 1.0 } else { 0.0 })
+                    .collect();
+                crate::deep::FloatImage::from_samples(grey.width(), grey.height(), 1, data)
+            });
+        }
         let w = params.width as usize;
         let h = params.height as usize;
         if w == 0 || h == 0 {

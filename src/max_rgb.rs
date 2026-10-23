@@ -98,12 +98,18 @@ impl MaxRgb {
 
 impl PixelFilter for MaxRgb {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if self.keep_format || input == oxideav_core::PixelFormat::GrayF32Le {
+            input
+        } else if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -111,6 +117,35 @@ impl PixelFilter for MaxRgb {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (mode, keep) = (self.mode, self.keep_format);
+            return crate::deep::run(input, params, |img| {
+                if img.channels() == 1 {
+                    return Ok(img);
+                }
+                let pick = |px: &[f32]| match mode {
+                    MaxRgbMode::Max => px[0].max(px[1]).max(px[2]),
+                    MaxRgbMode::Min => px[0].min(px[1]).min(px[2]),
+                };
+                if keep {
+                    let mut out = img;
+                    out.map_pixels_in_place(|px| {
+                        let v = pick(px);
+                        px[0] = v;
+                        px[1] = v;
+                        px[2] = v;
+                    });
+                    Ok(out)
+                } else {
+                    let data = img
+                        .samples()
+                        .chunks_exact(img.channels())
+                        .map(pick)
+                        .collect();
+                    crate::deep::FloatImage::from_samples(img.width(), img.height(), 1, data)
+                }
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

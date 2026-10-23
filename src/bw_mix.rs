@@ -79,12 +79,18 @@ impl BwMix {
 
 impl PixelFilter for BwMix {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if self.keep_format {
+            input
+        } else if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -92,6 +98,30 @@ impl PixelFilter for BwMix {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let [wr, wg, wb] = self.weights;
+            let keep = self.keep_format;
+            return crate::deep::run(input, params, |img| {
+                let mix = |px: &[f32]| px[0] * wr + px[1] * wg + px[2] * wb;
+                if keep {
+                    let mut out = img;
+                    out.map_pixels_in_place(|px| {
+                        let v = mix(px);
+                        px[0] = v;
+                        px[1] = v;
+                        px[2] = v;
+                    });
+                    Ok(out)
+                } else {
+                    let data = img
+                        .samples()
+                        .chunks_exact(img.channels())
+                        .map(mix)
+                        .collect();
+                    crate::deep::FloatImage::from_samples(img.width(), img.height(), 1, data)
+                }
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

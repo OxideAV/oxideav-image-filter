@@ -66,7 +66,7 @@ impl Temperature {
 
 impl PixelFilter for Temperature {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -80,6 +80,17 @@ impl PixelFilter for Temperature {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let r_gain = 1.0 + 0.5 * self.warmth;
+            let b_gain = 1.0 - 0.5 * self.warmth;
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    px[0] = (px[0] * r_gain).clamp(0.0, 1.0);
+                    px[2] = (px[2] * b_gain).clamp(0.0, 1.0);
+                });
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3, false),
             PixelFormat::Rgba => (4, true),

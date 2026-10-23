@@ -115,7 +115,7 @@ fn hsl_to_rgb(h_deg: f32, s: f32, l: f32) -> (f32, f32, f32) {
 
 impl PixelFilter for HslRotate {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -129,6 +129,19 @@ impl PixelFilter for HslRotate {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let rot = self.degrees;
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    let (hh, ss, ll) = rgb_to_hsl(px[0], px[1], px[2]);
+                    let (nr, ng, nb) = hsl_to_rgb(hh + rot, ss, ll);
+                    px[0] = nr;
+                    px[1] = ng;
+                    px[2] = nb;
+                });
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),
