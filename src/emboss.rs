@@ -11,7 +11,7 @@
 //! bias value everywhere.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{PixelFilter, Planes, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Relief / "emboss" 3×3 convolution.
@@ -42,7 +42,7 @@ const BIAS: i32 = 128;
 
 impl PixelFilter for Emboss {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -50,11 +50,31 @@ impl PixelFilter for Emboss {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Emboss does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            return crate::deep::run(input, params, |img| {
+                let mut out = img.clone();
+                let ch = img.channels();
+                let bias = BIAS as f32 / 255.0;
+                for y in 0..img.height() {
+                    for x in 0..img.width() {
+                        for c in 0..ch {
+                            let mut acc = 0.0f32;
+                            for (ky, row) in KERNEL.iter().enumerate() {
+                                for (kx, k) in row.iter().enumerate() {
+                                    acc += *k as f32
+                                        * img.sample_clamped(
+                                            x as i64 + kx as i64 - 1,
+                                            y as i64 + ky as i64 - 1,
+                                            c,
+                                        );
+                                }
+                            }
+                            out.pixel_mut(x, y)[c] = acc + bias;
+                        }
+                    }
+                }
+                Ok(out)
+            });
         }
 
         let planes_selector = match params.format {

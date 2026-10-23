@@ -11,7 +11,7 @@
 //! luma-only for YUV planar (chroma is left intact). Alpha passes
 //! through unchanged.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Histogram-equalise a frame.
@@ -30,7 +30,7 @@ impl Equalize {
 
 impl PixelFilter for Equalize {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -38,11 +38,38 @@ impl PixelFilter for Equalize {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Equalize does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            return crate::deep::run(input, params, |mut img| {
+                for c in 0..img.color_channels() {
+                    let hist = crate::deep::histogram(crate::deep::channel_iter(&img, c));
+                    let total: u32 = hist.iter().sum();
+                    if total == 0 {
+                        continue;
+                    }
+                    let mut cdf = Vec::with_capacity(hist.len());
+                    let mut acc = 0u32;
+                    for h in &hist {
+                        acc += *h;
+                        cdf.push(acc);
+                    }
+                    let cdf_min = cdf.iter().copied().find(|&v| v > 0).unwrap_or(0);
+                    let denom = (total - cdf_min).max(1) as f32;
+                    let full = (crate::deep::HIST_BINS - 1) as f32;
+                    img.map_channel_in_place(c, |v| {
+                        let bin = if v.is_nan() {
+                            0
+                        } else {
+                            ((v.clamp(0.0, 1.0) * full).round() as usize).min(cdf.len() - 1)
+                        };
+                        if cdf[bin] > cdf_min {
+                            (cdf[bin] - cdf_min) as f32 / denom
+                        } else {
+                            0.0
+                        }
+                    });
+                }
+                Ok(img)
+            });
         }
 
         let w = params.width as usize;

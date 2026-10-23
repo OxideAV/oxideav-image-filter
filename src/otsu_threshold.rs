@@ -99,12 +99,16 @@ fn rec601(r: u8, g: u8, b: u8) -> u8 {
 
 impl PixelFilter for OtsuThreshold {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -112,6 +116,28 @@ impl PixelFilter for OtsuThreshold {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let invert = self.invert;
+            return crate::deep::run(input, params, |img| {
+                let grey = img.to_channels(1);
+                let mut hist = [0u64; 256];
+                let codes: Vec<f32> = grey
+                    .samples()
+                    .iter()
+                    .map(|&v| crate::deep::code8(v).clamp(0.0, 255.0))
+                    .collect();
+                for &c in &codes {
+                    hist[c.round() as usize] += 1;
+                }
+                let t = otsu_from_histogram(&hist, codes.len() as u64) as f32;
+                let (low, high) = if invert { (1.0, 0.0) } else { (0.0, 1.0) };
+                let data = codes
+                    .iter()
+                    .map(|&c| if c < t { low } else { high })
+                    .collect();
+                crate::deep::FloatImage::from_samples(grey.width(), grey.height(), 1, data)
+            });
+        }
         let w = params.width as usize;
         let h = params.height as usize;
         if w == 0 || h == 0 {

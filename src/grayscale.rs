@@ -53,14 +53,18 @@ fn luma(r: u8, g: u8, b: u8) -> u8 {
 
 impl PixelFilter for Grayscale {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// `with_output_gray8(true)` collapses to a single `Gray8` plane;
     /// otherwise the neutral-colour result keeps the input layout.
     fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
         if self.output_gray8 {
-            oxideav_core::PixelFormat::Gray8
+            if crate::deep::is_float(input) {
+                oxideav_core::PixelFormat::GrayF32Le
+            } else {
+                oxideav_core::PixelFormat::Gray8
+            }
         } else {
             input
         }
@@ -71,6 +75,30 @@ impl PixelFilter for Grayscale {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let (preserve_alpha, output_gray) = (self.preserve_alpha, self.output_gray8);
+            return crate::deep::run(input, params, |img| {
+                if img.channels() == 1 {
+                    return Ok(img);
+                }
+                if output_gray {
+                    return Ok(img.to_channels(1));
+                }
+                let mut out = img;
+                let has_alpha = out.has_alpha();
+                let ch = out.channels();
+                for px in out.samples_mut().chunks_exact_mut(ch) {
+                    let yv = crate::deep::FloatImage::luma(&px[..3]);
+                    px[0] = yv;
+                    px[1] = yv;
+                    px[2] = yv;
+                    if has_alpha && !preserve_alpha {
+                        px[3] = 1.0;
+                    }
+                }
+                Ok(out)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

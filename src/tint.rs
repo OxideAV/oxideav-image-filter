@@ -52,7 +52,7 @@ impl Tint {
 
 impl PixelFilter for Tint {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -66,6 +66,25 @@ impl PixelFilter for Tint {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let amount = self.amount.max(0.0);
+            let tint = [
+                self.color[0] as f32 / 255.0,
+                self.color[1] as f32 / 255.0,
+                self.color[2] as f32 / 255.0,
+            ];
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    let luma = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
+                    let weight = (amount * luma).clamp(0.0, 1.0);
+                    let inv = 1.0 - weight;
+                    for (v, t) in px.iter_mut().zip(tint.iter()) {
+                        *v = *v * inv + t * weight;
+                    }
+                });
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

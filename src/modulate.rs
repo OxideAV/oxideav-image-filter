@@ -51,7 +51,7 @@ impl Modulate {
 
 impl PixelFilter for Modulate {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -65,6 +65,24 @@ impl PixelFilter for Modulate {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let b_scale = self.brightness / 100.0;
+            let s_scale = self.saturation / 100.0;
+            let hue_shift = self.hue_degrees / 360.0;
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    let (mut hh, mut ss, mut ll) = rgb_to_hsl(px[0], px[1], px[2]);
+                    ll = (ll * b_scale).clamp(0.0, 1.0);
+                    ss = (ss * s_scale).clamp(0.0, 1.0);
+                    hh = (hh + hue_shift).rem_euclid(1.0);
+                    let (r2, g2, b2) = hsl_to_rgb(hh, ss, ll);
+                    px[0] = r2;
+                    px[1] = g2;
+                    px[2] = b2;
+                });
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

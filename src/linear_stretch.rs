@@ -12,9 +12,7 @@
 //! - The cut-off is a count, not a fraction.
 //! - The stretch is per-channel (matching IM behaviour).
 
-use crate::{
-    PixelFilter, VideoStreamParams, contrast_stretch::build_lut_from_hist, is_supported_format,
-};
+use crate::{PixelFilter, VideoStreamParams, contrast_stretch::build_lut_from_hist};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Linear stretch with per-end pixel-count cut-offs.
@@ -44,7 +42,7 @@ impl LinearStretch {
 
 impl PixelFilter for LinearStretch {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -52,11 +50,15 @@ impl PixelFilter for LinearStretch {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: LinearStretch does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let total = params.width as f32 * params.height as f32;
+            let black_pct = (self.black_pixels as f32 / total).clamp(0.0, 0.5);
+            let white_pct = (self.white_pixels as f32 / total).clamp(0.0, 0.5);
+            return crate::deep::run(input, params, |img| {
+                Ok(crate::contrast_stretch::stretch_float(
+                    img, black_pct, white_pct,
+                ))
+            });
         }
         let w = params.width as usize;
         let h = params.height as usize;

@@ -11,7 +11,7 @@
 //! Clean-room implementation: per-channel histogram min/max → linear
 //! remap.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Auto-level: stretch each channel independently to fill `[0, 255]`.
@@ -33,7 +33,7 @@ impl AutoLevel {
 
 impl PixelFilter for AutoLevel {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -41,11 +41,19 @@ impl PixelFilter for AutoLevel {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: AutoLevel does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            return crate::deep::run(input, params, |mut img| {
+                for c in 0..img.color_channels() {
+                    let (lo, hi) = crate::deep::channel_iter(&img, c)
+                        .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
+                            (lo.min(v), hi.max(v))
+                        });
+                    if hi > lo {
+                        img.map_channel_in_place(c, |v| (v - lo) / (hi - lo));
+                    }
+                }
+                Ok(img)
+            });
         }
         let w = params.width as usize;
         let h = params.height as usize;

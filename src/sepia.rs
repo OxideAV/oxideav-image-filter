@@ -41,7 +41,7 @@ impl Sepia {
 
 impl PixelFilter for Sepia {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -55,6 +55,23 @@ impl PixelFilter for Sepia {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let t = self.threshold.clamp(0.0, 1.0);
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    let (r, g, b) = (px[0], px[1], px[2]);
+                    let sr = 0.393 * r + 0.769 * g + 0.189 * b;
+                    let sg = 0.349 * r + 0.686 * g + 0.168 * b;
+                    let sb = 0.272 * r + 0.534 * g + 0.131 * b;
+                    // The sepia matrix sums above one: saturate as the
+                    // 8-bit path does (a display-referred effect).
+                    px[0] = (r * (1.0 - t) + sr * t).clamp(0.0, 1.0);
+                    px[1] = (g * (1.0 - t) + sg * t).clamp(0.0, 1.0);
+                    px[2] = (b * (1.0 - t) + sb * t).clamp(0.0, 1.0);
+                });
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

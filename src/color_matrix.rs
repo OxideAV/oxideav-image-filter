@@ -75,7 +75,7 @@ impl ColorMatrix {
 
 impl PixelFilter for ColorMatrix {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -89,6 +89,24 @@ impl PixelFilter for ColorMatrix {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let m = self.matrix;
+            let o = [
+                self.offset[0] / 255.0,
+                self.offset[1] / 255.0,
+                self.offset[2] / 255.0,
+            ];
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    let (r, g, b) = (px[0], px[1], px[2]);
+                    let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+                    px[0] = finite(m[0] * r + m[1] * g + m[2] * b + o[0]);
+                    px[1] = finite(m[3] * r + m[4] * g + m[5] * b + o[1]);
+                    px[2] = finite(m[6] * r + m[7] * g + m[8] * b + o[2]);
+                });
+                Ok(img)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Rgb24 => 3usize,
             PixelFormat::Rgba => 4usize,

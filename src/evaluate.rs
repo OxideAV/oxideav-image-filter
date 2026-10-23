@@ -25,7 +25,7 @@
 //! All operators clamp the per-channel result to `[0, 255]`. `Divide`
 //! by zero saturates to 255. `Pow` with a negative base saturates to 0.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Which per-pixel arithmetic operator to apply.
@@ -123,7 +123,7 @@ impl Evaluate {
 
 impl PixelFilter for Evaluate {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -137,11 +137,9 @@ impl PixelFilter for Evaluate {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Evaluate does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let (op, value) = (self.op, self.value);
+            return crate::deep::map_tone(input, params, |v| apply_float(op, v, value));
         }
         let w = params.width as usize;
         let h = params.height as usize;
@@ -206,6 +204,48 @@ impl PixelFilter for Evaluate {
 /// Pre-compute the per-input-byte mapping table once, then apply
 /// it to every sample. Saves per-pixel branches and floating-point
 /// work — every operator collapses into a 256-byte LUT.
+/// [`apply_scalar`] on a normalised tone: `value` keeps its 8-bit
+/// units (`Add 10` adds `10/255`), the bitwise operators and the
+/// threshold act on the tone's 8-bit code, `Pow` on the normalised
+/// tone directly.
+fn apply_float(op: EvaluateOp, s: f32, value: f32) -> f32 {
+    let v = value / 255.0;
+    let finite = |r: f32| if r.is_finite() { r } else { 0.0 };
+    match op {
+        EvaluateOp::Add => finite(s + v),
+        EvaluateOp::Subtract => finite(s - v),
+        EvaluateOp::Multiply => finite(s * value),
+        EvaluateOp::Divide => {
+            if value == 0.0 {
+                1.0
+            } else {
+                finite(s / value)
+            }
+        }
+        EvaluateOp::Pow => finite(s.max(0.0).powf(value)),
+        EvaluateOp::Max => finite(s.max(v)),
+        EvaluateOp::Min => finite(s.min(v)),
+        EvaluateOp::Set => finite(v),
+        EvaluateOp::And | EvaluateOp::Or | EvaluateOp::Xor => {
+            let mask = clamp_round(value);
+            let code = clamp_round(crate::deep::code8(s));
+            let r = match op {
+                EvaluateOp::And => code & mask,
+                EvaluateOp::Or => code | mask,
+                _ => code ^ mask,
+            };
+            r as f32 / 255.0
+        }
+        EvaluateOp::Threshold => {
+            if crate::deep::code8(s) >= clamp_round(value) as f32 {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    }
+}
+
 fn build_lut(op: EvaluateOp, value: f32) -> [u8; 256] {
     let mut lut = [0u8; 256];
     for (i, slot) in lut.iter_mut().enumerate() {

@@ -70,9 +70,27 @@ impl Exposure {
     }
 }
 
+/// The exposure curve on one sRGB-encoded tone: decode, scale by
+/// `2^ev`, clamp to `[0, 1]`, re-encode.
+#[inline]
+fn exposure_tone(x: f32, mult: f32) -> f32 {
+    let lin = if x <= 0.04045 {
+        x / 12.92
+    } else {
+        ((x + 0.055) / 1.055).powf(2.4)
+    };
+    let scaled = (lin * mult).clamp(0.0, 1.0);
+    let y = if scaled <= 0.003_130_8 {
+        scaled * 12.92
+    } else {
+        1.055 * scaled.powf(1.0 / 2.4) - 0.055
+    };
+    y.clamp(0.0, 1.0)
+}
+
 impl PixelFilter for Exposure {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -86,6 +104,10 @@ impl PixelFilter for Exposure {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let mult = (2.0f32).powf(self.ev);
+            return crate::deep::map_tone(input, params, |x| exposure_tone(x, mult));
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1,
             PixelFormat::Rgb24 => 3,

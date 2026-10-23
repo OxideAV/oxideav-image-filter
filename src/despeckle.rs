@@ -37,7 +37,7 @@ impl Despeckle {
 
 impl PixelFilter for Despeckle {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_pixels(
@@ -45,6 +45,19 @@ impl PixelFilter for Despeckle {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let r = self.radius as usize;
+            return crate::deep::run(input, params, |img| {
+                if r == 0 {
+                    return Ok(img);
+                }
+                Ok(crate::deep::neighbourhood(&img, r, r, |w| {
+                    let mut v = w.to_vec();
+                    v.sort_by(f32::total_cmp);
+                    v[v.len() / 2]
+                }))
+            });
+        }
         let (bpp, denoise_channels) = match params.format {
             PixelFormat::Rgb24 => (3usize, 3usize),
             // RGBA: only despeckle R/G/B; alpha pass-through.

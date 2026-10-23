@@ -9,7 +9,7 @@
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
 use crate::sharpen::unsharp_mask_plane;
-use crate::{Blur, ImageFilter, PixelFilter, Planes, VideoStreamParams, is_supported_format};
+use crate::{Blur, ImageFilter, PixelFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Unsharp-mask with a contrast threshold.
@@ -49,7 +49,7 @@ impl Unsharp {
 
 impl PixelFilter for Unsharp {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -57,11 +57,14 @@ impl PixelFilter for Unsharp {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Unsharp does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let (radius, sigma, amount) = (self.radius, self.sigma, self.amount);
+            let threshold = self.threshold as f32 / 255.0;
+            return crate::deep::run(input, params, |img| {
+                Ok(crate::sharpen::unsharp_mask_float(
+                    &img, radius, sigma, amount, threshold,
+                ))
+            });
         }
 
         // Match Sharpen's policy: YUV touches only luma.

@@ -94,7 +94,7 @@ impl Convolve {
 
 impl PixelFilter for Convolve {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -102,6 +102,17 @@ impl PixelFilter for Convolve {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let inv_div = 1.0 / self.effective_divisor();
+            let bias = self.bias / 255.0;
+            let size = self.size as usize;
+            let kernel = self.kernel.clone();
+            return crate::deep::run(input, params, |img| {
+                let mut out = crate::deep::convolve_2d(&img, &kernel, size);
+                out.map_tone_in_place(|v| (v + bias) * inv_div);
+                Ok(out)
+            });
+        }
         let (bpp, conv_channels) = match params.format {
             PixelFormat::Gray8 => (1usize, 1usize),
             PixelFormat::Rgb24 => (3usize, 3usize),

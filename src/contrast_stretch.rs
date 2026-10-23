@@ -15,7 +15,7 @@
 //!   (matching IM behaviour); `Normalize` uses a single luma proxy.
 //! - For YUV the stretch is applied to luma only (chroma untouched).
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Contrast stretch with per-end pixel-count percentages.
@@ -46,7 +46,7 @@ impl ContrastStretch {
 
 impl PixelFilter for ContrastStretch {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -54,11 +54,9 @@ impl PixelFilter for ContrastStretch {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: ContrastStretch does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let (black, white) = (self.black_pct, self.white_pct);
+            return crate::deep::run(input, params, |img| Ok(stretch_float(img, black, white)));
         }
         let w = params.width as usize;
         let h = params.height as usize;
@@ -170,6 +168,21 @@ impl PixelFilter for ContrastStretch {
         }
         Ok(out)
     }
+}
+
+/// Per-channel clip-and-stretch on a float picture: each colour channel's
+/// `[lo, hi]` from `deep::clip_range`, then `(v − lo) / (hi − lo)`
+/// clamped to `[0, 1]` (the 8-bit table saturates the same way).
+pub(crate) fn stretch_float(
+    mut img: crate::deep::FloatImage,
+    black: f32,
+    white: f32,
+) -> crate::deep::FloatImage {
+    for c in 0..img.color_channels() {
+        let (lo, hi) = crate::deep::clip_range(crate::deep::channel_iter(&img, c), black, white);
+        img.map_channel_in_place(c, |v| ((v - lo) / (hi - lo)).clamp(0.0, 1.0));
+    }
+    img
 }
 
 fn stretch_lut_single(

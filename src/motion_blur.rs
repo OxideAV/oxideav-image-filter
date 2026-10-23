@@ -6,7 +6,7 @@
 //! for `-motion-blur RxS+A`.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, gaussian_kernel, plane_dims};
-use crate::{PixelFilter, Planes, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Directional motion blur.
@@ -40,7 +40,7 @@ impl MotionBlur {
 
 impl PixelFilter for MotionBlur {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -48,11 +48,30 @@ impl PixelFilter for MotionBlur {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: MotionBlur does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let kernel = gaussian_kernel(self.radius, self.sigma);
+            let angle_rad = self.angle_degrees.to_radians();
+            let (dx, dy) = (angle_rad.cos(), angle_rad.sin());
+            return crate::deep::run(input, params, |img| {
+                let radius = (kernel.len() - 1) as f32 / 2.0;
+                let mut out = img.clone();
+                let ch = img.channels();
+                for y in 0..img.height() {
+                    for x in 0..img.width() {
+                        for c in 0..ch {
+                            let mut acc = 0.0f32;
+                            for (ki, kv) in kernel.iter().enumerate() {
+                                let t = ki as f32 - radius;
+                                let sx = (x as f32 + t * dx).round() as i64;
+                                let sy = (y as f32 + t * dy).round() as i64;
+                                acc += *kv * img.sample_clamped(sx, sy, c);
+                            }
+                            out.pixel_mut(x, y)[c] = acc;
+                        }
+                    }
+                }
+                Ok(out)
+            });
         }
 
         let planes_selector = match params.format {

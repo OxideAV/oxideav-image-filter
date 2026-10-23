@@ -74,59 +74,19 @@ impl PixelFilter for Normalize {
     }
 }
 
-/// The float picture's `[lo, hi]` on a 65 536-bin histogram of the
-/// clamped tone (`(2R + 5G + B) / 8` for colour, the grey sample
-/// otherwise), same clip budgets as the 8-bit scan, as normalised
-/// endpoints.
+/// The float picture's `[lo, hi]` (`deep::clip_range` on the tone
+/// `(2R + 5G + B) / 8` for colour, the grey sample otherwise).
 fn scan_range_float(img: &crate::deep::FloatImage, low_clip: f32, high_clip: f32) -> (f32, f32) {
-    const BINS: usize = 65536;
-    let mut hist = vec![0u32; BINS];
-    let mut total = 0u32;
     let ch = img.channels();
     let cc = img.color_channels();
-    for px in img.samples().chunks_exact(ch) {
-        let tone = if cc >= 3 {
+    let tones = img.samples().chunks_exact(ch).map(|px| {
+        if cc >= 3 {
             (2.0 * px[0] + 5.0 * px[1] + px[2]) / 8.0
         } else {
             px[0]
-        };
-        let bin = (tone.clamp(0.0, 1.0) * (BINS - 1) as f32).round() as usize;
-        hist[bin.min(BINS - 1)] += 1;
-        total += 1;
-    }
-    if total == 0 {
-        return (0.0, 1.0);
-    }
-    let lo_budget = (total as f32 * low_clip).round() as u32;
-    let hi_budget = (total as f32 * high_clip).round() as u32;
-    let mut acc = 0u32;
-    let mut lo = 0usize;
-    for (i, h) in hist.iter().enumerate() {
-        acc += *h;
-        if acc > lo_budget {
-            lo = i;
-            break;
         }
-    }
-    acc = 0;
-    let mut hi = BINS - 1;
-    for (i, h) in hist.iter().enumerate().rev() {
-        acc += *h;
-        if acc > hi_budget {
-            hi = i;
-            break;
-        }
-    }
-    if hi <= lo {
-        if lo < BINS - 1 {
-            hi = lo + 1;
-        } else {
-            lo = BINS - 2;
-            hi = BINS - 1;
-        }
-    }
-    let full = (BINS - 1) as f32;
-    (lo as f32 / full, hi as f32 / full)
+    });
+    crate::deep::clip_range(tones, low_clip, high_clip)
 }
 
 fn scan_range(

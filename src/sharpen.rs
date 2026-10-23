@@ -9,7 +9,7 @@
 //! RGB/RGBA inputs.
 
 use crate::blur::{bytes_per_plane_pixel, chroma_subsampling, plane_dims};
-use crate::{Blur, ImageFilter, PixelFilter, Planes, VideoStreamParams, is_supported_format};
+use crate::{Blur, ImageFilter, PixelFilter, Planes, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Sharpen an image via unsharp-mask. See the module docs for the
@@ -50,7 +50,7 @@ impl Sharpen {
 
 impl PixelFilter for Sharpen {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -58,11 +58,11 @@ impl PixelFilter for Sharpen {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Sharpen does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            let (radius, sigma, amount) = (self.radius, self.sigma, self.amount);
+            return crate::deep::run(input, params, |img| {
+                Ok(unsharp_mask_float(&img, radius, sigma, amount, 0.0))
+            });
         }
 
         // For YUV, only sharpen luma (plane 0); for RGB/RGBA/Gray, blur
@@ -115,6 +115,31 @@ impl PixelFilter for Sharpen {
 /// [`Unsharp`](crate::Unsharp). `threshold` gates the mask on absolute
 /// per-channel contrast — pixels whose `|orig - blurred|` is smaller
 /// than the threshold are left untouched.
+/// The float unsharp mask: `o + (o − blur(o)) · amount` on every
+/// channel where `|o − blur(o)| ≥ threshold` (threshold in normalised
+/// units), the blur the same separable Gaussian as [`Blur`].
+pub(crate) fn unsharp_mask_float(
+    img: &crate::deep::FloatImage,
+    radius: u32,
+    sigma: f32,
+    amount: f32,
+    threshold: f32,
+) -> crate::deep::FloatImage {
+    if amount.abs() < f32::EPSILON {
+        return img.clone();
+    }
+    let kernel = crate::blur::gaussian_kernel(radius, sigma);
+    let blurred = crate::deep::convolve_separable(img, &kernel, &kernel, true);
+    let mut out = img.clone();
+    for (o, b) in out.samples_mut().iter_mut().zip(blurred.samples()) {
+        let diff = *o - *b;
+        if diff.abs() >= threshold {
+            *o += diff * amount;
+        }
+    }
+    out
+}
+
 pub(crate) fn unsharp_mask_plane(
     orig: &VideoPlane,
     blurred: &VideoPlane,

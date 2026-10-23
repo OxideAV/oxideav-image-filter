@@ -501,6 +501,72 @@ pub fn neighbourhood(
     }
 }
 
+/// Bins of the float histograms the statistics-driven tonal filters
+/// build (`65 536`: one per 16-bit code of the clamped tone).
+pub const HIST_BINS: usize = 65536;
+
+/// Histogram of `values` clamped to `[0, 1]` over [`HIST_BINS`] bins.
+pub fn histogram(values: impl Iterator<Item = f32>) -> Vec<u32> {
+    let mut hist = vec![0u32; HIST_BINS];
+    let full = (HIST_BINS - 1) as f32;
+    for v in values {
+        let bin = if v.is_nan() {
+            0
+        } else {
+            (v.clamp(0.0, 1.0) * full).round() as usize
+        };
+        hist[bin.min(HIST_BINS - 1)] += 1;
+    }
+    hist
+}
+
+/// The `[lo, hi]` of a tone population after discarding the darkest
+/// `low_clip` and brightest `high_clip` fractions (same budget rule as
+/// the 8-bit histogram scans: the first bin whose running count exceeds
+/// the budget), as normalised endpoints at least one bin apart.
+pub fn clip_range(values: impl Iterator<Item = f32>, low_clip: f32, high_clip: f32) -> (f32, f32) {
+    let hist = histogram(values);
+    let total: u32 = hist.iter().sum();
+    if total == 0 {
+        return (0.0, 1.0);
+    }
+    let lo_budget = (total as f32 * low_clip).round() as u32;
+    let hi_budget = (total as f32 * high_clip).round() as u32;
+    let mut acc = 0u32;
+    let mut lo = 0usize;
+    for (i, h) in hist.iter().enumerate() {
+        acc += *h;
+        if acc > lo_budget {
+            lo = i;
+            break;
+        }
+    }
+    acc = 0;
+    let mut hi = HIST_BINS - 1;
+    for (i, h) in hist.iter().enumerate().rev() {
+        acc += *h;
+        if acc > hi_budget {
+            hi = i;
+            break;
+        }
+    }
+    if hi <= lo {
+        if lo < HIST_BINS - 1 {
+            hi = lo + 1;
+        } else {
+            lo = HIST_BINS - 2;
+            hi = HIST_BINS - 1;
+        }
+    }
+    let full = (HIST_BINS - 1) as f32;
+    (lo as f32 / full, hi as f32 / full)
+}
+
+/// Channel `c` of every pixel.
+pub fn channel_iter(img: &FloatImage, c: usize) -> impl Iterator<Item = f32> + '_ {
+    img.data.chunks_exact(img.channels).map(move |px| px[c])
+}
+
 /// Widen an 8-bit packed picture (`Gray8` / `Rgb24` / `Rgba`) to its
 /// float counterpart (`v / 255`). Test and bridging helper.
 pub fn widen_u8(frame: &VideoFrame, params: VideoStreamParams) -> Result<FloatImage, Error> {

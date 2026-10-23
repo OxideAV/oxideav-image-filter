@@ -93,7 +93,7 @@ impl ChannelMixer {
 
 impl PixelFilter for ChannelMixer {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -107,6 +107,25 @@ impl PixelFilter for ChannelMixer {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let m = self.matrix;
+            let o = self.offset.map(|v| v / 255.0);
+            return crate::deep::run(input, params, |mut img| {
+                let has_alpha = img.has_alpha();
+                let ch = img.channels();
+                for px in img.samples_mut().chunks_exact_mut(ch) {
+                    let (r, g, b) = (px[0], px[1], px[2]);
+                    let a = if has_alpha { px[3] } else { 1.0 };
+                    px[0] = m[0][0] * r + m[0][1] * g + m[0][2] * b + m[0][3] * a + o[0];
+                    px[1] = m[1][0] * r + m[1][1] * g + m[1][2] * b + m[1][3] * a + o[1];
+                    px[2] = m[2][0] * r + m[2][1] * g + m[2][2] * b + m[2][3] * a + o[2];
+                    if has_alpha {
+                        px[3] = m[3][0] * r + m[3][1] * g + m[3][2] * b + m[3][3] * a + o[3];
+                    }
+                }
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

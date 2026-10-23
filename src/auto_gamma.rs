@@ -22,7 +22,7 @@
 //! stay stable. Mirrors the documented `-auto-gamma` parameter convention
 //! semantics.
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Auto-gamma correction.
@@ -40,7 +40,7 @@ impl AutoGamma {
 
 impl PixelFilter for AutoGamma {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -48,11 +48,15 @@ impl PixelFilter for AutoGamma {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: AutoGamma does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            return crate::deep::run(input, params, |mut img| {
+                for c in 0..img.color_channels() {
+                    let g = gamma_of_mean(crate::deep::channel_iter(&img, c));
+                    let inv = 1.0 / g;
+                    img.map_channel_in_place(c, |v| if v <= 0.0 { 0.0 } else { v.powf(inv) });
+                }
+                Ok(img)
+            });
         }
 
         let w = params.width as usize;
@@ -123,6 +127,36 @@ impl PixelFilter for AutoGamma {
 
 /// Pick a gamma for one interleaved channel so its geometric mean
 /// lands at 0.5.
+/// The gamma that moves the geometric mean of normalised `tones` (each
+/// clamped to `[0, 1]` plus `1/1024`) to `0.5`; `1.0` when degenerate.
+fn gamma_of_mean(tones: impl Iterator<Item = f32>) -> f32 {
+    const EPS: f32 = 1.0 / 1024.0;
+    let mut log_sum: f64 = 0.0;
+    let mut count: u32 = 0;
+    for v in tones {
+        let v = v.clamp(0.0, 1.0) + EPS;
+        log_sum += (v as f64).ln();
+        count += 1;
+    }
+    if count == 0 {
+        return 1.0;
+    }
+    let mean = (log_sum / count as f64).exp();
+    if !(0.0..=1.0).contains(&mean) || mean <= 1e-6 {
+        return 1.0;
+    }
+    let log_mean = mean.ln();
+    if log_mean.abs() < 1e-6 {
+        return 1.0;
+    }
+    let gamma = (log_mean / 0.5_f64.ln()) as f32;
+    if !gamma.is_finite() || gamma <= 0.0 {
+        1.0
+    } else {
+        gamma.clamp(0.01, 100.0)
+    }
+}
+
 fn compute_gamma(data: &[u8], stride: usize, w: usize, h: usize, bpp: usize, offset: usize) -> f32 {
     const EPS: f32 = 1.0 / 1024.0;
     let mut log_sum: f64 = 0.0;

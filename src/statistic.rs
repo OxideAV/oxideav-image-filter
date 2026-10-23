@@ -19,7 +19,7 @@
 //!   smear hue across edges in a way that's almost never what callers
 //!   want; convert to RGB first if needed).
 
-use crate::{PixelFilter, VideoStreamParams, is_supported_format};
+use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Which statistic to compute over the window.
@@ -79,7 +79,7 @@ impl Statistic {
 
 impl PixelFilter for Statistic {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -87,11 +87,36 @@ impl PixelFilter for Statistic {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
-            return Err(Error::unsupported(format!(
-                "oxideav-image-filter: Statistic does not yet handle {:?}",
-                params.format
-            )));
+        if crate::deep::is_float(params.format) {
+            if self.width == 0 || self.height == 0 {
+                return Err(Error::invalid(
+                    "oxideav-image-filter: Statistic window must have non-zero width and height",
+                ));
+            }
+            let (op, ww, wh) = (self.op, self.width as i64, self.height as i64);
+            return crate::deep::run(input, params, |img| {
+                let mut out = img.clone();
+                let cc = img.color_channels();
+                let mut scratch: Vec<f32> = Vec::with_capacity((ww * wh) as usize);
+                for y in 0..img.height() {
+                    for x in 0..img.width() {
+                        for c in 0..cc {
+                            scratch.clear();
+                            for dy in -((wh - 1) / 2)..=(wh / 2) {
+                                for dx in -((ww - 1) / 2)..=(ww / 2) {
+                                    scratch.push(img.sample_clamped(
+                                        x as i64 + dx,
+                                        y as i64 + dy,
+                                        c,
+                                    ));
+                                }
+                            }
+                            out.pixel_mut(x, y)[c] = combine_float(op, &mut scratch);
+                        }
+                    }
+                }
+                Ok(out)
+            });
         }
         if self.width == 0 || self.height == 0 {
             return Err(Error::invalid(
@@ -161,6 +186,20 @@ impl PixelFilter for Statistic {
         }
 
         Ok(out)
+    }
+}
+
+/// [`combine`] on float samples (median = upper middle of the sorted
+/// window, as the 8-bit path).
+fn combine_float(op: StatisticOp, samples: &mut [f32]) -> f32 {
+    match op {
+        StatisticOp::Median => {
+            samples.sort_by(f32::total_cmp);
+            samples[samples.len() / 2]
+        }
+        StatisticOp::Min => samples.iter().cloned().fold(f32::INFINITY, f32::min),
+        StatisticOp::Max => samples.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
+        StatisticOp::Mean => samples.iter().sum::<f32>() / samples.len() as f32,
     }
 }
 

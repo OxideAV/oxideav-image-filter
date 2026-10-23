@@ -46,7 +46,7 @@ impl Colorize {
 
 impl PixelFilter for Colorize {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     /// Each output pixel is a function of the input pixel at the same
@@ -60,6 +60,23 @@ impl PixelFilter for Colorize {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let a = self.amount.clamp(0.0, 1.0);
+            let inv = 1.0 - a;
+            let tint = [
+                self.color[0] as f32 / 255.0,
+                self.color[1] as f32 / 255.0,
+                self.color[2] as f32 / 255.0,
+            ];
+            return crate::deep::run(input, params, |mut img| {
+                img.map_pixels_in_place(|px| {
+                    for (v, t) in px.iter_mut().zip(tint.iter()) {
+                        *v = *v * inv + t * a;
+                    }
+                });
+                Ok(img)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),
