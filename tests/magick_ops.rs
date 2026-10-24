@@ -232,3 +232,90 @@ fn connected_components_match_magick() {
         );
     }
 }
+
+#[test]
+fn noise_statistics_match_magick() {
+    use oxideav_image_filter::{AddNoise, NoiseType};
+    if !reference() {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    }
+    let (w, h) = (400u32, 400u32);
+    for t in [
+        "Uniform",
+        "Gaussian",
+        "Multiplicative",
+        "Impulse",
+        "Laplacian",
+        "Poisson",
+        "Random",
+    ] {
+        for (g, att) in [(25u32, 1.0f64), (50, 1.0), (75, 2.0), (50, 0.5)] {
+            let out = Command::new("magick")
+                .args([
+                    "-size",
+                    &format!("{w}x{h}"),
+                    &format!("xc:gray({g}%)"),
+                    "-seed",
+                    "7",
+                    "-attenuate",
+                    &att.to_string(),
+                    "+noise",
+                    t,
+                    "-format",
+                    "%[fx:mean] %[fx:standard_deviation]",
+                    "info:",
+                ])
+                .output()
+                .unwrap();
+            let s = String::from_utf8_lossy(&out.stdout).to_string();
+            let mut it = s.split_whitespace().map(|v| v.parse::<f64>().unwrap());
+            let (want_mean, want_std) = (it.next().unwrap(), it.next().unwrap());
+            let v = g as f32 / 100.0;
+            let mut data = Vec::with_capacity((w * h * 4) as usize);
+            for _ in 0..w * h {
+                data.extend_from_slice(&v.to_le_bytes());
+            }
+            let f = VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane {
+                    stride: (w * 4) as usize,
+                    data,
+                }],
+            };
+            let got = AddNoise::new(NoiseType::from_name(t).unwrap())
+                .with_attenuate(att)
+                .with_seed(7)
+                .apply(
+                    &f,
+                    VideoStreamParams {
+                        format: PixelFormat::GrayF32Le,
+                        width: w,
+                        height: h,
+                    },
+                )
+                .unwrap();
+            let xs: Vec<f64> = got.planes[0]
+                .data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_le_bytes(*c) as f64)
+                .collect();
+            let n = xs.len() as f64;
+            let mean = xs.iter().sum::<f64>() / n;
+            let std = (xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt();
+            eprintln!(
+                "noise {t} {g}% att {att}: mean {mean:.4} / {want_mean:.4}, std {std:.5} / {want_std:.5}"
+            );
+            assert!(
+                (mean - want_mean).abs() < 0.004,
+                "{t} {g}% {att}: mean {mean} vs {want_mean}"
+            );
+            assert!(
+                (std - want_std).abs() <= 0.03 * want_std + 1e-4,
+                "{t} {g}% {att}: std {std} vs {want_std}"
+            );
+        }
+    }
+}

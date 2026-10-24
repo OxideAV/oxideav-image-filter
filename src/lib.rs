@@ -779,6 +779,7 @@ pub mod morphology;
 pub mod motion_blur;
 pub mod negate;
 pub mod niblack;
+pub mod noise;
 pub mod normalize;
 pub mod ordered_dither;
 pub mod otsu_threshold;
@@ -941,6 +942,7 @@ pub use morphology::{
 pub use motion_blur::MotionBlur;
 pub use negate::Negate;
 pub use niblack::Niblack;
+pub use noise::{AddNoise, NoiseType};
 pub use normalize::Normalize;
 pub use ordered_dither::{OrderedDither, ThresholdMap};
 pub use otsu_threshold::OtsuThreshold;

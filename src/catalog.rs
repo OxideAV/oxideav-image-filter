@@ -194,6 +194,7 @@ pub fn all_single() -> Vec<Entry> {
         e("MotionBlur", MotionBlur::new(1, 1.0, 0.0)),
         e("Negate", Negate::new()),
         e("Niblack", Niblack::new()),
+        e("AddNoise", AddNoise::new(NoiseType::Gaussian).with_seed(1)),
         e("Normalize", Normalize::new(0.0, 0.0)),
         e(
             "OrderedDither",
