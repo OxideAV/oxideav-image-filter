@@ -12,11 +12,17 @@ use oxideav_image_filter::{
     Composite, CompositeOp, Gravity, TwoInputImageFilter, VideoStreamParams,
 };
 
+/// `true` for the reference build (ImageMagick 7.1 Q16-HDRI; other builds clamp or round differently).
+fn is_reference_build(version: &[u8]) -> bool {
+    let v = String::from_utf8_lossy(version);
+    v.contains("ImageMagick 7.1") && v.contains("Q16-HDRI")
+}
+
 fn magick() -> bool {
     Command::new("magick")
         .arg("-version")
         .output()
-        .map(|o| o.status.success())
+        .map(|o| o.status.success() && is_reference_build(&o.stdout))
         .unwrap_or(false)
 }
 
@@ -168,7 +174,7 @@ const APPROXIMATE: &[CompositeOp] = &[
 #[test]
 fn every_operator_matches_magick_on_partial_alpha_pictures() {
     if !magick() {
-        eprintln!("magick not on the path: live composite comparison skipped");
+        eprintln!("reference magick not on the path: live composite comparison skipped");
         return;
     }
     let dir = std::env::temp_dir();

@@ -7,6 +7,14 @@ use std::process::Command;
 use oxideav_core::{PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{ImageFilter, OrderedDither, VideoStreamParams};
 
+/// `true` for the reference build (ImageMagick 7.1 Q16-HDRI; other builds clamp or round differently).
+fn reference() -> bool {
+    magick(&["-version"]).is_some_and(|v| {
+        let v = String::from_utf8_lossy(&v).to_string();
+        v.contains("ImageMagick 7.1") && v.contains("Q16-HDRI")
+    })
+}
+
 fn magick(args: &[&str]) -> Option<Vec<u8>> {
     let out = Command::new("magick").args(args).output().ok()?;
     out.status.success().then_some(out.stdout)
@@ -17,7 +25,7 @@ type Case<'a> = (&'a str, &'a [&'a str], PixelFormat, u32, u32, &'a str);
 
 #[test]
 fn built_in_maps_match_magick() {
-    if magick(&["-version"]).is_none() {
+    if !reference() {
         eprintln!("magick not on the path: live ordered-dither comparison skipped");
         return;
     }

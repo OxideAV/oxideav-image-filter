@@ -6,6 +6,14 @@ use std::process::Command;
 use oxideav_core::{PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{ImageFilter, Transpose, VideoStreamParams};
 
+/// `true` for the reference build (ImageMagick 7.1 Q16-HDRI; other builds clamp or round differently).
+fn reference() -> bool {
+    magick(&["-version"]).is_some_and(|v| {
+        let v = String::from_utf8_lossy(&v).to_string();
+        v.contains("ImageMagick 7.1") && v.contains("Q16-HDRI")
+    })
+}
+
 fn magick(args: &[&str]) -> Option<Vec<u8>> {
     let out = Command::new("magick").args(args).output().ok()?;
     out.status.success().then_some(out.stdout)
@@ -13,7 +21,12 @@ fn magick(args: &[&str]) -> Option<Vec<u8>> {
 
 #[test]
 fn transpose_and_transverse_match_magick() {
-    let Some(src) = magick(&["rose:", "-depth", "8", "rgb:-"]) else {
+    let src = if reference() {
+        magick(&["rose:", "-depth", "8", "rgb:-"])
+    } else {
+        None
+    };
+    let Some(src) = src else {
         eprintln!("magick not on the path: live comparison skipped");
         return;
     };

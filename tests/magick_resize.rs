@@ -174,7 +174,11 @@ fn filter_names_round_trip_and_aliases_parse() {
 /// `magick` on the path, or `None` (the live layer is then skipped).
 fn magick() -> Option<String> {
     let ok = Command::new("magick").arg("-version").output().ok()?;
-    ok.status.success().then_some("magick".to_string())
+    // The reference build only (ImageMagick 7.1 Q16-HDRI): other builds
+    // quantise between passes and drift from it.
+    let v = String::from_utf8_lossy(&ok.stdout);
+    (ok.status.success() && v.contains("ImageMagick 7.1") && v.contains("Q16-HDRI"))
+        .then_some("magick".to_string())
 }
 
 /// `rose:` as packed RGB at `depth` (8 → Rgb24, 16 → Rgb48Le).

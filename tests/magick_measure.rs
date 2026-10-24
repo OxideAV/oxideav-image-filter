@@ -12,11 +12,17 @@ use oxideav_image_filter::measure::{
     CompareMetric, compare, moments, statistics, trim_bounds, unique_colors,
 };
 
+/// `true` for the reference build (ImageMagick 7.1 Q16-HDRI; other builds clamp or round differently).
+fn is_reference_build(version: &[u8]) -> bool {
+    let v = String::from_utf8_lossy(version);
+    v.contains("ImageMagick 7.1") && v.contains("Q16-HDRI")
+}
+
 fn magick() -> bool {
     Command::new("magick")
         .arg("-version")
         .output()
-        .map(|o| o.status.success())
+        .map(|o| o.status.success() && is_reference_build(&o.stdout))
         .unwrap_or(false)
 }
 
@@ -80,7 +86,7 @@ fn close(got: f64, want: f64, tol: f64, what: &str) {
 #[test]
 fn rose_statistics_compare_moments_histogram_bounds_match_magick() {
     if !magick() {
-        eprintln!("magick not on the path: live measurement comparison skipped");
+        eprintln!("reference magick not on the path: live measurement comparison skipped");
         return;
     }
     let rose = frame(run(&["rose:", "-depth", "8", "rgb:-"]), 70);

@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
+- the live `magick` comparisons run only against the reference build (ImageMagick 7.1 Q16-HDRI); other builds (the Windows runner's) clamp between steps and are skipped
 - edition 2024, MSRV 1.95
 - grey sources without alpha hop to the grey target first (a replicated grey through a colour filter would tint its channels)
 
