@@ -12,10 +12,13 @@ use oxideav_image_filter::{
     Composite, CompositeOp, Gravity, TwoInputImageFilter, VideoStreamParams,
 };
 
-/// `true` for the reference build (ImageMagick 7.1 Q16-HDRI; other builds clamp or round differently).
+/// `true` for the reference build (ImageMagick 7.1.2 Q16-HDRI).
 fn is_reference_build(version: &[u8]) -> bool {
     let v = String::from_utf8_lossy(version);
-    v.contains("ImageMagick 7.1") && v.contains("Q16-HDRI")
+    // The alpha conventions were measured on 7.1.2; other 7.1 patch
+    // levels (the Windows runner's) differ on Plus / Screen / LinearBurn
+    // / PinLight with partial alpha.
+    v.contains("ImageMagick 7.1.2") && v.contains("Q16-HDRI")
 }
 
 fn magick() -> bool {
