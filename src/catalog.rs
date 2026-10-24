@@ -94,6 +94,11 @@ pub fn all_single() -> Vec<Entry> {
         e("DistanceOutline", DistanceOutline::new(1.0, 2.0)),
         e("DistanceTransform", DistanceTransform::new(128)),
         e("Distort", Distort::new(0.0, 0.0)),
+        e(
+            "DistortImage",
+            DistortImage::new(DistortMethod::ScaleRotateTranslate, vec![10.0])
+                .with_virtual_pixel(VirtualPixel::Mirror),
+        ),
         e("Dither", Dither::new()),
         e("Drago", Drago::new(0.85)),
         e("DropShadow", DropShadow::new(1, 1, 1)),

@@ -1115,6 +1115,27 @@ impl Kernel {
     }
 }
 
+/// A resolved [`ResampleFilter`] as a radial weighting function, for the
+/// cylindrical (EWA) resampler of [`crate::distort`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RadialKernel(Kernel);
+
+impl RadialKernel {
+    pub(crate) fn new(filter: ResampleFilter, opts: &FilterOptions) -> Self {
+        Self(Kernel::build(filter, opts))
+    }
+
+    /// Support radius in source pixels (blur applied).
+    pub(crate) fn radius(&self) -> f32 {
+        self.0.radius()
+    }
+
+    /// Weight at distance `r`.
+    pub(crate) fn weight(&self, r: f32) -> f32 {
+        self.0.weight(r)
+    }
+}
+
 /// Normalised cardinal sine `sinc(x) = sin(πx)/(πx)`, with the removable
 /// singularity `sinc(0) = 1` filled analytically.
 #[inline]

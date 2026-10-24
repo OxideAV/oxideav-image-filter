@@ -59,6 +59,7 @@ fn register_into(sink: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
     sink("edge", Box::new(make_edge));
     sink("resize", Box::new(make_resize));
     sink("ordered-dither", Box::new(make_ordered_dither));
+    sink("distort-image", Box::new(make_distort_image));
     sink(
         "transpose",
         Box::new(|_p: &Value, inputs: &[PortSpec]| make_transpose(crate::Transpose::new(), inputs)),
@@ -808,6 +809,54 @@ fn make_transpose(f: crate::Transpose, inputs: &[PortSpec]) -> Result<Box<dyn St
         } => PortSpec::video("video", *height, *width, *format, *time_base),
         _ => in_port.clone(),
     };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+/// `distort-image`: `{"method": "SRT", "args": [..], "virtual_pixel":
+/// "edge", "interpolate": "bilinear" | "filter": "Robidoux"}` — the
+/// viewport is the input extent (`+distort` / viewports are the library
+/// API's, whose extent the port cannot declare in advance).
+fn make_distort_image(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    use crate::{DistortImage, DistortMethod, PixelInterpolate, VirtualPixel};
+    let p = params.as_object();
+    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    let name = get_str("method").unwrap_or("SRT");
+    let method = DistortMethod::from_name(name).ok_or_else(|| {
+        Error::invalid(format!(
+            "job: filter 'distort-image': unknown method '{name}'"
+        ))
+    })?;
+    let args: Vec<f64> = p
+        .and_then(|m| m.get("args"))
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_f64()).collect())
+        .unwrap_or_else(|| vec![0.0]);
+    let mut f = DistortImage::new(method, args);
+    if let Some(vp) = get_str("virtual_pixel") {
+        f = f.with_virtual_pixel(VirtualPixel::from_name(vp).ok_or_else(|| {
+            Error::invalid(format!(
+                "job: filter 'distort-image': unknown virtual pixel '{vp}'"
+            ))
+        })?);
+    }
+    if let Some(i) = get_str("interpolate") {
+        f = f.with_interpolate(PixelInterpolate::from_name(i).ok_or_else(|| {
+            Error::invalid(format!(
+                "job: filter 'distort-image': unknown interpolate '{i}'"
+            ))
+        })?);
+    }
+    if let Some(k) = get_str("filter") {
+        f = f.with_ewa(crate::ResampleFilter::from_name(k).ok_or_else(|| {
+            Error::invalid(format!("job: filter 'distort-image': unknown filter '{k}'"))
+        })?);
+    }
+    let in_port = video_in_port(inputs);
+    let out_port = in_port.clone();
     Ok(Box::new(ImageFilterAdapter::new(
         Box::new(f),
         in_port,

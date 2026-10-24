@@ -727,6 +727,7 @@ pub mod displacement_map;
 pub mod distance_morphology;
 pub mod distance_transform;
 pub mod distort;
+pub mod distort_image;
 pub mod dither;
 pub mod drago;
 pub mod drop_shadow;
@@ -878,6 +879,9 @@ pub use displacement_map::DisplacementMap;
 pub use distance_morphology::{DistanceMorphology, DistanceOutline, MorphOp};
 pub use distance_transform::{ChamferKind, DistanceTransform};
 pub use distort::Distort;
+pub use distort_image::{
+    DistortImage, DistortMethod, Distorted, PixelInterpolate, Resampling, VirtualPixel,
+};
 pub use dither::{BayerMatrix, DiffusionKernel, Dither, DitherMode, ScanOrder};
 pub use drago::Drago;
 pub use drop_shadow::DropShadow;
