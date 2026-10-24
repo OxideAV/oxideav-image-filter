@@ -121,6 +121,8 @@ const CHANGES_EXTENT: &[&str] = &[
     "Resize",
     "Rotate",
     "Shave",
+    "Transpose",
+    "Transverse",
     "Trim",
 ];
 

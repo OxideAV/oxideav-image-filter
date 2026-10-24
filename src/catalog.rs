@@ -239,6 +239,8 @@ pub fn all_single() -> Vec<Entry> {
         e("TiltShift", TiltShift::new(0.5, 0.3, 0.2, 1, 1.0)),
         e("Tint", Tint::new([200, 100, 50, 255], 0.5)),
         e("Toon", Toon::new(4, 64, [0, 0, 0])),
+        e("Transpose", Transpose::new()),
+        e("Transverse", Transpose::transverse()),
         e("Trim", Trim::new()),
         e("Unsharp", Unsharp::new(1, 1.0, 1.0, 0)),
         e("Vibrance", Vibrance::new(0.5)),

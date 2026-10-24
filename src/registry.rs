@@ -59,6 +59,16 @@ fn register_into(sink: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
     sink("edge", Box::new(make_edge));
     sink("resize", Box::new(make_resize));
     sink("ordered-dither", Box::new(make_ordered_dither));
+    sink(
+        "transpose",
+        Box::new(|_p: &Value, inputs: &[PortSpec]| make_transpose(crate::Transpose::new(), inputs)),
+    );
+    sink(
+        "transverse",
+        Box::new(|_p: &Value, inputs: &[PortSpec]| {
+            make_transpose(crate::Transpose::transverse(), inputs)
+        }),
+    );
     sink("sharpen", Box::new(make_sharpen));
     sink("gamma", Box::new(make_gamma));
     sink("brightness-contrast", Box::new(make_brightness_contrast));
@@ -777,6 +787,26 @@ fn make_edge(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilte
             ..
         } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
         _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
+    };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+/// `transpose` / `transverse`: the output port swaps width and height.
+fn make_transpose(f: crate::Transpose, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    let in_port = video_in_port(inputs);
+    let out_port = match &in_port.params {
+        PortParams::Video {
+            format,
+            width,
+            height,
+            time_base,
+            ..
+        } => PortSpec::video("video", *height, *width, *format, *time_base),
+        _ => in_port.clone(),
     };
     Ok(Box::new(ImageFilterAdapter::new(
         Box::new(f),

@@ -1153,9 +1153,18 @@ multiple of 4) on both legs; otherwise a typed `InvalidData`.
 | `ChannelExtract` | per channel: `Red` grey + packed RGB(A); `Green` / `Blue` packed RGB(A); `Alpha` `Rgba`; `Y` grey + planar YUV(J); `U` / `V` planar YUV(J) (no hop for `U` / `V`) |
 | two-input (`Composite`, `Clut`, `Stegano`, `Watermark`, `DisplacementMap`: `Gray8` / `Rgb24` / `Rgba`; `HaldClut`, `Stereo`: `Rgb24` / `Rgba`; `Difference`: the classic nine) | natively only (no routes) |
 
-In numbers: 134 of the 142 catalogued filter instances take all 30
-8-bit layouts, 7 take all 70, `ChannelExtract(U)` takes the 6 planar
-YUV(J) layouts. The registry labels every output port from the
+The deep path: every filter whose native set includes the packed float
+layouts (`GrayF32Le` / `RgbF32Le` / `RgbaF32Le` — all but a handful of
+mask / distance / analysis operators) takes every 16-bit and float
+layout through the **float hop**: converted by `oxideav-pixfmt` (pure
+normalisation for RGB / grey / GBR, the matrix at depth for YUV),
+filtered in binary32 with no intermediate quantisation, converted back
+saturating. `tests/deep_parity.rs` holds every such filter to its 8-bit
+result within one code on widened pictures, and a 16-bit level → gamma
+chain to thousands of distinct codes.
+
+In numbers: 145 catalogued filter instances × 70 layouts × 2 sizes =
+20 300 cells, 17 932 accepted, the rest typed refusals. The registry labels every output port from the
 filter's own declaration; filters whose extent depends on the picture
 (`trim`, `auto-trim`, `deskew`) mirror the input extent on the port.
 
@@ -1163,7 +1172,7 @@ filter's own declaration; filters whose extent depends on the picture
 
 `tests/layout_matrix.rs` runs every filter instance over all 70
 layouts at an even and an odd size on a picture carrying all six
-records (19 880 cells: 9 032 accepted, the rest typed refusals, zero
+records (20 300 cells: 17 932 accepted, the rest typed refusals, zero
 panics) and checks each pointwise flag pixel by pixel and palette entry
 by palette entry; `tests/registry_truth.rs` builds all 242 factory
 names on seven layouts and checks the emitted planes against the
