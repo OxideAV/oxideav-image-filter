@@ -170,6 +170,7 @@ pub fn all_single() -> Vec<Entry> {
         e("HslShift", HslShift::new(10.0, 0.1, 0.1)),
         e("Implode", Implode::new(0.3)),
         e("InnerShadow", InnerShadow::new(1, 1, 1)),
+        e("Kmeans", Kmeans::new(3)),
         e("Kuwahara", Kuwahara::new(1)),
         e("Laplacian", Laplacian::new()),
         e("LaplacianOfGaussian", LaplacianOfGaussian::new()),

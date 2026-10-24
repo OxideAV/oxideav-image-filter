@@ -422,3 +422,85 @@ fn fx_expressions_match_magick() {
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
+
+#[test]
+fn kmeans_from_seeds_matches_magick() {
+    use oxideav_image_filter::Kmeans;
+    if !reference() {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    }
+    let src = magick(&["rose:", "-depth", "8", "rgb:-"]).unwrap();
+    let input = VideoFrame {
+        pts: None,
+        planes: vec![VideoPlane {
+            stride: 70 * 3,
+            data: src,
+        }],
+    };
+    let p = VideoStreamParams {
+        format: PixelFormat::Rgb24,
+        width: 70,
+        height: 46,
+    };
+    for (spec, seeds) in [
+        (
+            "red;green;blue",
+            vec![[1.0, 0.0, 0.0], [0.0, 128.0 / 255.0, 0.0], [0.0, 0.0, 1.0]],
+        ),
+        (
+            "black;white;gray;yellow",
+            vec![[0.0; 3], [1.0; 3], [190.0 / 255.0; 3], [1.0, 1.0, 0.0]],
+        ),
+    ] {
+        let want = magick(&[
+            "rose:",
+            "-define",
+            &format!("kmeans:seed-colors={spec}"),
+            "-kmeans",
+            &seeds.len().to_string(),
+            "-depth",
+            "8",
+            "rgb:-",
+        ])
+        .unwrap();
+        let got = Kmeans::new(seeds.len())
+            .with_seeds(seeds.clone())
+            .apply(&input, p)
+            .unwrap();
+        let g = &got.planes[0].data;
+        let worst = g
+            .iter()
+            .zip(&want)
+            .map(|(a, b)| (*a as i32 - *b as i32).abs())
+            .max()
+            .unwrap();
+        let off = g.iter().zip(&want).filter(|(a, b)| a != b).count();
+        // Pixels assigned to a different cluster than magick's (more than
+        // a few codes away).
+        let moved = g
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(want.as_chunks::<3>().0)
+            .filter(|(a, b)| {
+                a.iter()
+                    .zip(b.iter())
+                    .any(|(x, y)| (*x as i32 - *y as i32).abs() > 8)
+            })
+            .count();
+        eprintln!(
+            "kmeans [{spec}]: worst {worst}, {off} samples differ, {moved} pixels in another cluster"
+        );
+        // Exact from three seeds; from four, magick's assignment drifts
+        // from plain Lloyd's on a few boundary pixels (≤ 1 %, centroids
+        // within ~1 code) — not pinned.
+        assert!(
+            moved * 100 <= 70 * 46,
+            "kmeans [{spec}]: {moved} pixels in another cluster"
+        );
+        if seeds.len() == 3 {
+            assert_eq!(worst, 0, "kmeans [{spec}]");
+        }
+    }
+}
