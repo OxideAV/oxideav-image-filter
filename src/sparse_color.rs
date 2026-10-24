@@ -137,8 +137,8 @@ impl SparseColor {
                 for p in pts {
                     let d2 = ((x - p.x).powi(2) + (y - p.y).powi(2)).max(1.0);
                     let w = 1.0 / d2.powf(pw / 2.0);
-                    for c in 0..3 {
-                        acc[c] += w * p.color[c] as f64;
+                    for (a, &col) in acc.iter_mut().zip(&p.color) {
+                        *a += w * col as f64;
                     }
                     wsum += w;
                 }
