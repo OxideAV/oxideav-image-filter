@@ -73,6 +73,10 @@ pub fn all_single() -> Vec<Entry> {
         e("Colorize", Colorize::new([200, 100, 50, 255], 0.5)),
         e("Comic", Comic::new()),
         e("Composite(self)", Composite::new(CompositeOp::Over)),
+        e(
+            "ConnectedComponents",
+            ConnectedComponents::new(4).with_area_threshold(3.0),
+        ),
         e("ContrastStretch", ContrastStretch::new(1.0, 1.0)),
         e(
             "Convolve",

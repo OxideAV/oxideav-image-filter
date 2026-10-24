@@ -136,3 +136,99 @@ fn sparse_color_matches_magick() {
         }
     }
 }
+
+#[test]
+fn connected_components_match_magick() {
+    use oxideav_image_filter::connected_components;
+    if !reference() {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    }
+    // A posterised rose: a few colours, many regions.
+    let src = magick(&["rose:", "-colors", "5", "+dither", "-depth", "8", "rgb:-"]).unwrap();
+    let input = VideoFrame {
+        pts: None,
+        planes: vec![VideoPlane {
+            stride: 70 * 3,
+            data: src,
+        }],
+    };
+    let p = VideoStreamParams {
+        format: PixelFormat::Rgb24,
+        width: 70,
+        height: 46,
+    };
+    for (conn, thr) in [(4u8, None), (8, None)] {
+        let mut args = vec![
+            "rose:".to_string(),
+            "-colors".into(),
+            "5".into(),
+            "+dither".into(),
+            "-define".into(),
+            "connected-components:verbose=true".into(),
+        ];
+        if let Some(t) = thr {
+            args.extend([
+                "-define".into(),
+                format!("connected-components:area-threshold={t}"),
+            ]);
+        }
+        args.extend([
+            "-connected-components".into(),
+            conn.to_string(),
+            "-depth".into(),
+            "16".into(),
+            "-endian".into(),
+            "LSB".into(),
+            "gray:-".into(),
+        ]);
+        let a: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = Command::new("magick").args(&a).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        // The verbose listing precedes the raw label plane on stdout.
+        let listing_end = text.find("\n\n").map(|i| i + 2);
+        let lines: Vec<&str> = text
+            .lines()
+            .skip(1)
+            .take_while(|l| l.starts_with("  "))
+            .collect();
+        let map = connected_components(&input, p, conn, thr).unwrap();
+        assert_eq!(
+            map.objects.len(),
+            lines.len(),
+            "{conn} {thr:?}: object count"
+        );
+        // magick lists by area; among equal areas its order is not
+        // stable, so objects are matched by id.
+        for line in &lines {
+            let mut it = line.split_whitespace();
+            let id: u32 = it.next().unwrap().trim_end_matches(':').parse().unwrap();
+            let bbox = it.next().unwrap();
+            let centroid = it.next().unwrap();
+            let area: u64 = it.next().unwrap().parse().unwrap();
+            let o = map
+                .objects
+                .iter()
+                .find(|o| o.id == id)
+                .unwrap_or_else(|| panic!("{conn} {thr:?}: no object {id}"));
+            assert_eq!(o.area, area, "{conn} {thr:?}: area of {id}");
+            assert_eq!(
+                format!("{}x{}+{}+{}", o.bbox.2, o.bbox.3, o.bbox.0, o.bbox.1),
+                bbox,
+                "bbox of {id}"
+            );
+            assert_eq!(
+                format!("{:.1},{:.1}", o.centroid.0, o.centroid.1),
+                centroid,
+                "centroid of {id}"
+            );
+        }
+        let _ = listing_end;
+        let areas: Vec<u64> = map.objects.iter().map(|o| o.area).collect();
+        assert!(areas.windows(2).all(|w| w[0] >= w[1]), "sorted by area");
+        eprintln!(
+            "connected-components {conn} {thr:?}: {} objects match",
+            lines.len()
+        );
+    }
+}

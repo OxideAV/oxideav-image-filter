@@ -711,6 +711,7 @@ pub mod color_matrix;
 pub mod colorize;
 pub mod comic;
 pub mod composite;
+pub mod connected_components;
 pub mod contrast_stretch;
 pub mod convolve;
 pub mod crop;
@@ -865,6 +866,9 @@ pub use color_matrix::ColorMatrix;
 pub use colorize::Colorize;
 pub use comic::Comic;
 pub use composite::{ChannelMask, Composite, CompositeOp};
+pub use connected_components::{
+    ComponentMap, ComponentObject, ConnectedComponents, connected_components,
+};
 pub use contrast_stretch::ContrastStretch;
 pub use convolve::Convolve;
 pub use crop::Crop;
