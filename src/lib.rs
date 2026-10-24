@@ -746,6 +746,7 @@ pub mod feature_transform;
 pub mod flip;
 pub mod flood_fill;
 pub mod flop;
+pub mod fourier;
 pub mod frame;
 pub mod frei_chen;
 pub mod function;
