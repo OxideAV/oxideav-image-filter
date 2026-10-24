@@ -52,3 +52,87 @@ fn transpose_and_transverse_match_magick() {
         assert_eq!(got.planes[0].data, want, "{op}");
     }
 }
+
+#[test]
+fn sparse_color_matches_magick() {
+    use oxideav_image_filter::{SparseColor, SparseMethod, SparsePoint};
+    if !reference() {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    }
+    let (w, h) = (31u32, 23u32);
+    let black = VideoFrame {
+        pts: None,
+        planes: vec![VideoPlane {
+            stride: (w * 3) as usize,
+            data: vec![0; (w * h * 3) as usize],
+        }],
+    };
+    let p = VideoStreamParams {
+        format: PixelFormat::Rgb24,
+        width: w,
+        height: h,
+    };
+    let sets: [(&str, Vec<SparsePoint>); 3] = [
+        (
+            "3,2 red  27,5 lime  12,20 blue  29,21 white  15,10 #808000",
+            vec![
+                SparsePoint::new(3.0, 2.0, [1.0, 0.0, 0.0]),
+                SparsePoint::new(27.0, 5.0, [0.0, 1.0, 0.0]),
+                SparsePoint::new(12.0, 20.0, [0.0, 0.0, 1.0]),
+                SparsePoint::new(29.0, 21.0, [1.0, 1.0, 1.0]),
+                SparsePoint::new(15.0, 10.0, [128.0 / 255.0, 128.0 / 255.0, 0.0]),
+            ],
+        ),
+        (
+            "2,2 red  28,20 blue",
+            vec![
+                SparsePoint::new(2.0, 2.0, [1.0, 0.0, 0.0]),
+                SparsePoint::new(28.0, 20.0, [0.0, 0.0, 1.0]),
+            ],
+        ),
+        (
+            "10,10 lime",
+            vec![SparsePoint::new(10.0, 10.0, [0.0, 1.0, 0.0])],
+        ),
+    ];
+    for (spec, pts) in &sets {
+        for m in [
+            "Barycentric",
+            "Bilinear",
+            "Shepards",
+            "Inverse",
+            "Voronoi",
+            "Manhattan",
+        ] {
+            if m == "Bilinear" && pts.len() < 4 {
+                continue;
+            }
+            let want = magick(&[
+                "-size",
+                &format!("{w}x{h}"),
+                "xc:black",
+                "-sparse-color",
+                m,
+                spec,
+                "-depth",
+                "8",
+                "rgb:-",
+            ])
+            .unwrap();
+            let got = SparseColor::new(SparseMethod::from_name(m).unwrap(), pts.clone())
+                .unwrap()
+                .apply(&black, p)
+                .unwrap();
+            let worst = got.planes[0]
+                .data
+                .iter()
+                .zip(&want)
+                .map(|(a, b)| (*a as i32 - *b as i32).abs())
+                .max()
+                .unwrap();
+            eprintln!("sparse-color {m} [{spec}]: worst {worst}");
+            assert!(worst <= 1, "{m} [{spec}]: off by {worst} codes");
+        }
+    }
+}

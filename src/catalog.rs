@@ -234,6 +234,17 @@ pub fn all_single() -> Vec<Entry> {
             "SplitTone",
             SplitTone::new([20, 30, 90], [250, 200, 100], 0.0, 0.5),
         ),
+        e(
+            "SparseColor",
+            SparseColor::new(
+                SparseMethod::Shepards,
+                vec![
+                    SparsePoint::new(1.0, 1.0, [1.0, 0.0, 0.0]),
+                    SparsePoint::new(5.0, 4.0, [0.0, 0.5, 1.0]),
+                ],
+            )
+            .expect("two points"),
+        ),
         e("Spread", Spread::new(1)),
         e("SrgbTransform", SrgbTransform::decode()),
         e("Srt", Srt::new((0.5, 0.5), (1.0, 1.0), 0.0, (0.0, 0.0))),
