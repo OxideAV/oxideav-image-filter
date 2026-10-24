@@ -1080,6 +1080,25 @@ All single-input filters listed above share the `ImageFilter` trait — chain th
 manually with repeated `.apply()` calls, or feed them through
 `oxideav-pipeline` as `video.<name>` filter nodes in a JSON job.
 
+## Distortion and generators
+
+`DistortImage` is the `-distort` framework: Affine, AffineProjection,
+SRT, Perspective, PerspectiveProjection, BilinearForward / Reverse,
+Polynomial, Arc, Polar, DePolar, Barrel, BarrelInverse and Shepards, with
+`+distort` bestfit and viewports, 14 virtual-pixel methods, 9 point
+interpolations and elliptical weighted averaging through any resize
+filter (Robidoux by default). The conventions were recovered from
+`magick` with pictures that encode their own coordinates;
+`tests/magick_distort.rs` holds every method at ≥ 45 dB with point
+sampling (most ≥ 100 dB) and EWA at ≥ 35 dB (55–73 dB measured).
+
+Also from the `-fx` family of operations: `Fx` (an expression evaluator,
+46 forms matching `magick`), `SparseColor` (six methods, bit-exact),
+`connected_components` / `ConnectedComponents`, `Kmeans`, `AddNoise`
+(seven distributions matched in mean and deviation), `fourier`
+(magnitude / phase DFT pair), `OrderedDither` (threshold maps with
+per-channel levels, bit-exact) and `Transpose` / `Transverse`.
+
 ## Measurement
 
 `measure` is the read-only side of the Imagick surface: `statistics`
