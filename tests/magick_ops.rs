@@ -319,3 +319,106 @@ fn noise_statistics_match_magick() {
         }
     }
 }
+
+#[test]
+fn fx_expressions_match_magick() {
+    use oxideav_image_filter::Fx;
+    if !reference() {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    }
+    let float_rgb = |args: &[&str]| {
+        let mut a: Vec<&str> = args.to_vec();
+        a.extend([
+            "-depth",
+            "32",
+            "-define",
+            "quantum:format=floating-point",
+            "-endian",
+            "LSB",
+            "rgb:-",
+        ]);
+        magick(&a).unwrap()
+    };
+    let src = float_rgb(&["rose:"]);
+    let input = VideoFrame {
+        pts: None,
+        planes: vec![VideoPlane {
+            stride: 70 * 12,
+            data: src,
+        }],
+    };
+    let p = VideoStreamParams {
+        format: PixelFormat::RgbF32Le,
+        width: 70,
+        height: 46,
+    };
+    let exprs = [
+        "u*0.5",
+        "1-u",
+        "u^2",
+        "-u^2+1",
+        "2^-1*u",
+        "sin(u*pi)",
+        "i/w",
+        "j/h",
+        "(i+j)%7/7",
+        "r*0.3+g*0.6+b*0.1",
+        "u>0.5?1:0",
+        "max(r,b)",
+        "min(i,j)/w",
+        "p[-1,0]",
+        "p[2,-3]",
+        "p{10,10}",
+        "p{i/2,j/2}",
+        "p[1,0].g",
+        "u.r",
+        "abs(u-0.5)*2",
+        "hypot(i-w/2,j-h/2)/w",
+        "floor(u*4)/4",
+        "atan2(j-h/2,i-w/2)/pi/2+0.5",
+        "exp(-u)",
+        "log(u+1)",
+        "ln(u+1)",
+        "logtwo(u+1)",
+        "sqrt(u)",
+        "pow(u,0.5)",
+        "!(u<0.5)",
+        "u<0.3||u>0.7",
+        "u>0.21&&u<0.61",
+        "intensity",
+        "u==p[1,0]",
+        "u!=p[1,0]",
+        "round(u*3)/3",
+        "int(u*5)/5",
+        "mod(i,5)/5",
+        "squish(u*8-4)",
+        "1e-1*i/w*10",
+        "cosh(u)-1",
+        "tanh(u*2)",
+        "sign(u-0.5)",
+        "QuantumRange*u",
+        "u*(1-u)*4",
+    ];
+    let mut bad = Vec::new();
+    for e in exprs {
+        let want = float_rgb(&["rose:", "-fx", e]);
+        let got = Fx::new(e).unwrap().apply(&input, p).unwrap();
+        let worst = got.planes[0]
+            .data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(want.as_chunks::<4>().0)
+            .map(|(a, b)| {
+                let (a, b) = (f32::from_le_bytes(*a), f32::from_le_bytes(*b));
+                (a - b).abs() / b.abs().max(1.0)
+            })
+            .fold(0f32, f32::max);
+        eprintln!("fx {e:28}: worst relative |Δ| {worst:.2e}");
+        if worst.is_nan() || worst > 1e-4 {
+            bad.push(format!("{e}: {worst}"));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

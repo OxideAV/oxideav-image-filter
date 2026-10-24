@@ -130,6 +130,7 @@ pub fn all_single() -> Vec<Entry> {
             "Function",
             Function::new(FunctionOp::Polynomial, vec![1.0, 0.0]),
         ),
+        e("Fx", Fx::new("u*0.8+0.1*(i%3)").expect("expression")),
         e("Gabor", Gabor::new()),
         e("Gamma", Gamma::new(2.2)),
         e(
