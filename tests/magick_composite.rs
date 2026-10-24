@@ -15,10 +15,12 @@ use oxideav_image_filter::{
 /// `true` for the reference build (ImageMagick 7.1.2 Q16-HDRI).
 fn is_reference_build(version: &[u8]) -> bool {
     let v = String::from_utf8_lossy(version);
-    // The alpha conventions were measured on 7.1.2; other 7.1 patch
-    // levels (the Windows runner's) differ on Plus / Screen / LinearBurn
-    // / PinLight with partial alpha.
-    v.contains("ImageMagick 7.1.2") && v.contains("Q16-HDRI")
+    // The alpha conventions were measured on 7.1.2 Q16-HDRI (macOS /
+    // Linux builds). The Windows build of the same version folds partial
+    // alpha into Plus / Screen / LinearBurn / PinLight differently (16-27
+    // dB from the others, cause not established), so the live layer is
+    // not run there.
+    !cfg!(windows) && v.contains("ImageMagick 7.1.2") && v.contains("Q16-HDRI")
 }
 
 fn magick() -> bool {
