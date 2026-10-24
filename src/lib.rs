@@ -860,7 +860,7 @@ pub use color_balance::ColorBalance;
 pub use color_matrix::ColorMatrix;
 pub use colorize::Colorize;
 pub use comic::Comic;
-pub use composite::{Composite, CompositeOp};
+pub use composite::{ChannelMask, Composite, CompositeOp};
 pub use contrast_stretch::ContrastStretch;
 pub use convolve::Convolve;
 pub use crop::Crop;

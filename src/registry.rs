@@ -452,24 +452,8 @@ fn register_into(sink: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
     // (two-input). Mirrors the documented `-compose <op>` CLI family. r11
     // adds the four overlay-family ops (HardLight / SoftLight /
     // ColorDodge / ColorBurn).
-    for op in [
-        CompositeOp::Over,
-        CompositeOp::In,
-        CompositeOp::Out,
-        CompositeOp::Atop,
-        CompositeOp::Xor,
-        CompositeOp::Plus,
-        CompositeOp::Multiply,
-        CompositeOp::Screen,
-        CompositeOp::Overlay,
-        CompositeOp::Darken,
-        CompositeOp::Lighten,
-        CompositeOp::Difference,
-        CompositeOp::HardLight,
-        CompositeOp::SoftLight,
-        CompositeOp::ColorDodge,
-        CompositeOp::ColorBurn,
-    ] {
+    // Every `-compose` operator (issue #9 widened the set to ImageMagick's).
+    for op in CompositeOp::ALL.iter().copied() {
         let name = format!("composite-{}", op.name());
         sink(
             &name,
@@ -728,8 +712,17 @@ fn make_composite(
         name: "video".to_string(),
         ..src_port.clone()
     };
+    let mut composite = Composite::new(op);
+    if let Some(args) = _params.get("args").and_then(|v| v.as_array()) {
+        composite = composite.with_args(
+            args.iter()
+                .filter_map(|v| v.as_f64())
+                .map(|v| v as f32)
+                .collect::<Vec<_>>(),
+        );
+    }
     Ok(Box::new(TwoInputImageFilterAdapter::new(
-        Box::new(Composite::new(op)),
+        Box::new(composite),
         src_port,
         dst_port,
         out_port,

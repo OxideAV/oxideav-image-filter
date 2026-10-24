@@ -1,108 +1,274 @@
-//! Porter–Duff and arithmetic composite operators.
+//! Compositing: Porter–Duff, the arithmetic and lighting blends, the
+//! channel / colour-component copies, the map-driven operators and the
+//! placement semantics of `-compose … -composite` (issue #9).
 //!
-//! Implements the sixteen standard two-input pixel composites that
-//! mirror the documented `-compose <op>` CLI family. Every operator takes
-//! a foreground (`src`) and a background (`dst`) frame of identical
-//! shape and pixel format, and produces a new frame.
+//! The engine works on straight-alpha RGBA in binary32 (every layout
+//! reaches it through the float hop) and was fixed black-box against the
+//! `magick` binary (7.1.2 Q16-HDRI): `tests/magick_composite.rs` runs
+//! every operator on two pictures with partial alpha and holds PSNR ≥
+//! 45 dB. ImageMagick's own conventions, as measured:
 //!
-//! Reference algebra: Porter & Duff, "Compositing Digital Images",
-//! SIGGRAPH 1984. The eight Porter–Duff operators (`over`, `in`,
-//! `out`, `atop`, `xor` and their alpha-only siblings) are derived
-//! from the per-pixel formula
+//! - the "mathematical" blends (`Multiply`, `Screen`, `Overlay`,
+//!   `Darken`, …) form the union alpha `Sa + Da − Sa·Da` and the
+//!   **premultiplied** colour `Sa·Da·B(Sc, Dc) + Sa·(1 − Da)·Sc +
+//!   Da·(1 − Sa)·Dc`, which is stored as the straight colour without
+//!   dividing by the alpha;
+//! - the Porter–Duff operators follow their classic premultiplied
+//!   algebra and do un-premultiply (`Over`, `Xor`, …);
+//! - `In` / `Out` / `Atop` / `Xor` store their premultiplied colour;
+//! - outside the overlay the source is transparent and the operator
+//!   still applies (`compose:outside-overlay` = true); with
+//!   [`Composite::with_outside_overlay`]`(false)` the destination is
+//!   left as it is there.
 //!
-//! ```text
-//! out_rgb = src_rgb * fa + dst_rgb * fb
-//! out_a   = src_a   * fa + dst_a   * fb
-//! ```
-//!
-//! where `fa` / `fb` are the operator-specific source / destination
-//! coverage factors. The four arithmetic blends (`plus`,
-//! `multiply`, `screen`, `darken`, `lighten`, `overlay`,
-//! `difference`) follow the per-channel formulas listed in any
-//! standard graphics reference (e.g. PDF 1.7 §11.3.5 — but
-//! transcribed here from first principles, no library code).
-//!
-//! # Alpha convention
-//!
-//! All operators consume and produce **straight (non-premultiplied)**
-//! alpha, matching every other RGBA filter in this crate. The
-//! Porter–Duff coverage factors are written in straight-alpha form
-//! (`src_rgb * src_a` etc.) so the formulas survive as-is.
-//!
-//! # Pixel formats
-//!
-//! - `Rgba` — full Porter–Duff + arithmetic; alpha is computed.
-//! - `Rgb24` — alpha is treated as `1.0` everywhere (`fa` / `fb`
-//!   collapse so `over` / `in` / `atop` all reduce to "src",
-//!   `out` / `xor` to "dst", `plus` is additive, the per-channel
-//!   blends still apply).
-//! - `Gray8` — single-channel arithmetic blends only; alpha treated
-//!   as `1.0`. Porter–Duff coverage operators reduce as for
-//!   `Rgb24` (a Gray8 buffer has no alpha plane to drive coverage).
-//!
-//! Other formats return [`Error::unsupported`].
+//! Not yet matched (the operator runs, `tests/magick_composite.rs`
+//! reports its PSNR without asserting it): `Difference`, `SoftLight`,
+//! `DstIn`, `DstOut`, `DivideDst` / `DivideSrc`, `ModulusAdd` /
+//! `ModulusSubtract`, `Exclusion`, `LinearDodge`, `LinearLight`,
+//! `HardMix`, `PegtopLight`, `SoftBurn`, `SoftDodge`, `Stamp`, `Freeze`,
+//! `Reflect`, `Negate`, `Interpolate`, `DarkenIntensity` /
+//! `LightenIntensity`, `Bumpmap`, `Blend` with arguments, and the
+//! colour-component / map / modulate family (`Hue`, `Saturate`,
+//! `Luminize`, `Colorize`, `Rmse`, `Intensity`, `CopyBlack`, `Threshold`,
+//! `Displace`, `Distort`, `Blur`, `Modulate`). Their per-channel curves
+//! on opaque pictures were measured and match for most; what differs is
+//! how `magick` folds partial alpha into each one, which the staged
+//! documentation does not describe.
 
-use crate::{PixelFilter, TwoInputImageFilter, TwoInputPixelFilter, VideoStreamParams};
-use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
+use crate::deep::{self, FloatImage};
+use crate::gravity_translate::Gravity;
+use crate::{PixelFilter, TwoInputImageFilter, TwoInputPixelFilter, VideoStreamParams, layout};
+use oxideav_core::{Error, PixelFormat, VideoFrame};
 
-/// Which composite operator to apply.
-///
-/// Names match the documented `-compose` CLI argument exactly (so the
-/// pipeline can map a JSON `op` string straight onto a variant).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A compositing operator — ImageMagick's `-compose` set.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CompositeOp {
-    /// `src` over `dst` — the default Porter–Duff "over".
-    /// `out = src + dst * (1 - src.a)`.
+    /// Source over destination (Porter–Duff `src-over`).
     Over,
-    /// `src` constrained to `dst`'s coverage.
-    /// `out = src * dst.a`.
+    /// Source where the destination is (`src-in`).
     In,
-    /// `src` constrained to where `dst` is *not* covered.
-    /// `out = src * (1 - dst.a)`.
+    /// Source where the destination is not (`src-out`).
     Out,
-    /// `src` over `dst`, but result alpha follows `dst`.
-    /// `out = src * dst.a + dst * (1 - src.a)`.
+    /// Source atop the destination (`src-atop`).
     Atop,
-    /// Non-overlapping union of `src` and `dst`.
-    /// `out = src * (1 - dst.a) + dst * (1 - src.a)`.
+    /// Either but not both.
     Xor,
-    /// Additive blend: `out = src + dst`, clamped to `255`.
+    /// Premultiplied sum, clamped.
     Plus,
-    /// Per-channel multiplicative blend: `out = src * dst / 255`.
+    /// `Sc · Dc`.
     Multiply,
-    /// Inverse multiply: `out = 255 - (255 - src) * (255 - dst) / 255`.
+    /// `Sc + Dc − Sc·Dc`.
     Screen,
-    /// Combination of multiply (when `dst < 0.5`) and screen
-    /// (when `dst >= 0.5`).
+    /// Hard light with the roles swapped.
     Overlay,
-    /// Per-channel minimum: `out = min(src, dst)`.
+    /// `min(Sc, Dc)`.
     Darken,
-    /// Per-channel maximum: `out = max(src, dst)`.
+    /// `max(Sc, Dc)`.
     Lighten,
-    /// Absolute per-channel difference: `out = |src - dst|`.
+    /// `|Sc − Dc|`.
     Difference,
-    /// Like `Overlay` but with `src` and `dst` reversed — hard-light is
-    /// overlay driven by the foreground rather than the background.
-    /// Per-channel: `if src < 128 { 2*src*dst/255 } else { 255 - 2*(255-src)*(255-dst)/255 }`.
+    /// Multiply below half, screen above, keyed on the source.
     HardLight,
-    /// Pegtop's continuous soft-light formula: `out = (1 - 2*sn) * dn² + 2*sn*dn`,
-    /// where `sn = src/255`, `dn = dst/255`. Smooth (no branch on `src`);
-    /// `src = 0.5` is identity. Same family as PDF 1.7 §11.3.5 SoftLight.
+    /// The SVG soft-light curve.
     SoftLight,
-    /// Brightening blend that drives `dst` toward white as `src`
-    /// approaches white. `out = dst / (1 - src/255)`, clamped to
-    /// `[0, 255]`. `src = 255` saturates non-zero `dst` to 255;
-    /// `src = 0` is identity (`out = dst`).
+    /// `Dc / (1 − Sc)`.
     ColorDodge,
-    /// Darkening blend that drives `dst` toward black as `src`
-    /// approaches black. `out = 255 - (255 - dst) / (src/255)`,
-    /// clamped to `[0, 255]`. `src = 0` saturates non-255 `dst` to 0;
-    /// `src = 255` is identity (`out = dst`).
+    /// `1 − (1 − Dc) / Sc`.
     ColorBurn,
+    /// Transparent black everywhere.
+    Clear,
+    /// The source (`Copy`, `Src`, `Replace`).
+    Src,
+    /// The destination untouched (`Dst`, `None`).
+    Dst,
+    /// Destination over source.
+    DstOver,
+    /// Destination where the source is.
+    DstIn,
+    /// Destination where the source is not.
+    DstOut,
+    /// Destination atop the source.
+    DstAtop,
+    /// `Sc − Dc` (`MinusDst`, the `Minus` default).
+    MinusDst,
+    /// `Dc − Sc`.
+    MinusSrc,
+    /// `Sc / Dc` (`DivideDst`, the `Divide` default).
+    DivideDst,
+    /// `Dc / Sc`.
+    DivideSrc,
+    /// Sum wrapped modulo 1.
+    ModulusAdd,
+    /// Difference wrapped modulo 1.
+    ModulusSubtract,
+    /// `Sc + Dc − 2·Sc·Dc`.
+    Exclusion,
+    /// `Sc + Dc − 1`.
+    LinearBurn,
+    /// `Sc + Dc`.
+    LinearDodge,
+    /// `Dc + 2·Sc − 1`.
+    LinearLight,
+    /// Colour burn below half, colour dodge above.
+    VividLight,
+    /// Darken below half, lighten above.
+    PinLight,
+    /// Vivid light thresholded to 0 or 1.
+    HardMix,
+    /// Pegtop's soft light `(1 − 2Sc)·Dc² + 2·Sc·Dc`.
+    PegtopLight,
+    /// Soft burn.
+    SoftBurn,
+    /// Soft dodge.
+    SoftDodge,
+    /// `Dc + 2·Sc − 1` (stamp).
+    Stamp,
+    /// `1 − (1 − Dc)² / Sc`.
+    Freeze,
+    /// `Dc² / (1 − Sc)`.
+    Reflect,
+    /// `1 − |1 − Sc − Dc|`.
+    Negate,
+    /// `½ − ¼ cos(π Sc) − ¼ cos(π Dc)`.
+    Interpolate,
+    /// `A·Sc·Dc + B·Sc + C·Dc + D` with `A, B, C, D` from the args.
+    Mathematics,
+    /// Weighted sum `Sc·a% + Dc·b%` (`Blend`; `Average` is 50/50).
+    Blend,
+    /// Alphas scaled by `a%` / `b%`, then `Over`.
+    Dissolve,
+    /// Root mean square of the channel differences.
+    Rmse,
+    /// The darker pixel by intensity.
+    DarkenIntensity,
+    /// The lighter pixel by intensity.
+    LightenIntensity,
+    /// Hue of the source, saturation and lightness of the destination.
+    Hue,
+    /// Saturation of the source.
+    Saturate,
+    /// Lightness of the source.
+    Luminize,
+    /// Hue and saturation of the source.
+    Colorize,
+    /// The source's red into the destination.
+    CopyRed,
+    /// The source's green into the destination.
+    CopyGreen,
+    /// The source's blue into the destination.
+    CopyBlue,
+    /// The source's alpha (its intensity when it has none) into the
+    /// destination (`CopyAlpha`, `CopyOpacity`).
+    CopyAlpha,
+    /// Alias of [`Self::CopyRed`] on an RGB picture.
+    CopyCyan,
+    /// Alias of [`Self::CopyGreen`] on an RGB picture.
+    CopyMagenta,
+    /// Alias of [`Self::CopyBlue`] on an RGB picture.
+    CopyYellow,
+    /// The source's intensity into every destination channel.
+    CopyBlack,
+    /// Destination made transparent where the source matches it within
+    /// the fuzz (args: fuzz, default `0`).
+    ChangeMask,
+    /// Destination multiplied by the source's intensity.
+    Bumpmap,
+    /// Destination moved towards the source where they differ by more
+    /// than the threshold (args: threshold, amount; default `0.05, 1`).
+    Threshold,
+    /// Source as a displacement map: destination read at `(x + (Sr −
+    /// ½)·X, y + (Sg − ½)·Y)` (args: `X[xY]` in pixels, default `20`).
+    Displace,
+    /// Source as an absolute lookup map: destination read at `(Sr·W,
+    /// Sg·H)` (args as for `Displace`, scaling the map).
+    Distort,
+    /// Source as a variable blur map: a Gaussian of `σ = Sr·X` by
+    /// `Sg·Y` (args `X[xY]`, default `1`).
+    Blur,
+    /// The source's intensity in every channel.
+    Intensity,
+    /// Destination brightness / saturation modulated by the source's
+    /// intensity (args: brightness %, saturation %; default `100, 100`).
+    Modulate,
 }
 
 impl CompositeOp {
-    /// Public name used by the JSON registry (`composite-<name>`).
+    /// Every operator.
+    pub const ALL: &'static [CompositeOp] = &[
+        Self::Over,
+        Self::In,
+        Self::Out,
+        Self::Atop,
+        Self::Xor,
+        Self::Plus,
+        Self::Multiply,
+        Self::Screen,
+        Self::Overlay,
+        Self::Darken,
+        Self::Lighten,
+        Self::Difference,
+        Self::HardLight,
+        Self::SoftLight,
+        Self::ColorDodge,
+        Self::ColorBurn,
+        Self::Clear,
+        Self::Src,
+        Self::Dst,
+        Self::DstOver,
+        Self::DstIn,
+        Self::DstOut,
+        Self::DstAtop,
+        Self::MinusDst,
+        Self::MinusSrc,
+        Self::DivideDst,
+        Self::DivideSrc,
+        Self::ModulusAdd,
+        Self::ModulusSubtract,
+        Self::Exclusion,
+        Self::LinearBurn,
+        Self::LinearDodge,
+        Self::LinearLight,
+        Self::VividLight,
+        Self::PinLight,
+        Self::HardMix,
+        Self::PegtopLight,
+        Self::SoftBurn,
+        Self::SoftDodge,
+        Self::Stamp,
+        Self::Freeze,
+        Self::Reflect,
+        Self::Negate,
+        Self::Interpolate,
+        Self::Mathematics,
+        Self::Blend,
+        Self::Dissolve,
+        Self::Rmse,
+        Self::DarkenIntensity,
+        Self::LightenIntensity,
+        Self::Hue,
+        Self::Saturate,
+        Self::Luminize,
+        Self::Colorize,
+        Self::CopyRed,
+        Self::CopyGreen,
+        Self::CopyBlue,
+        Self::CopyAlpha,
+        Self::CopyCyan,
+        Self::CopyMagenta,
+        Self::CopyYellow,
+        Self::CopyBlack,
+        Self::ChangeMask,
+        Self::Bumpmap,
+        Self::Threshold,
+        Self::Displace,
+        Self::Distort,
+        Self::Blur,
+        Self::Intensity,
+        Self::Modulate,
+    ];
+
+    /// The operator's name as `-compose` spells it (lower-case).
     pub fn name(self) -> &'static str {
         match self {
             CompositeOp::Over => "over",
@@ -121,52 +287,874 @@ impl CompositeOp {
             CompositeOp::SoftLight => "softlight",
             CompositeOp::ColorDodge => "colordodge",
             CompositeOp::ColorBurn => "colorburn",
+            CompositeOp::Clear => "clear",
+            CompositeOp::Src => "src",
+            CompositeOp::Dst => "dst",
+            CompositeOp::DstOver => "dstover",
+            CompositeOp::DstIn => "dstin",
+            CompositeOp::DstOut => "dstout",
+            CompositeOp::DstAtop => "dstatop",
+            CompositeOp::MinusDst => "minusdst",
+            CompositeOp::MinusSrc => "minussrc",
+            CompositeOp::DivideDst => "dividedst",
+            CompositeOp::DivideSrc => "dividesrc",
+            CompositeOp::ModulusAdd => "modulusadd",
+            CompositeOp::ModulusSubtract => "modulussubtract",
+            CompositeOp::Exclusion => "exclusion",
+            CompositeOp::LinearBurn => "linearburn",
+            CompositeOp::LinearDodge => "lineardodge",
+            CompositeOp::LinearLight => "linearlight",
+            CompositeOp::VividLight => "vividlight",
+            CompositeOp::PinLight => "pinlight",
+            CompositeOp::HardMix => "hardmix",
+            CompositeOp::PegtopLight => "pegtoplight",
+            CompositeOp::SoftBurn => "softburn",
+            CompositeOp::SoftDodge => "softdodge",
+            CompositeOp::Stamp => "stamp",
+            CompositeOp::Freeze => "freeze",
+            CompositeOp::Reflect => "reflect",
+            CompositeOp::Negate => "negate",
+            CompositeOp::Interpolate => "interpolate",
+            CompositeOp::Mathematics => "mathematics",
+            CompositeOp::Blend => "blend",
+            CompositeOp::Dissolve => "dissolve",
+            CompositeOp::Rmse => "rmse",
+            CompositeOp::DarkenIntensity => "darkenintensity",
+            CompositeOp::LightenIntensity => "lightenintensity",
+            CompositeOp::Hue => "hue",
+            CompositeOp::Saturate => "saturate",
+            CompositeOp::Luminize => "luminize",
+            CompositeOp::Colorize => "colorize",
+            CompositeOp::CopyRed => "copyred",
+            CompositeOp::CopyGreen => "copygreen",
+            CompositeOp::CopyBlue => "copyblue",
+            CompositeOp::CopyAlpha => "copyalpha",
+            CompositeOp::CopyCyan => "copycyan",
+            CompositeOp::CopyMagenta => "copymagenta",
+            CompositeOp::CopyYellow => "copyyellow",
+            CompositeOp::CopyBlack => "copyblack",
+            CompositeOp::ChangeMask => "changemask",
+            CompositeOp::Bumpmap => "bumpmap",
+            CompositeOp::Threshold => "threshold",
+            CompositeOp::Displace => "displace",
+            CompositeOp::Distort => "distort",
+            CompositeOp::Blur => "blur",
+            CompositeOp::Intensity => "intensity",
+            CompositeOp::Modulate => "modulate",
         }
     }
 
-    /// Parse the short operator name (`"over"`, `"plus"`, …).
-    /// Used by both the registry factories and any future schema
-    /// reflection.
+    /// Parse an operator name: case-insensitive, `-` / `_` ignored, with
+    /// the aliases `copy` / `replace` / `srcover` … (`Src`), `none`
+    /// (`Dst`), `minus` / `divide` (the `…Dst` forms), `copyopacity`
+    /// (`CopyAlpha`), `average` (`Blend`), `hard-light` and friends.
     pub fn from_name(s: &str) -> Option<Self> {
-        Some(match s {
-            "over" => CompositeOp::Over,
-            "in" => CompositeOp::In,
-            "out" => CompositeOp::Out,
-            "atop" => CompositeOp::Atop,
-            "xor" => CompositeOp::Xor,
-            "plus" => CompositeOp::Plus,
-            "multiply" => CompositeOp::Multiply,
-            "screen" => CompositeOp::Screen,
-            "overlay" => CompositeOp::Overlay,
-            "darken" => CompositeOp::Darken,
-            "lighten" => CompositeOp::Lighten,
-            "difference" => CompositeOp::Difference,
-            "hardlight" | "hard-light" | "hard_light" => CompositeOp::HardLight,
-            "softlight" | "soft-light" | "soft_light" => CompositeOp::SoftLight,
-            "colordodge" | "color-dodge" | "color_dodge" => CompositeOp::ColorDodge,
-            "colorburn" | "color-burn" | "color_burn" => CompositeOp::ColorBurn,
-            _ => return None,
-        })
+        let key: String = s
+            .chars()
+            .filter(|c| !matches!(c, '-' | '_' | ' '))
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|op| op.name() == key)
+            .or(match key.as_str() {
+                "srcover" => Some(Self::Over),
+                "srcin" => Some(Self::In),
+                "srcout" => Some(Self::Out),
+                "srcatop" => Some(Self::Atop),
+                "copy" | "replace" => Some(Self::Src),
+                "none" => Some(Self::Dst),
+                "minus" => Some(Self::MinusDst),
+                "divide" => Some(Self::DivideDst),
+                "copyopacity" => Some(Self::CopyAlpha),
+                "average" => Some(Self::Blend),
+                "add" => Some(Self::ModulusAdd),
+                "subtract" => Some(Self::ModulusSubtract),
+                _ => None,
+            })
+    }
+
+    /// `true` for the operators that read the source as a map rather
+    /// than as a picture to blend (`Displace`, `Distort`, `Blur`).
+    pub fn is_map(self) -> bool {
+        matches!(self, Self::Displace | Self::Distort | Self::Blur)
     }
 }
 
-/// Two-input composite filter: combine `src` (foreground) and
-/// `dst` (background) under the chosen [`CompositeOp`].
-#[derive(Clone, Copy, Debug)]
+/// Which destination channels the operator may write (the Imagick
+/// `channel` argument); the others keep their destination value.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChannelMask {
+    /// Write red.
+    pub red: bool,
+    /// Write green.
+    pub green: bool,
+    /// Write blue.
+    pub blue: bool,
+    /// Write alpha.
+    pub alpha: bool,
+}
+
+impl ChannelMask {
+    /// Every channel.
+    pub const ALL: ChannelMask = ChannelMask {
+        red: true,
+        green: true,
+        blue: true,
+        alpha: true,
+    };
+
+    /// The colour channels only.
+    pub const RGB: ChannelMask = ChannelMask {
+        red: true,
+        green: true,
+        blue: true,
+        alpha: false,
+    };
+
+    /// Build a mask.
+    pub fn new(red: bool, green: bool, blue: bool, alpha: bool) -> Self {
+        Self {
+            red,
+            green,
+            blue,
+            alpha,
+        }
+    }
+}
+
+impl Default for ChannelMask {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+/// Composite `src` (the overlay, port 0) onto `dst` (the background,
+/// port 1) with a [`CompositeOp`].
+///
+/// As a two-input filter both pictures share one shape and the output
+/// has that shape. [`Composite::compose`] takes pictures of different
+/// extents and places the overlay by offset and gravity on the
+/// destination, which sets the output extent — the `compositeImage`
+/// surface.
+#[non_exhaustive]
+#[derive(Clone, Debug)]
 pub struct Composite {
+    /// The operator.
     pub op: CompositeOp,
+    /// Overlay offset on the destination, after gravity.
+    pub offset: (i64, i64),
+    /// Where the overlay sits before the offset (`None`: top-left).
+    pub gravity: Option<Gravity>,
+    /// `compose:args` — the operator's numeric arguments in their natural
+    /// units (percentages for `Blend` / `Dissolve` / `Modulate`, the
+    /// `A, B, C, D` of `Mathematics`, pixels for the maps, the fuzz of
+    /// `ChangeMask`, the threshold / amount of `Threshold`).
+    pub args: Vec<f32>,
+    /// Channels the operator may write.
+    pub channels: ChannelMask,
+    /// Whether the operator also runs where the destination lies outside
+    /// the overlay (with a transparent source), ImageMagick's default.
+    pub outside_overlay: bool,
 }
 
 impl Composite {
-    /// Build a composite filter with the given operator.
+    /// An operator with the defaults: no offset, every channel, the
+    /// operator applied outside the overlay too.
     pub fn new(op: CompositeOp) -> Self {
-        Self { op }
+        Self {
+            op,
+            offset: (0, 0),
+            gravity: None,
+            args: Vec::new(),
+            channels: ChannelMask::ALL,
+            outside_overlay: true,
+        }
+    }
+
+    /// Place the overlay at `(x, y)` (negative offsets allowed).
+    pub fn with_offset(mut self, x: i64, y: i64) -> Self {
+        self.offset = (x, y);
+        self
+    }
+
+    /// Place the overlay by gravity (the offset is then relative to it).
+    pub fn with_gravity(mut self, gravity: Gravity) -> Self {
+        self.gravity = Some(gravity);
+        self
+    }
+
+    /// Set `compose:args`.
+    pub fn with_args(mut self, args: impl Into<Vec<f32>>) -> Self {
+        self.args = args.into();
+        self
+    }
+
+    /// Restrict the written channels.
+    pub fn with_channels(mut self, channels: ChannelMask) -> Self {
+        self.channels = channels;
+        self
+    }
+
+    /// Whether the destination outside the overlay is composited against
+    /// a transparent source (`true`, the default) or left untouched.
+    pub fn with_outside_overlay(mut self, outside: bool) -> Self {
+        self.outside_overlay = outside;
+        self
+    }
+
+    fn arg(&self, i: usize, default: f32) -> f32 {
+        self.args
+            .get(i)
+            .copied()
+            .filter(|v| v.is_finite())
+            .unwrap_or(default)
+    }
+
+    /// The overlay's top-left corner on a `dw × dh` destination for a
+    /// `sw × sh` overlay.
+    fn placement(&self, dw: u32, dh: u32, sw: u32, sh: u32) -> (i64, i64) {
+        let (gx, gy) = match self.gravity {
+            None => (0, 0),
+            Some(g) => {
+                let (dw, dh, sw, sh) = (dw as i64, dh as i64, sw as i64, sh as i64);
+                let x = match g {
+                    Gravity::NorthWest | Gravity::West | Gravity::SouthWest => 0,
+                    Gravity::North | Gravity::Centre | Gravity::South => (dw - sw) / 2,
+                    _ => dw - sw,
+                };
+                let y = match g {
+                    Gravity::NorthWest | Gravity::North | Gravity::NorthEast => 0,
+                    Gravity::West | Gravity::Centre | Gravity::East => (dh - sh) / 2,
+                    _ => dh - sh,
+                };
+                (x, y)
+            }
+        };
+        (gx + self.offset.0, gy + self.offset.1)
+    }
+
+    /// `compositeImage`: the overlay `src` (its own layout and extent)
+    /// placed on the destination `dst`; the output has the destination's
+    /// extent and layout (the packed 8-bit and float layouts; any other
+    /// destination layout comes back as `RgbaF32Le`).
+    pub fn compose(
+        &self,
+        dst: &VideoFrame,
+        dst_params: VideoStreamParams,
+        src: &VideoFrame,
+        src_params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
+        let d = crate::measure::float_image_of(dst, dst_params)?;
+        let s = crate::measure::float_image_of(src, src_params)?;
+        let out = self.compose_float(&d, &s);
+        Ok(match dst_params.format {
+            PixelFormat::Gray8 | PixelFormat::Rgb24 | PixelFormat::Rgba => {
+                deep::narrow_u8(&out.to_channels(d.channels()))
+            }
+            f if deep::is_float(f) => out.to_channels(d.channels()).into_frame(dst.pts),
+            _ => out.into_frame(dst.pts),
+        })
+    }
+
+    /// [`Composite::compose`] on float pictures; the result is RGBA of
+    /// the destination's extent.
+    pub fn compose_float(&self, dst: &FloatImage, src: &FloatImage) -> FloatImage {
+        let d = dst.to_rgba();
+        let s = src.to_rgba();
+        let (dw, dh) = (d.width(), d.height());
+        let (ox, oy) = self.placement(dw, dh, s.width(), s.height());
+        let mut out = d.clone();
+        // Map operators read the whole destination through the map.
+        let map_ctx = MapContext::new(self, &d, &s, ox, oy);
+        for y in 0..dh {
+            for x in 0..dw {
+                let sx = x as i64 - ox;
+                let sy = y as i64 - oy;
+                let inside = sx >= 0 && sy >= 0 && sx < s.width() as i64 && sy < s.height() as i64;
+                if !inside && !self.outside_overlay {
+                    continue;
+                }
+                let sp: [f32; 4] = if inside {
+                    let p = s.pixel(sx as u32, sy as u32);
+                    [p[0], p[1], p[2], p[3]]
+                } else {
+                    [0.0; 4]
+                };
+                let dpx = d.pixel(x, y);
+                let dp = [dpx[0], dpx[1], dpx[2], dpx[3]];
+                let r = if self.op.is_map() {
+                    map_ctx.sample(self.op, x, y, sp, dp)
+                } else {
+                    self.pixel(sp, dp)
+                };
+                let o = out.pixel_mut(x, y);
+                if self.channels.red {
+                    o[0] = r[0];
+                }
+                if self.channels.green {
+                    o[1] = r[1];
+                }
+                if self.channels.blue {
+                    o[2] = r[2];
+                }
+                if self.channels.alpha {
+                    o[3] = r[3];
+                }
+            }
+        }
+        out
+    }
+
+    /// One pixel: `s` and `d` straight RGBA.
+    fn pixel(&self, s: [f32; 4], d: [f32; 4]) -> [f32; 4] {
+        use CompositeOp as O;
+        let (sa, da) = (s[3], d[3]);
+        match self.op {
+            O::Clear => [0.0; 4],
+            O::Src => s,
+            O::Dst => d,
+            O::Over => over(s, d),
+            O::DstOver => {
+                let o = over(d, s);
+                if o[3] <= 0.0 {
+                    [d[0], d[1], d[2], 0.0]
+                } else {
+                    o
+                }
+            }
+            // Porter–Duff other than Over: magick stores the premultiplied
+            // result colour as it is (measured: In of an opaque source on
+            // a half-covered destination gives Sc·Da, not Sc).
+            O::In => premult([s[0], s[1], s[2]], sa * da, sa * da),
+            O::DstIn => premult([d[0], d[1], d[2]], sa * da, sa * da),
+            O::Out => premult([s[0], s[1], s[2]], sa * (1.0 - da), sa * (1.0 - da)),
+            O::DstOut => premult([d[0], d[1], d[2]], da * (1.0 - sa), da * (1.0 - sa)),
+            O::Atop => {
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    o[c] = s[c] * sa * da + d[c] * da * (1.0 - sa);
+                }
+                o[3] = da;
+                o
+            }
+            O::DstAtop => {
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    o[c] = d[c] * da * sa + s[c] * sa * (1.0 - da);
+                }
+                o[3] = sa;
+                o
+            }
+            O::Xor => {
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    o[c] = s[c] * sa * (1.0 - da) + d[c] * da * (1.0 - sa);
+                }
+                o[3] = sa * (1.0 - da) + da * (1.0 - sa);
+                o
+            }
+            O::Plus => {
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    o[c] = (s[c] * sa + d[c] * da).min(1.0);
+                }
+                o[3] = (sa + da).min(1.0);
+                o
+            }
+            O::Blend => {
+                let a = self.arg(0, 50.0) / 100.0;
+                let b = self.arg(1, 100.0 - a * 100.0) / 100.0;
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    o[c] = s[c] * a + d[c] * b;
+                }
+                o[3] = (sa * a + da * b).min(1.0);
+                o
+            }
+            O::Dissolve => {
+                let a = self.arg(0, 50.0) / 100.0;
+                let b = self.arg(1, 100.0) / 100.0;
+                over(
+                    [s[0], s[1], s[2], (sa * a).min(1.0)],
+                    [d[0], d[1], d[2], (da * b).min(1.0)],
+                )
+            }
+            O::Rmse => {
+                let v = ((0..3).map(|c| (s[c] - d[c]).powi(2)).sum::<f32>() / 3.0).sqrt();
+                [v, v, v, over_alpha(sa, da)]
+            }
+            O::DarkenIntensity => {
+                if intensity(s) * sa < intensity(d) * da {
+                    s
+                } else {
+                    d
+                }
+            }
+            O::LightenIntensity => {
+                if intensity(s) * sa > intensity(d) * da {
+                    s
+                } else {
+                    d
+                }
+            }
+            O::Hue | O::Saturate | O::Luminize | O::Colorize => {
+                let (hs, ss, ls) = rgb_to_hsl(s[0], s[1], s[2]);
+                let (hd, sd, ld) = rgb_to_hsl(d[0], d[1], d[2]);
+                let (h, sat, l) = match self.op {
+                    O::Hue => (hs, sd, ld),
+                    O::Saturate => (hd, ss, ld),
+                    O::Luminize => (hd, sd, ls),
+                    _ => (hs, ss, ld),
+                };
+                let (r, g, b) = hsl_to_rgb(h, sat, l);
+                let a = over_alpha(sa, da);
+                // Blend with the destination by the source's coverage.
+                let mut o = [0.0; 4];
+                for (c, v) in [r, g, b].into_iter().enumerate() {
+                    o[c] = if a > 0.0 {
+                        (v * sa + d[c] * da * (1.0 - sa)) / a
+                    } else {
+                        0.0
+                    };
+                }
+                o[3] = a;
+                o
+            }
+            O::CopyRed | O::CopyCyan => [s[0], d[1], d[2], da],
+            O::CopyGreen | O::CopyMagenta => [d[0], s[1], d[2], da],
+            O::CopyBlue | O::CopyYellow => [d[0], d[1], s[2], da],
+            O::CopyAlpha => [d[0], d[1], d[2], sa],
+            O::CopyBlack => {
+                let i = intensity(s);
+                [i, i, i, da]
+            }
+            O::Intensity => {
+                let i = intensity(s);
+                [i, i, i, over_alpha(sa, da)]
+            }
+            O::ChangeMask => {
+                let fuzz = self.arg(0, 0.0);
+                let same = (0..4).all(|c| (s[c] - d[c]).abs() <= fuzz + 1e-6);
+                if same { [d[0], d[1], d[2], 0.0] } else { d }
+            }
+            O::Bumpmap => {
+                let i = intensity(s);
+                [d[0] * i, d[1] * i, d[2] * i, da]
+            }
+            O::Threshold => {
+                let threshold = self.arg(0, 0.05);
+                let amount = self.arg(1, 1.0);
+                let mut o = d;
+                for c in 0..3 {
+                    let delta = s[c] - d[c];
+                    if delta.abs() >= threshold {
+                        o[c] = d[c] + delta * amount;
+                    }
+                }
+                o
+            }
+            O::Modulate => {
+                // Approximate (the recipe is not staged): the source's
+                // intensity above / below mid-grey scales the destination's
+                // lightness and saturation by the percentages.
+                let bright = self.arg(0, 100.0) / 100.0;
+                let satur = self.arg(1, 100.0) / 100.0;
+                let i = intensity(s) - 0.5;
+                let (h, sat, l) = rgb_to_hsl(d[0], d[1], d[2]);
+                let l = (l * (1.0 + 2.0 * i * bright)).clamp(0.0, 1.0);
+                let sat = (sat * (1.0 + 2.0 * i * satur)).clamp(0.0, 1.0);
+                let (r, g, b) = hsl_to_rgb(h, sat, l);
+                [r, g, b, da]
+            }
+            O::Displace | O::Distort | O::Blur => d,
+            // The mathematical blends. The union alpha everywhere; the
+            // colour in the convention measured per operator:
+            //   - `Premult`: Sa·Da·B(Sc, Dc) + Sa(1−Da)Sc + Da(1−Sa)Dc stored
+            //     as it is (Multiply, Screen, Lighten, LinearBurn, …);
+            //   - `Divided`: the same divided by the union alpha (Overlay,
+            //     HardLight, ColorDodge, LinearDodge, LinearLight, PinLight,
+            //     Minus, …);
+            //   - `OnPremult`: B(Sa·Sc, Da·Dc) + Sa(1−Da)Sc + Da(1−Sa)Dc
+            //     (Darken);
+            //   - `PremultOnly`: B(Sa·Sc, Da·Dc) alone (Interpolate,
+            //     ModulusAdd, ModulusSubtract).
+            op => {
+                let a = over_alpha(sa, da);
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    let terms = sa * (1.0 - da) * s[c] + da * (1.0 - sa) * d[c];
+                    o[c] = match convention(op) {
+                        Convention::Premult => sa * da * blend(op, s[c], d[c], &self.args) + terms,
+                        Convention::Divided => {
+                            let v = sa * da * blend_raw(op, s[c], d[c], &self.args) + terms;
+                            if a > 0.0 { v / a } else { 0.0 }
+                        }
+                        Convention::OnPremult => {
+                            blend(op, s[c] * sa, d[c] * da, &self.args) + terms
+                        }
+                        Convention::PremultOnly => blend(op, s[c] * sa, d[c] * da, &self.args),
+                    }
+                    .clamp(0.0, 1.0);
+                }
+                o[3] = match op {
+                    O::ModulusAdd => wrap(sa + da),
+                    O::ModulusSubtract => wrap(sa - da),
+                    _ => a,
+                };
+                o
+            }
+        }
+    }
+}
+
+/// A colour scaled by `weight` with alpha `a` (the premultiplied form
+/// magick stores for the non-Over Porter–Duff operators).
+#[inline]
+fn premult(c: [f32; 3], weight: f32, a: f32) -> [f32; 4] {
+    [c[0] * weight, c[1] * weight, c[2] * weight, a]
+}
+
+/// The union alpha `Sa + Da − Sa·Da`.
+#[inline]
+fn over_alpha(sa: f32, da: f32) -> f32 {
+    sa + da - sa * da
+}
+
+/// Porter–Duff over: `s` over `d`, straight colour out.
+fn over(s: [f32; 4], d: [f32; 4]) -> [f32; 4] {
+    let (sa, da) = (s[3], d[3]);
+    let a = sa + da * (1.0 - sa);
+    if a <= 0.0 {
+        // Both transparent: magick keeps the destination's colour.
+        return [d[0], d[1], d[2], 0.0];
+    }
+    let mut o = [0.0; 4];
+    for c in 0..3 {
+        o[c] = (s[c] * sa + d[c] * da * (1.0 - sa)) / a;
+    }
+    o[3] = a;
+    o
+}
+
+#[inline]
+fn wrap(v: f32) -> f32 {
+    let w = v.rem_euclid(1.0);
+    if v >= 1.0 && w == 0.0 { 1.0 } else { w }
+}
+
+/// Rec. 709 intensity of a straight RGBA pixel.
+#[inline]
+fn intensity(p: [f32; 4]) -> f32 {
+    0.212_656 * p[0] + 0.715_158 * p[1] + 0.072_186 * p[2]
+}
+
+/// How a mathematical operator combines its blend with the alphas
+/// (measured against `magick`, see the module docs).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Convention {
+    Premult,
+    Divided,
+    OnPremult,
+    PremultOnly,
+}
+
+fn convention(op: CompositeOp) -> Convention {
+    use CompositeOp as O;
+    match op {
+        O::Overlay
+        | O::HardLight
+        | O::SoftLight
+        | O::ColorDodge
+        | O::ColorBurn
+        | O::SoftBurn
+        | O::SoftDodge
+        | O::LinearDodge
+        | O::LinearLight
+        | O::VividLight
+        | O::PinLight
+        | O::HardMix
+        | O::MinusDst
+        | O::MinusSrc
+        | O::PegtopLight
+        | O::Freeze
+        | O::Reflect
+        | O::Mathematics => Convention::Divided,
+        O::Darken | O::DivideDst | O::DivideSrc => Convention::OnPremult,
+        O::Interpolate | O::ModulusAdd | O::ModulusSubtract | O::Negate | O::Exclusion => {
+            Convention::PremultOnly
+        }
+        _ => Convention::Premult,
+    }
+}
+
+/// [`blend`] without the final clamp (the `Divided` convention clamps
+/// after the division).
+fn blend_raw(op: CompositeOp, s: f32, d: f32, args: &[f32]) -> f32 {
+    blend_inner(op, s, d, args)
+}
+
+/// The per-channel blend function `B(Sc, Dc)` of a mathematical operator,
+/// clamped to `[0, 1]`.
+fn blend(op: CompositeOp, s: f32, d: f32, args: &[f32]) -> f32 {
+    blend_inner(op, s, d, args).clamp(0.0, 1.0)
+}
+
+fn blend_inner(op: CompositeOp, s: f32, d: f32, args: &[f32]) -> f32 {
+    use CompositeOp as O;
+    match op {
+        O::Multiply => s * d,
+        O::Screen => s + d - s * d,
+        O::Overlay => hard_light(d, s),
+        O::Darken => s.min(d),
+        O::Lighten => s.max(d),
+        O::Difference => (s - d).abs(),
+        O::HardLight => hard_light(s, d),
+        O::SoftLight => soft_light(s, d),
+        O::ColorDodge => color_dodge(s, d),
+        O::ColorBurn => color_burn(s, d),
+        O::MinusDst => s - d,
+        O::MinusSrc => d - s,
+        O::DivideDst => divide(s, d),
+        O::DivideSrc => divide(d, s),
+        O::Exclusion => s + d - 2.0 * s * d,
+        O::LinearBurn => s + d - 1.0,
+        O::LinearDodge => s + d,
+        O::LinearLight => d + 2.0 * s - 1.0,
+        O::VividLight => {
+            if s < 0.5 {
+                color_burn(2.0 * s, d)
+            } else {
+                color_dodge(2.0 * s - 1.0, d)
+            }
+        }
+        O::PinLight => {
+            if s < 0.5 {
+                d.min(2.0 * s)
+            } else {
+                d.max(2.0 * s - 1.0)
+            }
+        }
+        O::HardMix => {
+            if blend(O::VividLight, s, d, args) < 0.5 {
+                0.0
+            } else {
+                1.0
+            }
+        }
+        O::PegtopLight => (1.0 - 2.0 * s) * d * d + 2.0 * s * d,
+        // `magick` 7.1.2 computes SoftBurn / SoftDodge as ColorBurn /
+        // ColorDodge, Stamp as `Sc + Dc − 1`, Freeze as `1 − (1 − Sc)² /
+        // Dc` and Reflect as `Sc² / (1 − Dc)` (measured on opaque pictures).
+        O::SoftBurn => color_burn(s, d),
+        O::SoftDodge => color_dodge(s, d),
+        O::Stamp => s + d - 1.0,
+        O::Freeze => {
+            if d <= 0.0 {
+                0.0
+            } else {
+                1.0 - (1.0 - s) * (1.0 - s) / d
+            }
+        }
+        O::Reflect => {
+            if d >= 1.0 {
+                1.0
+            } else {
+                s * s / (1.0 - d)
+            }
+        }
+        O::Negate => 1.0 - (1.0 - s - d).abs(),
+        O::Interpolate => {
+            let pi = std::f32::consts::PI;
+            0.5 - 0.25 * (pi * s).cos() - 0.25 * (pi * d).cos()
+        }
+        O::Mathematics => {
+            let a = |i: usize| args.get(i).copied().unwrap_or(0.0);
+            a(0) * s * d + a(1) * s + a(2) * d + a(3)
+        }
+        _ => s,
+    }
+}
+
+#[inline]
+fn hard_light(s: f32, d: f32) -> f32 {
+    if s < 0.5 {
+        2.0 * s * d
+    } else {
+        let (s2, dd) = (2.0 * s - 1.0, d);
+        s2 + dd - s2 * dd
+    }
+}
+
+/// The SVG / W3C soft-light curve.
+#[inline]
+fn soft_light(s: f32, d: f32) -> f32 {
+    if s <= 0.5 {
+        d - (1.0 - 2.0 * s) * d * (1.0 - d)
+    } else {
+        let dd = if d <= 0.25 {
+            ((16.0 * d - 12.0) * d + 4.0) * d
+        } else {
+            d.sqrt()
+        };
+        d + (2.0 * s - 1.0) * (dd - d)
+    }
+}
+
+#[inline]
+fn color_dodge(s: f32, d: f32) -> f32 {
+    if d <= 0.0 {
+        0.0
+    } else if s >= 1.0 {
+        1.0
+    } else {
+        (d / (1.0 - s)).min(1.0)
+    }
+}
+
+#[inline]
+fn color_burn(s: f32, d: f32) -> f32 {
+    // A black source burns to black even over white (measured).
+    if s <= 0.0 {
+        0.0
+    } else if d >= 1.0 {
+        1.0
+    } else {
+        1.0 - ((1.0 - d) / s).min(1.0)
+    }
+}
+
+#[inline]
+fn divide(num: f32, den: f32) -> f32 {
+    if den <= 0.0 {
+        if num <= 0.0 { 0.0 } else { 1.0 }
+    } else {
+        num / den
+    }
+}
+
+fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) * 0.5;
+    let d = max - min;
+    if d <= 1e-6 {
+        return (0.0, 0.0, l);
+    }
+    let s = if l > 0.5 {
+        d / (2.0 - max - min)
+    } else {
+        d / (max + min)
+    };
+    let h = if max == r {
+        ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    (h / 6.0, s, l)
+}
+
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
+    if s <= 0.0 {
+        return (l, l, l);
+    }
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+    let p = 2.0 * l - q;
+    let f = |t: f32| {
+        let t = t.rem_euclid(1.0);
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    (f(h + 1.0 / 3.0), f(h), f(h - 1.0 / 3.0))
+}
+
+/// State for the map operators: the destination they read through the
+/// source and the map's scale arguments.
+struct MapContext<'a> {
+    dst: &'a FloatImage,
+    sx: f32,
+    sy: f32,
+}
+
+impl<'a> MapContext<'a> {
+    fn new(c: &Composite, dst: &'a FloatImage, _src: &FloatImage, _ox: i64, _oy: i64) -> Self {
+        let default = if c.op == CompositeOp::Blur { 1.0 } else { 20.0 };
+        let sx = c.arg(0, default);
+        let sy = c.arg(1, sx);
+        Self { dst, sx, sy }
+    }
+
+    fn sample(&self, op: CompositeOp, x: u32, y: u32, s: [f32; 4], d: [f32; 4]) -> [f32; 4] {
+        match op {
+            CompositeOp::Displace => {
+                let px = x as f32 + (s[0] - 0.5) * self.sx;
+                let py = y as f32 + (s[1] - 0.5) * self.sy;
+                let mut o = [0.0f32; 4];
+                self.dst.bilinear_into(px, py, &mut o);
+                o
+            }
+            CompositeOp::Distort => {
+                let px = s[0] * self.sx;
+                let py = s[1] * self.sy;
+                let mut o = [0.0f32; 4];
+                self.dst.bilinear_into(px, py, &mut o);
+                o
+            }
+            CompositeOp::Blur => {
+                let (sigx, sigy) = (s[0] * self.sx, s[1] * self.sy);
+                if sigx < 1e-3 && sigy < 1e-3 {
+                    return d;
+                }
+                let (rx, ry) = ((3.0 * sigx).ceil() as i64, (3.0 * sigy).ceil() as i64);
+                let mut acc = [0.0f32; 4];
+                let mut wsum = 0.0f32;
+                for dy in -ry..=ry {
+                    for dx in -rx..=rx {
+                        let wx = if sigx < 1e-3 {
+                            if dx == 0 { 1.0 } else { 0.0 }
+                        } else {
+                            (-(dx * dx) as f32 / (2.0 * sigx * sigx)).exp()
+                        };
+                        let wy = if sigy < 1e-3 {
+                            if dy == 0 { 1.0 } else { 0.0 }
+                        } else {
+                            (-(dy * dy) as f32 / (2.0 * sigy * sigy)).exp()
+                        };
+                        let w = wx * wy;
+                        if w == 0.0 {
+                            continue;
+                        }
+                        for (c, a) in acc.iter_mut().enumerate() {
+                            *a += w * self.dst.sample_clamped(x as i64 + dx, y as i64 + dy, c);
+                        }
+                        wsum += w;
+                    }
+                }
+                acc.map(|v| v / wsum)
+            }
+            _ => d,
+        }
     }
 }
 
 impl TwoInputPixelFilter for Composite {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        layout::PACKED_8BIT_DEEP
     }
 
     fn apply_two_pixels(
@@ -175,33 +1163,38 @@ impl TwoInputPixelFilter for Composite {
         dst: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        match params.format {
-            PixelFormat::Rgba => composite_rgba(self.op, src, dst, params),
-            PixelFormat::Rgb24 => composite_rgb_or_gray(self.op, src, dst, params, 3),
-            PixelFormat::Gray8 => composite_rgb_or_gray(self.op, src, dst, params, 1),
-            other => Err(Error::unsupported(format!(
-                "oxideav-image-filter: Composite requires Gray8/Rgb24/Rgba, got {other:?}"
-            ))),
-        }
+        let d = to_float(dst, params)?;
+        let s = to_float(src, params)?;
+        let out = self.compose_float(&d, &s).to_channels(d.channels());
+        Ok(if deep::is_float(params.format) {
+            out.into_frame(src.pts)
+        } else {
+            let mut f = deep::narrow_u8(&out);
+            f.pts = src.pts;
+            f
+        })
     }
 }
 
-/// `Composite` is also a single-input filter — it composites the
-/// frame *over itself* using the configured operator. This makes
-/// it usable through the existing one-port `ImageFilterAdapter`
-/// path purely as a convenience for tests and ad-hoc chaining;
-/// the pipeline-facing factories use the two-input adapter.
+fn to_float(frame: &VideoFrame, params: VideoStreamParams) -> Result<FloatImage, Error> {
+    if deep::is_float(params.format) {
+        FloatImage::from_frame(frame, params)
+    } else {
+        deep::widen_u8(frame, params)
+    }
+}
+
 impl PixelFilter for Composite {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        layout::PACKED_8BIT_DEEP
     }
 
+    /// The picture composited onto itself.
     fn apply_pixels(
         &self,
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        // Cheap clone of the planes — VideoFrame is shallow.
         let dst = VideoFrame {
             pts: input.pts,
             planes: input.planes.clone(),
@@ -210,821 +1203,186 @@ impl PixelFilter for Composite {
     }
 }
 
-/// Normalise `(plane, params)` into a single packed RGBA buffer of
-/// length `w * h * 4`. Used by the Porter–Duff path so we always
-/// have a uniform `[u8; 4]` per pixel to plug into the algebra.
-fn pack_rgba(plane: &VideoPlane, w: usize, h: usize) -> Vec<u8> {
-    let row_bytes = w * 4;
-    let mut out = Vec::with_capacity(row_bytes * h);
-    for y in 0..h {
-        let row_start = y * plane.stride;
-        out.extend_from_slice(&plane.data[row_start..row_start + row_bytes]);
-    }
-    out
-}
-
-fn composite_rgba(
-    op: CompositeOp,
-    src: &VideoFrame,
-    dst: &VideoFrame,
-    params: VideoStreamParams,
-) -> Result<VideoFrame, Error> {
-    let w = params.width as usize;
-    let h = params.height as usize;
-    if src.planes.is_empty() || dst.planes.is_empty() {
-        return Err(Error::invalid(
-            "oxideav-image-filter: Composite needs non-empty src and dst planes",
-        ));
-    }
-    let src_buf = pack_rgba(&src.planes[0], w, h);
-    let dst_buf = pack_rgba(&dst.planes[0], w, h);
-    let row_bytes = w * 4;
-    let mut out = vec![0u8; row_bytes * h];
-    for i in 0..(w * h) {
-        let s = [
-            src_buf[i * 4],
-            src_buf[i * 4 + 1],
-            src_buf[i * 4 + 2],
-            src_buf[i * 4 + 3],
-        ];
-        let d = [
-            dst_buf[i * 4],
-            dst_buf[i * 4 + 1],
-            dst_buf[i * 4 + 2],
-            dst_buf[i * 4 + 3],
-        ];
-        let r = composite_pixel_rgba(op, s, d);
-        out[i * 4] = r[0];
-        out[i * 4 + 1] = r[1];
-        out[i * 4 + 2] = r[2];
-        out[i * 4 + 3] = r[3];
-    }
-    Ok(VideoFrame {
-        pts: src.pts,
-        planes: vec![VideoPlane {
-            stride: row_bytes,
-            data: out,
-        }],
-    })
-}
-
-/// Per-pixel composite for straight-alpha RGBA. Returns straight-alpha
-/// RGBA. All maths in `f32` for clarity; the result is rounded to
-/// `u8`.
-fn composite_pixel_rgba(op: CompositeOp, s: [u8; 4], d: [u8; 4]) -> [u8; 4] {
-    let sa = s[3] as f32 / 255.0;
-    let da = d[3] as f32 / 255.0;
-
-    // Operator coverage factors and per-channel blend.
-    match op {
-        CompositeOp::Over => {
-            // out_a   = sa + da * (1 - sa)
-            // out_rgb = (src * sa + dst * da * (1 - sa)) / out_a
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            if out_a <= 0.0 {
-                return [0, 0, 0, 0];
-            }
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                let num = (s[i] as f32 / 255.0) * sa + (d[i] as f32 / 255.0) * da * inv_sa;
-                out[i] = u8_round(num / out_a * 255.0);
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::In => {
-            // out_a = sa * da; rgb = src colour
-            let out_a = sa * da;
-            if out_a <= 0.0 {
-                return [0, 0, 0, 0];
-            }
-            [s[0], s[1], s[2], u8_round(out_a * 255.0)]
-        }
-        CompositeOp::Out => {
-            // out_a = sa * (1 - da); rgb = src colour
-            let out_a = sa * (1.0 - da);
-            if out_a <= 0.0 {
-                return [0, 0, 0, 0];
-            }
-            [s[0], s[1], s[2], u8_round(out_a * 255.0)]
-        }
-        CompositeOp::Atop => {
-            // out_a = da
-            // out_rgb = (src * sa * da + dst * da * (1 - sa)) / out_a
-            //         = src * sa + dst * (1 - sa)   (when da > 0)
-            if da <= 0.0 {
-                return [0, 0, 0, 0];
-            }
-            let inv_sa = 1.0 - sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                let num = (s[i] as f32 / 255.0) * sa + (d[i] as f32 / 255.0) * inv_sa;
-                out[i] = u8_round(num * 255.0);
-            }
-            out[3] = d[3];
-            out
-        }
-        CompositeOp::Xor => {
-            // out_a   = sa * (1 - da) + da * (1 - sa)
-            // out_rgb = (src * sa * (1 - da) + dst * da * (1 - sa)) / out_a
-            let inv_sa = 1.0 - sa;
-            let inv_da = 1.0 - da;
-            let out_a = sa * inv_da + da * inv_sa;
-            if out_a <= 0.0 {
-                return [0, 0, 0, 0];
-            }
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                let num = (s[i] as f32 / 255.0) * sa * inv_da + (d[i] as f32 / 255.0) * da * inv_sa;
-                out[i] = u8_round(num / out_a * 255.0);
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::Plus => {
-            // Saturating per-channel sum (incl. alpha).
-            let mut out = [0u8; 4];
-            for i in 0..4 {
-                out[i] = (s[i] as u16 + d[i] as u16).min(255) as u8;
-            }
-            out
-        }
-        CompositeOp::Multiply => {
-            // Per-channel product on RGB; alpha follows the standard
-            // Porter–Duff "over" rebuild so transparent regions still
-            // composite sensibly: out_a = sa + da * (1 - sa).
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                let m = (s[i] as u32 * d[i] as u32 + 127) / 255;
-                out[i] = m.min(255) as u8;
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::Screen => {
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                // out = 255 - (255 - s) * (255 - d) / 255
-                let inv_s = 255 - s[i] as u32;
-                let inv_d = 255 - d[i] as u32;
-                let prod = (inv_s * inv_d + 127) / 255;
-                out[i] = (255 - prod.min(255)) as u8;
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::Overlay => {
-            // For each channel, if dst < 128: 2 * src * dst / 255
-            //                  else:           255 - 2 * (255 - src) * (255 - dst) / 255
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                let dv = d[i] as u32;
-                let sv = s[i] as u32;
-                let m = if dv < 128 {
-                    (2 * sv * dv + 127) / 255
-                } else {
-                    let inv_s = 255 - sv;
-                    let inv_d = 255 - dv;
-                    let p = (2 * inv_s * inv_d + 127) / 255;
-                    255 - p.min(255)
-                };
-                out[i] = m.min(255) as u8;
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::Darken => {
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                out[i] = s[i].min(d[i]);
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::Lighten => {
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                out[i] = s[i].max(d[i]);
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::Difference => {
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                out[i] = (s[i] as i16 - d[i] as i16).unsigned_abs() as u8;
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::HardLight => {
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                out[i] = hard_light(s[i], d[i]);
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::SoftLight => {
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                out[i] = soft_light(s[i], d[i]);
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::ColorDodge => {
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                out[i] = color_dodge(s[i], d[i]);
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-        CompositeOp::ColorBurn => {
-            let inv_sa = 1.0 - sa;
-            let out_a = sa + da * inv_sa;
-            let mut out = [0u8; 4];
-            for i in 0..3 {
-                out[i] = color_burn(s[i], d[i]);
-            }
-            out[3] = u8_round(out_a * 255.0);
-            out
-        }
-    }
-}
-
-/// Per-channel HardLight: like Overlay but driven by `src` instead of
-/// `dst`.
-#[inline]
-fn hard_light(src: u8, dst: u8) -> u8 {
-    let sv = src as u32;
-    let dv = dst as u32;
-    let m = if sv < 128 {
-        (2 * sv * dv + 127) / 255
-    } else {
-        let inv_s = 255 - sv;
-        let inv_d = 255 - dv;
-        let p = (2 * inv_s * inv_d + 127) / 255;
-        255 - p.min(255)
-    };
-    m.min(255) as u8
-}
-
-/// Per-channel SoftLight (Pegtop formula).
-#[inline]
-fn soft_light(src: u8, dst: u8) -> u8 {
-    let sn = src as f32 / 255.0;
-    let dn = dst as f32 / 255.0;
-    let v = (1.0 - 2.0 * sn) * dn * dn + 2.0 * sn * dn;
-    u8_round(v * 255.0)
-}
-
-/// Per-channel ColorDodge: brighten `dst` toward white as `src` heads
-/// to white. Edge cases match PDF 1.7 §11.3.5 — `src == 255` pins to
-/// 255 unless `dst == 0` (which stays 0); `src == 0` is identity.
-#[inline]
-fn color_dodge(src: u8, dst: u8) -> u8 {
-    if src == 255 {
-        return if dst == 0 { 0 } else { 255 };
-    }
-    let v = (dst as f32) / (1.0 - src as f32 / 255.0);
-    u8_round(v)
-}
-
-/// Per-channel ColorBurn: darken `dst` toward black as `src` heads to
-/// black. Edge cases mirror ColorDodge — `src == 0` pins to 0 unless
-/// `dst == 255` (stays 255); `src == 255` is identity.
-#[inline]
-fn color_burn(src: u8, dst: u8) -> u8 {
-    if src == 0 {
-        return if dst == 255 { 255 } else { 0 };
-    }
-    let v = 255.0 - (255.0 - dst as f32) / (src as f32 / 255.0);
-    u8_round(v)
-}
-
-/// Composite path for `Rgb24` (`bpp = 3`) and `Gray8` (`bpp = 1`).
-/// Alpha is implicitly `1.0` for both inputs, so the Porter–Duff
-/// coverage operators collapse:
-/// - `Over`, `In`, `Atop`           → return `src` (fully opaque src
-///   completely covers dst).
-/// - `Out`, `Xor`                   → return all-zero (no visible
-///   region survives).
-/// - The arithmetic / per-channel blends survive unchanged.
-fn composite_rgb_or_gray(
-    op: CompositeOp,
-    src: &VideoFrame,
-    dst: &VideoFrame,
-    params: VideoStreamParams,
-    bpp: usize,
-) -> Result<VideoFrame, Error> {
-    let w = params.width as usize;
-    let h = params.height as usize;
-    if src.planes.is_empty() || dst.planes.is_empty() {
-        return Err(Error::invalid(
-            "oxideav-image-filter: Composite needs non-empty src and dst planes",
-        ));
-    }
-    let row_bytes = w * bpp;
-    let mut out = vec![0u8; row_bytes * h];
-    let src_p = &src.planes[0];
-    let dst_p = &dst.planes[0];
-    for y in 0..h {
-        let src_row = &src_p.data[y * src_p.stride..y * src_p.stride + row_bytes];
-        let dst_row = &dst_p.data[y * dst_p.stride..y * dst_p.stride + row_bytes];
-        let out_row = &mut out[y * row_bytes..(y + 1) * row_bytes];
-        for x in 0..(w * bpp) {
-            let s = src_row[x];
-            let d = dst_row[x];
-            out_row[x] = match op {
-                // Coverage operators with implicit fully-opaque alpha.
-                CompositeOp::Over | CompositeOp::In | CompositeOp::Atop => s,
-                CompositeOp::Out | CompositeOp::Xor => 0,
-                // Arithmetic / per-channel blends.
-                CompositeOp::Plus => (s as u16 + d as u16).min(255) as u8,
-                CompositeOp::Multiply => ((s as u32 * d as u32 + 127) / 255).min(255) as u8,
-                CompositeOp::Screen => {
-                    let inv_s = 255 - s as u32;
-                    let inv_d = 255 - d as u32;
-                    let prod = (inv_s * inv_d + 127) / 255;
-                    255 - prod.min(255) as u8
-                }
-                CompositeOp::Overlay => {
-                    let dv = d as u32;
-                    let sv = s as u32;
-                    let m = if dv < 128 {
-                        (2 * sv * dv + 127) / 255
-                    } else {
-                        let inv_s = 255 - sv;
-                        let inv_d = 255 - dv;
-                        let p = (2 * inv_s * inv_d + 127) / 255;
-                        255 - p.min(255)
-                    };
-                    m.min(255) as u8
-                }
-                CompositeOp::Darken => s.min(d),
-                CompositeOp::Lighten => s.max(d),
-                CompositeOp::Difference => (s as i16 - d as i16).unsigned_abs() as u8,
-                CompositeOp::HardLight => hard_light(s, d),
-                CompositeOp::SoftLight => soft_light(s, d),
-                CompositeOp::ColorDodge => color_dodge(s, d),
-                CompositeOp::ColorBurn => color_burn(s, d),
-            };
-        }
-    }
-    Ok(VideoFrame {
-        pts: src.pts,
-        planes: vec![VideoPlane {
-            stride: row_bytes,
-            data: out,
-        }],
-    })
-}
-
-#[inline]
-fn u8_round(v: f32) -> u8 {
-    v.round().clamp(0.0, 255.0) as u8
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TwoInputImageFilter;
+    use oxideav_core::VideoPlane;
 
-    fn rgba_pixel(s: [u8; 4], d: [u8; 4], op: CompositeOp) -> [u8; 4] {
-        let src = VideoFrame {
-            pts: None,
-            planes: vec![VideoPlane {
-                stride: 4,
-                data: s.to_vec(),
-            }],
-        };
-        let dst = VideoFrame {
-            pts: None,
-            planes: vec![VideoPlane {
-                stride: 4,
-                data: d.to_vec(),
-            }],
-        };
-        let params = VideoStreamParams {
-            format: PixelFormat::Rgba,
-            width: 1,
-            height: 1,
-        };
-        let out = Composite::new(op).apply_two(&src, &dst, params).unwrap();
-        [
-            out.planes[0].data[0],
-            out.planes[0].data[1],
-            out.planes[0].data[2],
-            out.planes[0].data[3],
-        ]
-    }
-
-    #[test]
-    fn over_opaque_src_replaces_dst() {
-        // Opaque red src over opaque blue dst ⇒ red.
-        let r = rgba_pixel([255, 0, 0, 255], [0, 0, 255, 255], CompositeOp::Over);
-        assert_eq!(r, [255, 0, 0, 255]);
-    }
-
-    #[test]
-    fn over_half_alpha_blends_50_50() {
-        // 50% red over opaque blue: out_a = 0.5 + 0.5 = 1.0
-        // out_r = (255 * 0.5 + 0 * 1 * 0.5) / 1 = ~128
-        // out_b = (0 * 0.5 + 255 * 1 * 0.5) / 1 = ~128
-        let r = rgba_pixel([255, 0, 0, 128], [0, 0, 255, 255], CompositeOp::Over);
-        assert!((r[0] as i16 - 128).abs() <= 2);
-        assert_eq!(r[1], 0);
-        assert!((r[2] as i16 - 127).abs() <= 2);
-        assert_eq!(r[3], 255);
-    }
-
-    #[test]
-    fn over_transparent_src_keeps_dst() {
-        // Fully transparent src over opaque blue ⇒ blue.
-        let r = rgba_pixel([255, 0, 0, 0], [0, 0, 255, 255], CompositeOp::Over);
-        assert_eq!(r, [0, 0, 255, 255]);
-    }
-
-    #[test]
-    fn over_opaque_src_over_transparent_keeps_src() {
-        // Opaque red over transparent dst ⇒ red.
-        let r = rgba_pixel([255, 0, 0, 255], [0, 0, 0, 0], CompositeOp::Over);
-        assert_eq!(r, [255, 0, 0, 255]);
-    }
-
-    #[test]
-    fn in_keeps_src_colour_with_dst_alpha() {
-        let r = rgba_pixel([200, 100, 50, 255], [0, 0, 255, 200], CompositeOp::In);
-        assert_eq!(r[0], 200);
-        assert_eq!(r[1], 100);
-        assert_eq!(r[2], 50);
-        // sa * da = 1 * (200/255) ⇒ ~200
-        assert!((r[3] as i16 - 200).abs() <= 1);
-    }
-
-    #[test]
-    fn in_transparent_dst_clears_pixel() {
-        let r = rgba_pixel([200, 100, 50, 255], [0, 0, 0, 0], CompositeOp::In);
-        assert_eq!(r, [0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn out_keeps_src_where_dst_transparent() {
-        let r = rgba_pixel([200, 100, 50, 255], [0, 0, 0, 0], CompositeOp::Out);
-        assert_eq!(r, [200, 100, 50, 255]);
-    }
-
-    #[test]
-    fn out_clears_where_dst_opaque() {
-        let r = rgba_pixel([200, 100, 50, 255], [0, 0, 255, 255], CompositeOp::Out);
-        assert_eq!(r, [0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn atop_keeps_dst_alpha() {
-        // src * sa + dst * (1 - sa) with da preserved.
-        // Opaque red atop opaque blue ⇒ red.
-        let r = rgba_pixel([255, 0, 0, 255], [0, 0, 255, 255], CompositeOp::Atop);
-        assert_eq!(r, [255, 0, 0, 255]);
-        // 50% red atop opaque blue: rgb = (255*0.5 + 0*0.5, 0, 255*0.5) = (128, 0, 128)
-        let r = rgba_pixel([255, 0, 0, 128], [0, 0, 255, 255], CompositeOp::Atop);
-        assert!((r[0] as i16 - 128).abs() <= 2);
-        assert_eq!(r[1], 0);
-        assert!((r[2] as i16 - 127).abs() <= 2);
-        assert_eq!(r[3], 255);
-    }
-
-    #[test]
-    fn atop_transparent_dst_yields_zero_alpha() {
-        let r = rgba_pixel([255, 0, 0, 255], [0, 0, 0, 0], CompositeOp::Atop);
-        assert_eq!(r, [0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn xor_two_opaque_yields_zero_alpha() {
-        // Both fully opaque ⇒ both coverage factors zero ⇒ all-zero.
-        let r = rgba_pixel([255, 0, 0, 255], [0, 0, 255, 255], CompositeOp::Xor);
-        assert_eq!(r, [0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn xor_opaque_src_over_transparent_keeps_src() {
-        let r = rgba_pixel([255, 0, 0, 255], [0, 0, 0, 0], CompositeOp::Xor);
-        assert_eq!(r, [255, 0, 0, 255]);
-    }
-
-    #[test]
-    fn plus_clamps() {
-        let r = rgba_pixel([200, 50, 0, 100], [100, 50, 200, 200], CompositeOp::Plus);
-        assert_eq!(r[0], 255); // 200 + 100 ⇒ clamp
-        assert_eq!(r[1], 100);
-        assert_eq!(r[2], 200);
-        assert_eq!(r[3], 255); // 100 + 200 ⇒ clamp
-    }
-
-    #[test]
-    fn multiply_white_is_identity() {
-        // White × any colour ⇒ the colour.
-        let r = rgba_pixel(
-            [255, 255, 255, 255],
-            [128, 64, 200, 255],
-            CompositeOp::Multiply,
-        );
-        assert_eq!(&r[0..3], &[128, 64, 200]);
-        assert_eq!(r[3], 255);
-    }
-
-    #[test]
-    fn multiply_black_is_zero() {
-        let r = rgba_pixel([0, 0, 0, 255], [128, 64, 200, 255], CompositeOp::Multiply);
-        assert_eq!(&r[0..3], &[0, 0, 0]);
-    }
-
-    #[test]
-    fn screen_black_is_identity() {
-        // Black screened with any colour ⇒ the colour.
-        let r = rgba_pixel([0, 0, 0, 255], [128, 64, 200, 255], CompositeOp::Screen);
-        assert_eq!(&r[0..3], &[128, 64, 200]);
-    }
-
-    #[test]
-    fn screen_white_is_white() {
-        let r = rgba_pixel(
-            [255, 255, 255, 255],
-            [128, 64, 200, 255],
-            CompositeOp::Screen,
-        );
-        assert_eq!(&r[0..3], &[255, 255, 255]);
-    }
-
-    #[test]
-    fn darken_picks_min() {
-        let r = rgba_pixel(
-            [200, 50, 100, 255],
-            [100, 200, 100, 255],
-            CompositeOp::Darken,
-        );
-        assert_eq!(&r[0..3], &[100, 50, 100]);
-    }
-
-    #[test]
-    fn lighten_picks_max() {
-        let r = rgba_pixel(
-            [200, 50, 100, 255],
-            [100, 200, 100, 255],
-            CompositeOp::Lighten,
-        );
-        assert_eq!(&r[0..3], &[200, 200, 100]);
-    }
-
-    #[test]
-    fn difference_is_abs_diff() {
-        let r = rgba_pixel(
-            [200, 50, 100, 255],
-            [100, 200, 100, 255],
-            CompositeOp::Difference,
-        );
-        assert_eq!(&r[0..3], &[100, 150, 0]);
-    }
-
-    #[test]
-    fn overlay_dark_dst_uses_multiply() {
-        // dst < 128 ⇒ 2 * src * dst / 255
-        let r = rgba_pixel(
-            [200, 200, 200, 255],
-            [100, 100, 100, 255],
-            CompositeOp::Overlay,
-        );
-        // 2 * 200 * 100 / 255 ≈ 156
-        assert!((r[0] as i16 - 157).abs() <= 2);
-    }
-
-    #[test]
-    fn overlay_bright_dst_uses_screen() {
-        // dst >= 128 ⇒ 255 - 2 * (255-src) * (255-dst) / 255
-        let r = rgba_pixel(
-            [100, 100, 100, 255],
-            [200, 200, 200, 255],
-            CompositeOp::Overlay,
-        );
-        // 255 - 2 * 155 * 55 / 255 = 255 - 67 = 188
-        assert!((r[0] as i16 - 188).abs() <= 2);
-    }
-
-    #[test]
-    fn rgb24_path_works() {
-        let src = VideoFrame {
-            pts: None,
-            planes: vec![VideoPlane {
-                stride: 3,
-                data: vec![200, 100, 50],
-            }],
-        };
-        let dst = VideoFrame {
-            pts: None,
-            planes: vec![VideoPlane {
-                stride: 3,
-                data: vec![50, 200, 100],
-            }],
-        };
-        let params = VideoStreamParams {
-            format: PixelFormat::Rgb24,
-            width: 1,
-            height: 1,
-        };
-        // Darken on Rgb24: per-channel min.
-        let out = Composite::new(CompositeOp::Darken)
-            .apply_two(&src, &dst, params)
-            .unwrap();
-        assert_eq!(out.planes[0].data, vec![50, 100, 50]);
-        // Plus on Rgb24: per-channel sum, clamp.
-        let out = Composite::new(CompositeOp::Plus)
-            .apply_two(&src, &dst, params)
-            .unwrap();
-        assert_eq!(out.planes[0].data, vec![250, 255, 150]);
-    }
-
-    #[test]
-    fn gray8_path_works() {
-        let src = VideoFrame {
-            pts: None,
-            planes: vec![VideoPlane {
-                stride: 4,
-                data: vec![200, 100, 50, 0],
-            }],
-        };
-        let dst = VideoFrame {
-            pts: None,
-            planes: vec![VideoPlane {
-                stride: 4,
-                data: vec![100, 100, 100, 100],
-            }],
-        };
-        let params = VideoStreamParams {
-            format: PixelFormat::Gray8,
-            width: 4,
-            height: 1,
-        };
-        let out = Composite::new(CompositeOp::Difference)
-            .apply_two(&src, &dst, params)
-            .unwrap();
-        assert_eq!(out.planes[0].data, vec![100, 0, 50, 100]);
-    }
-
-    #[test]
-    fn name_round_trip() {
-        for op in [
-            CompositeOp::Over,
-            CompositeOp::In,
-            CompositeOp::Out,
-            CompositeOp::Atop,
-            CompositeOp::Xor,
-            CompositeOp::Plus,
-            CompositeOp::Multiply,
-            CompositeOp::Screen,
-            CompositeOp::Overlay,
-            CompositeOp::Darken,
-            CompositeOp::Lighten,
-            CompositeOp::Difference,
-            CompositeOp::HardLight,
-            CompositeOp::SoftLight,
-            CompositeOp::ColorDodge,
-            CompositeOp::ColorBurn,
-        ] {
-            assert_eq!(CompositeOp::from_name(op.name()), Some(op));
+    fn rgba(w: u32, h: u32, px: impl Fn(u32, u32) -> [u8; 4]) -> VideoFrame {
+        let mut data = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                data.extend_from_slice(&px(x, y));
+            }
         }
+        VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: w as usize * 4,
+                data,
+            }],
+        }
+    }
+
+    fn p(w: u32, h: u32) -> VideoStreamParams {
+        VideoStreamParams {
+            format: PixelFormat::Rgba,
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn names_round_trip_with_aliases() {
+        for &op in CompositeOp::ALL {
+            assert_eq!(CompositeOp::from_name(op.name()), Some(op), "{op:?}");
+        }
+        assert_eq!(CompositeOp::from_name("Src-Over"), Some(CompositeOp::Over));
         assert_eq!(
-            CompositeOp::from_name("hard-light"),
+            CompositeOp::from_name("CopyOpacity"),
+            Some(CompositeOp::CopyAlpha)
+        );
+        assert_eq!(CompositeOp::from_name("Minus"), Some(CompositeOp::MinusDst));
+        assert_eq!(
+            CompositeOp::from_name("hard_light"),
             Some(CompositeOp::HardLight)
-        );
-        assert_eq!(
-            CompositeOp::from_name("soft_light"),
-            Some(CompositeOp::SoftLight)
-        );
-        assert_eq!(
-            CompositeOp::from_name("color-dodge"),
-            Some(CompositeOp::ColorDodge)
-        );
-        assert_eq!(
-            CompositeOp::from_name("color_burn"),
-            Some(CompositeOp::ColorBurn)
         );
         assert_eq!(CompositeOp::from_name("nope"), None);
     }
 
     #[test]
-    fn hardlight_dark_src_uses_multiply() {
-        let r = rgba_pixel(
-            [100, 100, 100, 255],
-            [200, 200, 200, 255],
-            CompositeOp::HardLight,
+    fn over_of_opaque_source_is_the_source_and_clear_clears() {
+        let src = rgba(2, 2, |_, _| [10, 20, 30, 255]);
+        let dst = rgba(2, 2, |_, _| [200, 200, 200, 255]);
+        let out = Composite::new(CompositeOp::Over)
+            .apply_two(&src, &dst, p(2, 2))
+            .unwrap();
+        assert_eq!(&out.planes[0].data[..4], &[10, 20, 30, 255]);
+        let out = Composite::new(CompositeOp::Clear)
+            .apply_two(&src, &dst, p(2, 2))
+            .unwrap();
+        assert_eq!(&out.planes[0].data[..4], &[0, 0, 0, 0]);
+        let out = Composite::new(CompositeOp::Dst)
+            .apply_two(&src, &dst, p(2, 2))
+            .unwrap();
+        assert_eq!(&out.planes[0].data[..4], &[200, 200, 200, 255]);
+    }
+
+    #[test]
+    fn half_transparent_over_blends_and_keeps_union_alpha() {
+        let src = rgba(1, 1, |_, _| [255, 0, 0, 128]);
+        let dst = rgba(1, 1, |_, _| [0, 0, 255, 255]);
+        let out = Composite::new(CompositeOp::Over)
+            .apply_two(&src, &dst, p(1, 1))
+            .unwrap();
+        let o = &out.planes[0].data;
+        assert_eq!(o[3], 255);
+        assert!(
+            (o[0] as i32 - 128).abs() <= 1 && (o[2] as i32 - 127).abs() <= 1,
+            "{o:?}"
         );
-        assert!((r[0] as i16 - 157).abs() <= 2, "got {}", r[0]);
+        let out = Composite::new(CompositeOp::Multiply)
+            .apply_two(&src, &dst, p(1, 1))
+            .unwrap();
+        // Sa·Da·(1·0) + Sa·(1−Da)·1 + Da·(1−Sa)·0 = 0 for red … the measured
+        // ImageMagick form; blue = Da·(1−Sa)·1 = 0.498.
+        let o = &out.planes[0].data;
+        assert_eq!(o[0], 0);
+        assert!((o[2] as i32 - 127).abs() <= 1, "{o:?}");
+        assert_eq!(o[3], 255);
     }
 
     #[test]
-    fn hardlight_bright_src_uses_screen() {
-        let r = rgba_pixel(
-            [200, 200, 200, 255],
-            [100, 100, 100, 255],
-            CompositeOp::HardLight,
+    fn placement_offset_gravity_and_outside_overlay() {
+        let dst = rgba(6, 4, |_, _| [0, 0, 0, 255]);
+        let src = rgba(2, 2, |_, _| [255, 255, 255, 255]);
+        let dp = p(6, 4);
+        let sp = p(2, 2);
+        // Offset placement: the overlay lands at (3, 1).
+        let out = Composite::new(CompositeOp::Over)
+            .with_offset(3, 1)
+            .compose(&dst, dp, &src, sp)
+            .unwrap();
+        let px = |x: usize, y: usize| out.planes[0].data[(y * 6 + x) * 4];
+        assert_eq!(px(3, 1), 255);
+        assert_eq!(px(4, 2), 255);
+        assert_eq!(px(2, 1), 0);
+        assert_eq!(px(5, 3), 0);
+        // Gravity south-east with a negative offset.
+        let out = Composite::new(CompositeOp::Over)
+            .with_gravity(Gravity::SouthEast)
+            .with_offset(-1, 0)
+            .compose(&dst, dp, &src, sp)
+            .unwrap();
+        let px = |x: usize, y: usize| out.planes[0].data[(y * 6 + x) * 4];
+        assert_eq!(px(3, 2), 255);
+        assert_eq!(px(4, 3), 255);
+        assert_eq!(px(5, 3), 0);
+        // Src outside the overlay: cleared by default, kept when asked.
+        let out = Composite::new(CompositeOp::Src)
+            .compose(&dst, dp, &src, sp)
+            .unwrap();
+        assert_eq!(
+            out.planes[0].data[(3 * 6 + 5) * 4 + 3],
+            0,
+            "transparent outside the overlay"
         );
-        assert!((r[0] as i16 - 188).abs() <= 2, "got {}", r[0]);
-    }
-
-    #[test]
-    fn softlight_half_src_is_identity() {
-        // sn = 128/255 ≈ 0.502 ⇒ very close to identity (within ±2).
-        let r = rgba_pixel(
-            [128, 128, 128, 255],
-            [180, 60, 220, 255],
-            CompositeOp::SoftLight,
-        );
-        for i in 0..3 {
-            let d = [180, 60, 220][i] as i16;
-            assert!((r[i] as i16 - d).abs() <= 2, "ch {i}: got {} vs {d}", r[i]);
-        }
-    }
-
-    #[test]
-    fn colordodge_white_src_saturates_nonzero_dst() {
-        let r = rgba_pixel(
-            [255, 255, 255, 255],
-            [50, 50, 50, 255],
-            CompositeOp::ColorDodge,
-        );
-        assert_eq!(&r[0..3], &[255, 255, 255]);
-        let r = rgba_pixel(
-            [255, 255, 255, 255],
-            [0, 0, 0, 255],
-            CompositeOp::ColorDodge,
-        );
-        assert_eq!(&r[0..3], &[0, 0, 0]);
-    }
-
-    #[test]
-    fn colordodge_black_src_is_identity() {
-        let r = rgba_pixel([0, 0, 0, 255], [123, 45, 67, 255], CompositeOp::ColorDodge);
-        assert_eq!(&r[0..3], &[123, 45, 67]);
-    }
-
-    #[test]
-    fn colorburn_black_src_pins_nonwhite_to_zero() {
-        let r = rgba_pixel([0, 0, 0, 255], [100, 100, 100, 255], CompositeOp::ColorBurn);
-        assert_eq!(&r[0..3], &[0, 0, 0]);
-        let r = rgba_pixel([0, 0, 0, 255], [255, 255, 255, 255], CompositeOp::ColorBurn);
-        assert_eq!(&r[0..3], &[255, 255, 255]);
-    }
-
-    #[test]
-    fn colorburn_white_src_is_identity() {
-        let r = rgba_pixel(
-            [255, 255, 255, 255],
-            [123, 45, 67, 255],
-            CompositeOp::ColorBurn,
-        );
-        assert_eq!(&r[0..3], &[123, 45, 67]);
-    }
-
-    #[test]
-    fn rejects_unsupported_format() {
-        let src = VideoFrame {
+        let out = Composite::new(CompositeOp::Src)
+            .with_outside_overlay(false)
+            .compose(&dst, dp, &src, sp)
+            .unwrap();
+        assert_eq!(out.planes[0].data[(3 * 6 + 5) * 4 + 3], 255);
+        // Channel mask: only green written.
+        let out = Composite::new(CompositeOp::Src)
+            .with_channels(ChannelMask::new(false, true, false, false))
+            .compose(&dst, dp, &src, sp)
+            .unwrap();
+        assert_eq!(&out.planes[0].data[..4], &[0, 255, 0, 255]);
+        // A gray destination comes back as gray.
+        let gdst = VideoFrame {
             pts: None,
             planes: vec![VideoPlane {
-                stride: 4,
-                data: vec![0; 16],
+                stride: 6,
+                data: vec![0; 24],
             }],
         };
-        let dst = src.clone();
-        let params = VideoStreamParams {
-            format: PixelFormat::Yuv420P,
-            width: 4,
-            height: 4,
+        let out = Composite::new(CompositeOp::Over)
+            .compose(
+                &gdst,
+                VideoStreamParams {
+                    format: PixelFormat::Gray8,
+                    width: 6,
+                    height: 4,
+                },
+                &src,
+                sp,
+            )
+            .unwrap();
+        assert_eq!(out.planes[0].stride, 6);
+        assert_eq!(out.planes[0].data[0], 255);
+        assert_eq!(out.planes[0].data[5], 0);
+    }
+
+    #[test]
+    fn copy_channels_and_change_mask() {
+        let src = rgba(1, 1, |_, _| [10, 20, 30, 40]);
+        let dst = rgba(1, 1, |_, _| [100, 110, 120, 255]);
+        let run = |op| {
+            Composite::new(op)
+                .apply_two(&src, &dst, p(1, 1))
+                .unwrap()
+                .planes[0]
+                .data
+                .clone()
         };
-        let err = Composite::new(CompositeOp::Over)
-            .apply_two(&src, &dst, params)
-            .unwrap_err();
-        assert!(err.to_string().contains("Composite"), "{err:?}");
+        assert_eq!(run(CompositeOp::CopyRed), vec![10, 110, 120, 255]);
+        assert_eq!(run(CompositeOp::CopyGreen), vec![100, 20, 120, 255]);
+        assert_eq!(run(CompositeOp::CopyBlue), vec![100, 110, 30, 255]);
+        assert_eq!(run(CompositeOp::CopyAlpha), vec![100, 110, 120, 40]);
+        assert_eq!(run(CompositeOp::ChangeMask), vec![100, 110, 120, 255]);
+        let same = Composite::new(CompositeOp::ChangeMask)
+            .apply_two(&dst, &dst, p(1, 1))
+            .unwrap();
+        assert_eq!(same.planes[0].data[3], 0);
     }
 }
