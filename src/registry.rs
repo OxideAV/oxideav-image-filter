@@ -58,6 +58,7 @@ fn register_into(sink: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
     sink("blur", Box::new(make_blur));
     sink("edge", Box::new(make_edge));
     sink("resize", Box::new(make_resize));
+    sink("ordered-dither", Box::new(make_ordered_dither));
     sink("sharpen", Box::new(make_sharpen));
     sink("gamma", Box::new(make_gamma));
     sink("brightness-contrast", Box::new(make_brightness_contrast));
@@ -777,6 +778,23 @@ fn make_edge(_params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilte
         } => PortSpec::video("video", *width, *height, PixelFormat::Gray8, *time_base),
         _ => PortSpec::video("video", 0, 0, PixelFormat::Gray8, TimeBase::new(1, 30)),
     };
+    Ok(Box::new(ImageFilterAdapter::new(
+        Box::new(f),
+        in_port,
+        out_port,
+    )))
+}
+
+/// `ordered-dither`: `{"map": "o4x4,6"}` (ImageMagick's argument form).
+fn make_ordered_dither(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
+    let spec = params
+        .as_object()
+        .and_then(|m| m.get("map"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("o4x4");
+    let f = crate::OrderedDither::parse(spec)?;
+    let in_port = video_in_port(inputs);
+    let out_port = in_port.clone();
     Ok(Box::new(ImageFilterAdapter::new(
         Box::new(f),
         in_port,

@@ -186,6 +186,10 @@ pub fn all_single() -> Vec<Entry> {
         e("Negate", Negate::new()),
         e("Niblack", Niblack::new()),
         e("Normalize", Normalize::new(0.0, 0.0)),
+        e(
+            "OrderedDither",
+            OrderedDither::new(ThresholdMap::bayer(4)).with_levels(3),
+        ),
         e("OtsuThreshold", OtsuThreshold::new()),
         e("Paint", Paint::new(1)),
         e(
