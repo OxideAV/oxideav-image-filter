@@ -140,8 +140,6 @@ fn psnr(a: &[u8], b: &[u8]) -> f64 {
 const APPROXIMATE: &[CompositeOp] = &[
     CompositeOp::Difference,
     CompositeOp::SoftLight,
-    CompositeOp::DstIn,
-    CompositeOp::DstOut,
     CompositeOp::DivideDst,
     CompositeOp::DivideSrc,
     CompositeOp::ModulusAdd,
@@ -157,7 +155,6 @@ const APPROXIMATE: &[CompositeOp] = &[
     CompositeOp::Freeze,
     CompositeOp::Reflect,
     CompositeOp::Negate,
-    CompositeOp::Interpolate,
     CompositeOp::DarkenIntensity,
     CompositeOp::LightenIntensity,
     CompositeOp::Bumpmap,

@@ -23,10 +23,10 @@
 //!
 //! Not yet matched (the operator runs, `tests/magick_composite.rs`
 //! reports its PSNR without asserting it): `Difference`, `SoftLight`,
-//! `DstIn`, `DstOut`, `DivideDst` / `DivideSrc`, `ModulusAdd` /
+//! `DivideDst` / `DivideSrc`, `ModulusAdd` /
 //! `ModulusSubtract`, `Exclusion`, `LinearDodge`, `LinearLight`,
 //! `HardMix`, `PegtopLight`, `SoftBurn`, `SoftDodge`, `Stamp`, `Freeze`,
-//! `Reflect`, `Negate`, `Interpolate`, `DarkenIntensity` /
+//! `Reflect`, `Negate`, `DarkenIntensity` /
 //! `LightenIntensity`, `Bumpmap`, `Blend` with arguments, and the
 //! colour-component / map / modulate family (`Hue`, `Saturate`,
 //! `Luminize`, `Colorize`, `Rmse`, `Intensity`, `CopyBlack`, `Threshold`,
@@ -629,9 +629,11 @@ impl Composite {
             // result colour as it is (measured: In of an opaque source on
             // a half-covered destination gives Sc·Da, not Sc).
             O::In => premult([s[0], s[1], s[2]], sa * da, sa * da),
-            O::DstIn => premult([d[0], d[1], d[2]], sa * da, sa * da),
+            // The destination forms keep the straight colour (measured).
+            // (black where the result is transparent).
+            O::DstIn => straight_or_clear([d[0], d[1], d[2]], sa * da),
             O::Out => premult([s[0], s[1], s[2]], sa * (1.0 - da), sa * (1.0 - da)),
-            O::DstOut => premult([d[0], d[1], d[2]], da * (1.0 - sa), da * (1.0 - sa)),
+            O::DstOut => straight_or_clear([d[0], d[1], d[2]], da * (1.0 - sa)),
             O::Atop => {
                 let mut o = [0.0; 4];
                 for c in 0..3 {
@@ -802,6 +804,8 @@ impl Composite {
                 o[3] = match op {
                     O::ModulusAdd => wrap(sa + da),
                     O::ModulusSubtract => wrap(sa - da),
+                    // Interpolate runs its curve on the alphas too (measured).
+                    O::Interpolate => blend(op, sa, da, &self.args),
                     _ => a,
                 };
                 o
@@ -815,6 +819,16 @@ impl Composite {
 #[inline]
 fn premult(c: [f32; 3], weight: f32, a: f32) -> [f32; 4] {
     [c[0] * weight, c[1] * weight, c[2] * weight, a]
+}
+
+/// A straight colour with alpha `a`, cleared to black when `a` is 0.
+#[inline]
+fn straight_or_clear(c: [f32; 3], a: f32) -> [f32; 4] {
+    if a <= 0.0 {
+        [0.0; 4]
+    } else {
+        [c[0], c[1], c[2], a]
+    }
 }
 
 /// The union alpha `Sa + Da − Sa·Da`.
