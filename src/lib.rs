@@ -799,6 +799,7 @@ pub mod registry;
 pub mod reinhard;
 pub mod reinhard_extended;
 pub mod reinhard_local;
+mod replan;
 pub mod resize;
 pub mod roberts;
 pub mod roll;

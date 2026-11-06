@@ -108,6 +108,16 @@ fuzz_target!(|data: &[u8]| {
     let ports = filter.input_ports().len();
     let mut sink = Sink;
     for _ in 0..2 {
+        // A mid-stream shape change on some input port (re-plan or a
+        // typed refusal, never a panic).
+        if next(data, &mut pos) & 1 == 1 {
+            let mut sp = oxideav_core::CodecParameters::video(oxideav_core::CodecId::new("raw"));
+            sp.width = Some(next(data, &mut pos) as u32 % 24);
+            sp.height = Some(next(data, &mut pos) as u32 % 24);
+            sp.pixel_format = Some(layout::ALL[next(data, &mut pos) as usize % layout::ALL.len()]);
+            let port = next(data, &mut pos) as usize % ports.max(1);
+            let _ = filter.push(&mut sink, port, &Frame::StreamParams(Box::new(sp)));
+        }
         for port in 0..ports {
             let fw = if next(data, &mut pos) & 1 == 1 { w } else { 1 + w % 7 };
             let fr = frame(data, &mut pos, fmt, fw, h);

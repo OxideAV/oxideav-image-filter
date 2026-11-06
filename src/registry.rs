@@ -54,7 +54,13 @@ pub fn registered_names() -> Vec<String> {
 }
 
 /// Hand every `(name, factory)` pair to `sink`.
-fn register_into(sink: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
+///
+/// Every factory is wrapped by [`crate::replan::replannable`], so each
+/// filter it builds re-plans on a mid-stream `Frame::StreamParams`.
+fn register_into(outer: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
+    let sink = &mut |name: &str, factory: oxideav_core::FilterFactory| {
+        outer(name, crate::replan::replannable(name, factory))
+    };
     sink("blur", Box::new(make_blur));
     sink("edge", Box::new(make_edge));
     sink("resize", Box::new(make_resize));
@@ -541,6 +547,14 @@ impl StreamFilter for ImageFilterAdapter {
                 "image-filter adapter: unknown input port {port}"
             )));
         }
+        if let Frame::StreamParams(event) = frame {
+            return check_planned_shape(
+                "image-filter adapter",
+                self.params,
+                event,
+                &self.inner.accepted_pixel_formats(),
+            );
+        }
         let Frame::Video(v) = frame else {
             return Err(Error::invalid(
                 "image-filter adapter: input port 0 only accepts video frames",
@@ -550,6 +564,32 @@ impl StreamFilter for ImageFilterAdapter {
         ctx.emit(0, Frame::Video(out))?;
         Ok(())
     }
+}
+
+/// An adapter's answer to a [`Frame::StreamParams`] event: the shape it
+/// was planned for is the only one it takes (re-planning is the
+/// registry wrapper's job, which rebuilds the adapter through its
+/// factory first), and the layout must be one the filter declares.
+fn check_planned_shape(
+    who: &str,
+    planned: VideoStreamParams,
+    event: &oxideav_core::CodecParameters,
+    accepted: &[PixelFormat],
+) -> Result<()> {
+    let (w, h, f) =
+        crate::replan::merged_shape((planned.width, planned.height, planned.format), event);
+    if (w, h, f) != (planned.width, planned.height, planned.format) {
+        return Err(Error::unsupported(format!(
+            "{who}: planned for {}x{} {:?}, cannot take {w}x{h} {f:?} without re-planning",
+            planned.width, planned.height, planned.format
+        )));
+    }
+    if !accepted.is_empty() && !accepted.contains(&f) {
+        return Err(Error::unsupported(format!(
+            "{who}: the filter does not take the {f:?} layout"
+        )));
+    }
+    Ok(())
 }
 
 fn video_in_port(inputs: &[PortSpec]) -> PortSpec {
@@ -629,6 +669,24 @@ impl StreamFilter for TwoInputImageFilterAdapter {
         &self.outp
     }
     fn push(&mut self, ctx: &mut dyn FilterContext, port: usize, frame: &Frame) -> Result<()> {
+        if let Frame::StreamParams(event) = frame {
+            let Some(planned) = self.inp.get(port).and_then(crate::replan::video_shape) else {
+                return Err(Error::invalid(format!(
+                    "two-input image-filter adapter: unknown input port {port}"
+                )));
+            };
+            let planned = VideoStreamParams {
+                width: planned.0,
+                height: planned.1,
+                format: planned.2,
+            };
+            return check_planned_shape(
+                "two-input image-filter adapter",
+                planned,
+                event,
+                &self.inner.accepted_pixel_formats(),
+            );
+        }
         let Frame::Video(v) = frame else {
             return Err(Error::invalid(
                 "two-input image-filter adapter: only video frames are accepted",
@@ -1328,6 +1386,18 @@ fn make_crop(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter
         .min(u32::MAX as u64) as u32;
     let f = Crop::new(x, y, w, h);
     let in_port = video_in_port(inputs);
+    // A declared input extent must hold the window (a zero extent is an
+    // undeclared one); otherwise every frame would fail.
+    if let Some((iw, ih, _)) = crate::replan::video_shape(&in_port)
+        && iw > 0
+        && ih > 0
+        && (u64::from(x) + u64::from(w) > u64::from(iw)
+            || u64::from(y) + u64::from(h) > u64::from(ih))
+    {
+        return Err(Error::invalid(format!(
+            "job: filter 'crop': window ({x},{y})+{w}x{h} exceeds the {iw}x{ih} input"
+        )));
+    }
     let out_port = match &in_port.params {
         PortParams::Video {
             format, time_base, ..

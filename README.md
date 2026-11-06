@@ -1200,6 +1200,43 @@ are pixel-exact on the widened paths; `fuzz/` drives the same two
 surfaces with arbitrary layouts, plane shapes, records and factory
 parameters (daily `Fuzz` workflow).
 
+## Mid-stream shape changes
+
+Every filter built through the registry answers core's in-band
+`Frame::StreamParams` event (oxideav-core 0.1.43) on any input port.
+One wrapper serves all of them: since each factory derives its whole
+plan from its input port specs, the wrapper re-runs the filter's own
+factory with the same parameters and the updated input port, so the
+re-planned filter is exactly the one a pipeline built for the new shape
+from the start would get.
+
+- **Re-plan.** `input_ports()` / `output_ports()` move to the new
+  shape. On every output port whose shape (width, height, layout)
+  changes — or whose shape follows its input's, the pass-through case —
+  the filter emits its own `Frame::StreamParams` (the upstream event's
+  parameters with the port's picture shape) before the first frame of
+  the new shape. A fixed-target scale whose output does not move
+  announces nothing.
+- **Refuse.** When the factory cannot plan for the new input — a crop
+  window that no longer fits, a layout the filter does not take, a
+  two-input filter whose inputs must agree on `(format, width, height)`
+  and now would not — the event fails with `Error::Unsupported` naming
+  the filter and both shapes; nothing is emitted and the previous plan
+  stands.
+- **State.** Two-input filters hold the frame waiting on each port. A
+  re-plan hands the frames held on the unchanged ports to the new plan
+  (`watermark`'s overlay survives a base-size change) and drops the
+  changed port's old-shape frame; `reset()` drops them all.
+
+`tests/stream_params.rs` covers scale, crop, colour collapse, a
+convolution, transpose, compose and the overlay buffer (frames after
+the event equal those of a filter planned for the new shape);
+`tests/registry_truth.rs` drives every registered name through a size
+change and a layout change (447 re-planned cells, 77 typed refusals —
+the composite family and the shape-matched two-input filters — and
+every announced shape equals the re-declared port and the next frame's
+geometry).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -238,3 +238,182 @@ fn every_factory_emits_what_its_output_port_declares() {
         failures.join("\n")
     );
 }
+
+/// Plane geometry of `out` against a declared `(w, h, fmt)` output port
+/// (`None` when it matches). A zero declared extent, or a filter whose
+/// extent depends on the picture content, is read off plane 0.
+fn geometry_mismatch(
+    name: &str,
+    declared: (u32, u32, PixelFormat),
+    out: &VideoFrame,
+) -> Option<String> {
+    let (ow, oh, of) = declared;
+    if out.image_plane_count() != of.plane_count() {
+        return Some(format!(
+            "port says {of:?} ({} planes), emitted {} planes",
+            of.plane_count(),
+            out.image_plane_count()
+        ));
+    }
+    let content_extent = matches!(name, "trim" | "auto-trim" | "deskew");
+    let (ew, eh) = if ow == 0 || oh == 0 || content_extent {
+        let pb = of.plane_row_bytes(0, 1).unwrap();
+        let p0 = &out.planes[0];
+        ((p0.stride / pb) as u32, (p0.data.len() / p0.stride) as u32)
+    } else {
+        (ow, oh)
+    };
+    for (i, p) in out.image_planes().iter().enumerate() {
+        let rb = of.plane_row_bytes(i, ew).unwrap();
+        let rows = of.plane_dimensions(i, ew, eh).unwrap().1 as usize;
+        if p.stride != rb || p.data.len() != rb * rows {
+            return Some(format!(
+                "port says {of:?} {ew}x{eh}; plane {i} is stride {} / {} bytes (expected {rb} / {})",
+                p.stride,
+                p.data.len(),
+                rb * rows
+            ));
+        }
+    }
+    None
+}
+
+fn port_shape(p: &PortSpec) -> (u32, u32, PixelFormat) {
+    match p.params {
+        PortParams::Video {
+            width,
+            height,
+            format,
+            ..
+        } => (width, height, format),
+        _ => (0, 0, PixelFormat::Rgba),
+    }
+}
+
+/// Every registered filter answers a mid-stream `Frame::StreamParams` on
+/// input port 0 — a size change, then a layout change — either by
+/// re-planning (each announced output shape equals the re-declared
+/// output port, every output port whose shape moved is announced, and
+/// the next frame comes out in the declared geometry) or by a typed
+/// `Unsupported` refusal that emits nothing and keeps the previous plan.
+#[test]
+fn every_factory_replans_or_refuses_on_stream_params() {
+    let mut ctx = RuntimeContext::new();
+    register(&mut ctx);
+    let mut replanned = 0usize;
+    let mut refused = 0usize;
+    let mut refusals: Vec<String> = Vec::new();
+    let mut failures: Vec<String> = Vec::new();
+    for name in &registered_names() {
+        let (w, h) = (16u32, 16u32);
+        let inputs: Vec<PortSpec> = if is_two_input(name) {
+            vec![
+                video_port("src", PixelFormat::Rgba, w, h),
+                video_port("dst", PixelFormat::Rgba, w, h),
+            ]
+        } else {
+            vec![video_port("in", PixelFormat::Rgba, w, h)]
+        };
+        let mut filter = match ctx.filters.make(name, &params_for(name), &inputs) {
+            Ok(f) => f,
+            Err(e) => {
+                failures.push(format!("{name}: factory failed: {e}"));
+                continue;
+            }
+        };
+        for &(fmt, nw, nh) in &[
+            (PixelFormat::Rgba, 24u32, 20u32),
+            (PixelFormat::Rgb24, 24, 20),
+        ] {
+            let before_in: Vec<_> = filter.input_ports().iter().map(port_shape).collect();
+            let before_out: Vec<_> = filter.output_ports().iter().map(port_shape).collect();
+            let mut p = oxideav_core::CodecParameters::video(oxideav_core::CodecId::new("raw"));
+            p.width = Some(nw);
+            p.height = Some(nh);
+            p.pixel_format = Some(fmt);
+            let mut sink = Collect(Vec::new());
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                filter.push(&mut sink, 0, &Frame::StreamParams(Box::new(p)))
+            }));
+            let cell = format!("{name} -> {nw}x{nh} {fmt:?}");
+            match r {
+                Err(_) => {
+                    failures.push(format!("{cell}: PANICKED on the event"));
+                    break;
+                }
+                Ok(Err(oxideav_core::Error::Unsupported(msg))) => {
+                    refused += 1;
+                    if !name.starts_with("composite-") {
+                        refusals.push(format!("{cell}: {msg}"));
+                    }
+                    let after_in: Vec<_> = filter.input_ports().iter().map(port_shape).collect();
+                    if !sink.0.is_empty() || after_in != before_in {
+                        failures.push(format!("{cell}: refusal emitted or moved the plan"));
+                    }
+                    break;
+                }
+                Ok(Err(e)) => {
+                    failures.push(format!("{cell}: untyped refusal: {e}"));
+                    break;
+                }
+                Ok(Ok(())) => {}
+            }
+            replanned += 1;
+            let after_out: Vec<_> = filter.output_ports().iter().map(port_shape).collect();
+            if port_shape(&filter.input_ports()[0]) != (nw, nh, fmt) {
+                failures.push(format!("{cell}: input port not re-declared"));
+            }
+            for (port, f) in &sink.0 {
+                let Some(sp) = f.stream_params() else {
+                    failures.push(format!("{cell}: emitted a frame on the event"));
+                    continue;
+                };
+                let got = (
+                    sp.width.unwrap_or(0),
+                    sp.height.unwrap_or(0),
+                    sp.pixel_format.unwrap_or(PixelFormat::Rgba),
+                );
+                if after_out.get(*port) != Some(&got) {
+                    failures.push(format!(
+                        "{cell}: announced {got:?} on port {port}, port declares {:?}",
+                        after_out.get(*port)
+                    ));
+                }
+            }
+            for (i, (b, a)) in before_out.iter().zip(&after_out).enumerate() {
+                if b != a && !sink.0.iter().any(|(p, _)| *p == i) {
+                    failures.push(format!(
+                        "{cell}: output {i} moved {b:?} -> {a:?} unannounced"
+                    ));
+                }
+            }
+            // The next frame comes out in the re-declared geometry.
+            let mut sink = Collect(Vec::new());
+            let mut r = filter.push(&mut sink, 0, &Frame::Video(picture(fmt, nw, nh, 3)));
+            if r.is_ok() && is_two_input(name) {
+                let (dw, dh, df) = port_shape(&filter.input_ports()[1]);
+                r = filter.push(&mut sink, 1, &Frame::Video(picture(df, dw, dh, 5)));
+            }
+            match (r, sink.0.first()) {
+                (Ok(()), Some((_, Frame::Video(out)))) => {
+                    if let Some(m) = geometry_mismatch(name, after_out[0], out) {
+                        failures.push(format!("{cell}: {m}"));
+                    }
+                }
+                (Ok(()), _) => failures.push(format!("{cell}: nothing emitted after re-plan")),
+                (Err(e), _) => failures.push(format!("{cell}: frame after re-plan failed: {e}")),
+            }
+        }
+    }
+    eprintln!(
+        "stream-params: {replanned} re-planned cells, {refused} typed refusals; \
+         outside the composite family:\n{}",
+        refusals.join("\n")
+    );
+    assert!(
+        failures.is_empty(),
+        "{} failing cells:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
