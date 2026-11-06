@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.3...v0.2.0) - 2026-11-06
+
+### Other
+
+- refuse a layout outside layout::ALL before describing its storage
+- :StreamParams: every registered filter re-plans through its own factory or refuses
+- distortion framework and the -fx family of operations
+- DstIn / DstOut / Interpolate partial-alpha rules pinned on magick (37 of 70 matched)
+- Lloyd's colour reduction from seed colours, checked against magick
+- an -fx expression evaluator over the pinned subset, 46 expressions matching magick
+- forward / inverse 2-D DFT as magnitude-phase or real-imaginary pairs, exact round trip
+- the seven +noise types with attenuate and a seed, distributions matched to magick
+- 4 / 8 connectivity labelling with magick's object list, exact; area-threshold merge to invariants
+- clippy needless_range_loop
+- barycentric / bilinear / shepards / inverse / voronoi / manhattan, bit-exact against magick
+- the general -distort framework — 15 methods, bestfit / viewport, virtual pixels, pixel interpolation, EWA with the resize kernels, measured against magick
+- skip the live composite comparison on Windows
+- the live composite comparison pins magick 7.1.2 Q16-HDRI
+- live magick comparisons only against the reference build (ImageMagick 7.1 Q16-HDRI)
+- transpose / transverse, bit-exact against magick; README frame-contract numbers for the deep path (20 300 cells, 17 932 accepted)
+- ordered dither: arbitrary threshold maps with per-channel levels, magick's multi-level boundary rule, bit-exact on the built-in maps
+- ImageMagick's -compose operator set (70), placement by offset / gravity with channel mask and outside-overlay, checked live against magick
+- statistics, compare metrics, moments, perceptual hash, histogram and bounds, fixed black-box against magick's identify / compare / moments output
+- ImageMagick's full filter set (31 -filter names) with the expert defines, fixed black-box against magick's impulse response
+- deep path: tone mappers in linear light (reinhard/extended/local, drago, hable), the canvas family (canvas/extent/frame/bordered-frame/trim/auto-trim), vignettes, charcoal, shade, canny, radial/zoom blur, directional emboss, prewitt/roberts/scharr, LoG, posterize-channels, chromatic aberration, cyanotype, gradients, drop shadow in binary32
+- deep path: curves / selective-colour / split-tone / shadow-highlight / gradient-map / heatmap, the morphology and edge families, kuwahara, bilateral, and the geometry family (affine/srt/perspective/distort/barrel-inverse/polar/implode/swirl/wave/rotate/pixelate/spread) in binary32
+- deep path: HSL / tone-curve family (vibrance/temperature/hsl-shift/hsl-rotate/color-balance/srgb-transform/blue-shift/cycle) and the mask makers (adaptive-threshold/niblack/bw-mix/max-rgb) in binary32
+- deep path: spatial family (blur/sharpen/unsharp/convolve/motion-blur/statistic/emboss/despeckle/clarity), colour family (modulate/grayscale/sepia/tint/colorize/exposure/color-matrix/channel-mixer/evaluate) and the histogram-driven family (auto-level/auto-gamma/contrast-stretch/linear-stretch/equalize/otsu) in binary32
+- deep path: FloatImage + float hop for every 16-bit and float layout; tonal family (level/gamma/negate/threshold/sigmoidal/brightness-contrast/solarize/posterize/clamp/function/cross-process/normalize) in binary32, Ya8 + CMYK native, Level::normalized
+- edition 2024, MSRV 1.95
+
 ### Added
 
 - `Frame::StreamParams` (oxideav-core 0.1.43) on every registered filter: one wrapper re-runs the filter's own factory for the new input shape, re-declares its ports and emits its own `Frame::StreamParams` on each output port whose shape changes (or follows its input) before the first frame of the new shape; a factory that cannot plan for it (crop window no longer fits, layout not taken, two-input filters whose inputs must agree) makes the event an `Error::Unsupported` that keeps the previous plan. Two-input filters carry the frames held on unchanged ports into the new plan. `tests/stream_params.rs` + a registry-wide sweep in `tests/registry_truth.rs` (447 re-planned cells, 77 typed refusals)
