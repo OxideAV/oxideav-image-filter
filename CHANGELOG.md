@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- a layout outside `layout::ALL` (the RGB565 / RGB555 / padded-RGB family) is refused before any storage lookup — building a filter on one used to trip a debug assertion in the released pixel-format crate
 - `crop` factory refuses a window that does not fit a declared (non-zero) input extent, instead of failing on every frame
 - the separable kernel driver (Lanczos / Mitchell / BSpline and the new filters) now drops taps outside the picture and renormalises instead of folding them onto the edge sample — `magick`'s edge rule, measured on an impulse at pixel 0
 - `Interpolation` and `CompositeOp` are `#[non_exhaustive]`; `Composite` is a `#[non_exhaustive]` record with builders; In / Out / Atop / Xor now store magick's premultiplied colour

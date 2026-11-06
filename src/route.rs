@@ -70,6 +70,11 @@ const DEEP_HOP_TARGETS: [PixelFormat; 3] = [
 /// 8-bit storage hops to packed 8-bit, deep storage to packed float — a
 /// hop never narrows a sample.
 fn hop_for<F: PixelFilter + ?Sized>(f: &F, fmt: PixelFormat) -> Option<Route> {
+    // Only the layouts this crate knows hop; a layout outside
+    // `layout::ALL` is refused before its storage is ever described.
+    if !layout::ALL.contains(&fmt) {
+        return None;
+    }
     let mut targets = match layout::sample_kind(fmt) {
         Some(SampleKind::U8) | None => HOP_TARGETS,
         Some(SampleKind::U16 { .. }) | Some(SampleKind::F32) => DEEP_HOP_TARGETS,
