@@ -537,11 +537,16 @@ fn rose_rgba(tag: &str) -> Option<(Vec<u8>, std::path::PathBuf)> {
 
 /// Run `ops` on the raw RGBA picture at `path` and read 8-bit RGBA back.
 fn magick_rgba(path: &std::path::Path, ops: &[&str]) -> Vec<u8> {
+    try_magick_rgba(path, ops).expect("magick ran")
+}
+
+/// [`magick_rgba`], `None` when `magick` reports an error.
+fn try_magick_rgba(path: &std::path::Path, ops: &[&str]) -> Option<Vec<u8>> {
     let src = format!("rgba:{}", path.display());
     let mut args = vec!["-size", "70x46", "-depth", "8", src.as_str()];
     args.extend_from_slice(ops);
     args.extend_from_slice(&["-depth", "8", "rgba:-"]);
-    magick(&args).expect("magick ran")
+    magick(&args)
 }
 
 fn worst(a: &[u8], b: &[u8]) -> i32 {
@@ -634,6 +639,68 @@ fn threshold_family_matches_magick() {
         let w = worst(&got.planes[0].data, &want);
         eprintln!("{ops:?}: worst {w}");
         assert!(w <= 1, "{ops:?}: off by {w} codes");
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn splice_and_chop_match_magick() {
+    use oxideav_image_filter::{Chop, Gravity, Splice};
+    let Some((src, path)) = rose_rgba("splice") else {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    };
+    let input = rgba_frame(&src);
+    let gravities = [
+        ("NorthWest", Gravity::NorthWest),
+        ("North", Gravity::North),
+        ("NorthEast", Gravity::NorthEast),
+        ("West", Gravity::West),
+        ("Center", Gravity::Centre),
+        ("East", Gravity::East),
+        ("SouthWest", Gravity::SouthWest),
+        ("South", Gravity::South),
+        ("SouthEast", Gravity::SouthEast),
+    ];
+    for (gname, g) in gravities {
+        for (w, h, x, y) in [
+            (7, 5, 0, 0),
+            (7, 5, 3, 2),
+            (4, 3, -2, -1),
+            (1, 6, 9, 4),
+            (12, 2, -5, 44),
+        ] {
+            let geo = format!("{w}x{h}{x:+}{y:+}");
+            let want = try_magick_rgba(
+                &path,
+                &[
+                    "-background",
+                    "#3366cc80",
+                    "-gravity",
+                    gname,
+                    "-splice",
+                    &geo,
+                ],
+            );
+            let got = Splice::new(w, h, x as i64, y as i64)
+                .with_gravity(g)
+                .with_background([0.2, 0.4, 0.8, 128.0 / 255.0])
+                .apply(&input, ROSE_RGBA);
+            match want {
+                Some(want) => {
+                    let got = got.unwrap();
+                    assert_eq!(got.planes[0].stride, (70 + w as usize) * 4);
+                    assert_eq!(got.planes[0].data, want, "splice {gname} {geo}");
+                }
+                None => assert!(got.is_err(), "splice {gname} {geo}: magick refuses it"),
+            }
+            let want = magick_rgba(&path, &["-gravity", gname, "-chop", &geo]);
+            let got = Chop::new(w, h, x as i64, y as i64)
+                .with_gravity(g)
+                .apply(&input, ROSE_RGBA)
+                .unwrap();
+            assert_eq!(got.planes[0].data, want, "chop {gname} {geo}");
+        }
     }
     let _ = std::fs::remove_file(&path);
 }

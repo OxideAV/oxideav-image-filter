@@ -44,7 +44,7 @@ impl Transpose {
 }
 
 /// Packed layouts with one plane whose positions can move freely.
-const PACKED: &[PixelFormat] = &[
+pub(crate) const PACKED: &[PixelFormat] = &[
     PixelFormat::Gray8,
     PixelFormat::Rgb24,
     PixelFormat::Rgba,

@@ -69,6 +69,7 @@ pub fn all_single() -> Vec<Entry> {
         e("Charcoal", Charcoal::new(0.5)),
         e("ChromaticAberration", ChromaticAberration::new(1, 0, -1, 0)),
         e("Clamp", Clamp::new(10, 200)),
+        e("Chop", Chop::new(2, 1, 1, 1)),
         e("Clarity", Clarity::new(0.5)),
         e(
             "ColorBalance",
@@ -257,6 +258,7 @@ pub fn all_single() -> Vec<Entry> {
             )
             .expect("two points"),
         ),
+        e("Splice", Splice::new(2, 1, 1, 1)),
         e("Spread", Spread::new(1)),
         e("SrgbTransform", SrgbTransform::decode()),
         e("Srt", Srt::new((0.5, 0.5), (1.0, 1.0), 0.0, (0.0, 0.0))),

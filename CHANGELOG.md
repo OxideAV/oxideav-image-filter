@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seeded `RandomThreshold`; every rule measured on `magick`, and
   `tests/magick_ops.rs` matches it on an RGBA `rose:` within one 8-bit
   code (exact for all but the ramps)
+- `Splice` / `Chop` (#12 `-splice` / `-chop`): insert background rows
+  and columns or remove them, placed by offset and gravity with the
+  positioning rules measured on `magick` (including its west-gravity
+  row centring and the negative-offset fills); bit-exact against
+  `magick` for every gravity on `rose:` with alpha
 
 - `MorphologyChain::new(first, second)`, and a `with_<field>` builder
   setter for every public field of the filter parameter structs below
