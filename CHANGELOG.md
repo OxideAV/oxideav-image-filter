@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.4...v0.2.0) - 2026-11-07
+
+### Other
+
+- API hygiene: non_exhaustive parameter records + enums, builders, hidden internals
+
 ### Added
 
 - `MorphologyChain::new(first, second)`, and a `with_<field>` builder
