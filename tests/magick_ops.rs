@@ -6,12 +6,15 @@ use std::process::Command;
 use oxideav_core::{PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{ImageFilter, Transpose, VideoStreamParams};
 
-/// `true` for the reference build (ImageMagick 7.1 Q16-HDRI; other builds clamp or round differently).
+/// `true` for the reference build (ImageMagick 7.1.2 Q16-HDRI, as on
+/// macOS / Linux). The Windows runner's build ranks `-evaluate-sequence
+/// Median` differently and clamps between steps, so it is skipped there.
 fn reference() -> bool {
-    magick(&["-version"]).is_some_and(|v| {
-        let v = String::from_utf8_lossy(&v).to_string();
-        v.contains("ImageMagick 7.1") && v.contains("Q16-HDRI")
-    })
+    !cfg!(windows)
+        && magick(&["-version"]).is_some_and(|v| {
+            let v = String::from_utf8_lossy(&v).to_string();
+            v.contains("ImageMagick 7.1.2") && v.contains("Q16-HDRI")
+        })
 }
 
 fn magick(args: &[&str]) -> Option<Vec<u8>> {
