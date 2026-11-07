@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   positioning rules measured on `magick` (including its west-gravity
   row centring and the negative-offset fills); bit-exact against
   `magick` for every gravity on `rose:` with alpha
+- `Raise` (#12 `-raise` / `+raise`): the raised or sunk bevel, its
+  diagonal corner split and its four shading factors measured on
+  `magick`; within one 8-bit code of `magick` on an RGBA `rose:`
 
 - `MorphologyChain::new(first, second)`, and a `with_<field>` builder
   setter for every public field of the filter parameter structs below

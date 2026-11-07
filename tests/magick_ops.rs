@@ -704,3 +704,27 @@ fn splice_and_chop_match_magick() {
     }
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn raise_matches_magick() {
+    use oxideav_image_filter::Raise;
+    let Some((src, path)) = rose_rgba("raise") else {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    };
+    let input = rgba_frame(&src);
+    for (w, h) in [(6u32, 4u32), (3, 9), (1, 1), (20, 2)] {
+        for raised in [true, false] {
+            let flag = if raised { "-raise" } else { "+raise" };
+            let want = magick_rgba(&path, &[flag, &format!("{w}x{h}")]);
+            let got = Raise::new(w, h)
+                .with_raised(raised)
+                .apply(&input, ROSE_RGBA)
+                .unwrap();
+            let worst = worst(&got.planes[0].data, &want);
+            assert!(worst <= 1, "{flag} {w}x{h}: off by {worst}");
+        }
+    }
+    assert!(Raise::new(35, 1).apply(&input, ROSE_RGBA).is_err());
+    let _ = std::fs::remove_file(&path);
+}

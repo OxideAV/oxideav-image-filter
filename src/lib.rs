@@ -796,6 +796,7 @@ pub mod posterize_channels;
 pub mod prewitt;
 pub mod quantize;
 pub mod radial_blur;
+pub mod raise;
 pub mod registry;
 pub mod reinhard;
 pub mod reinhard_extended;
@@ -967,6 +968,7 @@ pub use posterize_channels::PosterizeChannels;
 pub use prewitt::{Prewitt, PrewittMagnitude};
 pub use quantize::Quantize;
 pub use radial_blur::RadialBlur;
+pub use raise::Raise;
 pub use registry::register;
 // Internal: `oxideav_core::register!` dispatch shim re-export, not user-facing API.
 #[doc(hidden)]
