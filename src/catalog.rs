@@ -233,6 +233,8 @@ pub fn all_single() -> Vec<Entry> {
         e("Rotate", Rotate::new(90.0)),
         e("Scharr", Scharr::new()),
         e("SelectiveColor", SelectiveColor::new()),
+        e("Sample", Sample::new(5, 3)),
+        e("Scale", Scale::new(5, 3)),
         e("Sepia", Sepia::new(0.8)),
         e("Shade", Shade::new(30.0, 30.0)),
         e("Shade(color)", Shade::new(30.0, 30.0).with_color(true)),

@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `magick -evaluate-sequence` on three `rose:` variants (13 of 15
   exact); `separate` / `combine_channels` (`-separate` / `-combine`),
   exact
+- `Sample` / `Scale` (#10 `-sample` / `-scale`): point sampling with
+  `magick`'s boundary rule (a centre on a pixel boundary takes the lower
+  pixel; whole pixels copied, every packed layout) and the exact box
+  average in both directions (alpha-weighted); bit-exact against
+  `magick` shrinking and enlarging, RGB and RGBA
 - `Raise` (#12 `-raise` / `+raise`): the raised or sunk bevel, its
   diagonal corner split and its four shading factors measured on
   `magick`; within one 8-bit code of `magick` on an RGBA `rose:`

@@ -121,6 +121,8 @@ const CHANGES_EXTENT: &[&str] = &[
     "GravityTranslate",
     "Resize",
     "Rotate",
+    "Sample",
+    "Scale",
     "Shave",
     "Splice",
     "Transpose",

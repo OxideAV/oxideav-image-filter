@@ -814,3 +814,60 @@ fn evaluate_sequence_separate_combine_match_magick() {
         let _ = std::fs::remove_file(p.trim_start_matches("rgb:"));
     }
 }
+
+#[test]
+fn sample_and_scale_match_magick() {
+    use oxideav_image_filter::{Sample, Scale};
+    if !reference() {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    }
+    let src = magick(&["rose:", "-depth", "8", "rgb:-"]).unwrap();
+    let input = VideoFrame {
+        pts: None,
+        planes: vec![VideoPlane {
+            stride: 210,
+            data: src,
+        }],
+    };
+    let p = VideoStreamParams {
+        format: PixelFormat::Rgb24,
+        width: 70,
+        height: 46,
+    };
+    for (w, h) in [
+        (31u32, 19u32),
+        (35, 23),
+        (140, 92),
+        (101, 67),
+        (7, 5),
+        (70, 13),
+    ] {
+        let geo = format!("{w}x{h}!");
+        for (op, f) in [
+            (
+                "-sample",
+                Box::new(Sample::new(w, h)) as Box<dyn ImageFilter>,
+            ),
+            ("-scale", Box::new(Scale::new(w, h))),
+        ] {
+            let want = magick(&["rose:", op, &geo, "-depth", "8", "rgb:-"]).unwrap();
+            let got = f.apply(&input, p).unwrap();
+            let worst = worst(&got.planes[0].data, &want);
+            eprintln!("{op} {geo}: worst {worst}");
+            assert!(worst <= 1, "{op} {geo}: off by {worst}");
+        }
+    }
+    // With alpha.
+    let (src, path) = rose_rgba("scale").unwrap();
+    let input = rgba_frame(&src);
+    for (w, h) in [(31u32, 19u32), (101, 67)] {
+        let geo = format!("{w}x{h}!");
+        let want = magick_rgba(&path, &["-scale", &geo]);
+        let got = Scale::new(w, h).apply(&input, ROSE_RGBA).unwrap();
+        let worst = worst(&got.planes[0].data, &want);
+        eprintln!("-scale {geo} RGBA: worst {worst}");
+        assert!(worst <= 1, "-scale {geo} RGBA: off by {worst}");
+    }
+    let _ = std::fs::remove_file(&path);
+}
