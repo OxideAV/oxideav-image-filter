@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- the threshold family of `-white-threshold`, `-black-threshold`,
+  `-range-threshold`, `-color-threshold` and `-random-threshold` (#12):
+  `WhiteThreshold` / `BlackThreshold` (intensity against per-channel
+  thresholds by default, own values under a `ChannelMask`, alpha
+  threshold `1.0` unless given), `RangeThreshold` (soft or hard
+  band-pass), `ColorThreshold` (opaque white inside an RGBA box) and the
+  seeded `RandomThreshold`; every rule measured on `magick`, and
+  `tests/magick_ops.rs` matches it on an RGBA `rose:` within one 8-bit
+  code (exact for all but the ramps)
+
 - `MorphologyChain::new(first, second)`, and a `with_<field>` builder
   setter for every public field of the filter parameter structs below
   that lacked one, so callers can build them without struct literals.

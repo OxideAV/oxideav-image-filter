@@ -495,6 +495,25 @@ pub fn run(
     Ok(kernel(img)?.into_frame(input.pts))
 }
 
+/// Run `kernel` on an 8-bit packed (`Gray8` / `Rgb24` / `Rgba`) or a
+/// packed-float frame: the 8-bit picture is widened (`v / 255`) and the
+/// result narrowed back with rounding; a float picture keeps its
+/// out-of-range values.
+#[doc(hidden)]
+pub fn run_any(
+    input: &VideoFrame,
+    params: VideoStreamParams,
+    kernel: impl FnOnce(FloatImage) -> Result<FloatImage, Error>,
+) -> Result<VideoFrame, Error> {
+    if is_float(params.format) {
+        return run(input, params, kernel);
+    }
+    let img = kernel(widen_u8(input, params)?)?;
+    let mut out = narrow_u8(&img);
+    out.pts = input.pts;
+    Ok(out)
+}
+
 /// Run a per-sample tone function on a packed-float frame (alpha
 /// untouched).
 #[doc(hidden)]

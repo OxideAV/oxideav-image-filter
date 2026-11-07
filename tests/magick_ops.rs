@@ -504,3 +504,136 @@ fn kmeans_from_seeds_matches_magick() {
         }
     }
 }
+
+/// `rose:` with a vertical alpha ramp, as 8-bit RGBA, plus the path of a
+/// raw copy `magick` can read back (`-size 70x46 -depth 8 rgba:<path>`).
+fn rose_rgba(tag: &str) -> Option<(Vec<u8>, std::path::PathBuf)> {
+    if !reference() {
+        return None;
+    }
+    let data = magick(&[
+        "rose:",
+        "(",
+        "-size",
+        "70x46",
+        "gradient:white-gray20",
+        ")",
+        "-alpha",
+        "off",
+        "-compose",
+        "CopyOpacity",
+        "-composite",
+        "-depth",
+        "8",
+        "rgba:-",
+    ])?;
+    let path = std::env::temp_dir().join(format!(
+        "oxideav-image-filter-{tag}-{}.rgba",
+        std::process::id()
+    ));
+    std::fs::write(&path, &data).ok()?;
+    Some((data, path))
+}
+
+/// Run `ops` on the raw RGBA picture at `path` and read 8-bit RGBA back.
+fn magick_rgba(path: &std::path::Path, ops: &[&str]) -> Vec<u8> {
+    let src = format!("rgba:{}", path.display());
+    let mut args = vec!["-size", "70x46", "-depth", "8", src.as_str()];
+    args.extend_from_slice(ops);
+    args.extend_from_slice(&["-depth", "8", "rgba:-"]);
+    magick(&args).expect("magick ran")
+}
+
+fn worst(a: &[u8], b: &[u8]) -> i32 {
+    assert_eq!(a.len(), b.len());
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (*x as i32 - *y as i32).abs())
+        .max()
+        .unwrap_or(0)
+}
+
+const ROSE_RGBA: VideoStreamParams = VideoStreamParams {
+    format: PixelFormat::Rgba,
+    width: 70,
+    height: 46,
+};
+
+fn rgba_frame(data: &[u8]) -> VideoFrame {
+    VideoFrame {
+        pts: None,
+        planes: vec![VideoPlane {
+            stride: 70 * 4,
+            data: data.to_vec(),
+        }],
+    }
+}
+
+#[test]
+fn threshold_family_matches_magick() {
+    use oxideav_image_filter::{
+        BlackThreshold, ChannelMask, ColorThreshold, RangeThreshold, WhiteThreshold,
+    };
+    let Some((src, path)) = rose_rgba("thresholds") else {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    };
+    let input = rgba_frame(&src);
+    let rg = ChannelMask::new(true, true, false, false);
+    let cases: Vec<(Vec<&str>, Box<dyn ImageFilter>)> = vec![
+        (
+            vec!["-white-threshold", "45%"],
+            Box::new(WhiteThreshold::new(0.45)),
+        ),
+        (
+            vec!["-white-threshold", "30%,50%,20%,60%"],
+            Box::new(WhiteThreshold::per_channel(0.3, 0.5, 0.2, 0.6)),
+        ),
+        (
+            vec!["-channel", "RG", "-white-threshold", "40%"],
+            Box::new(WhiteThreshold::new(0.4).with_channels(rg)),
+        ),
+        (
+            vec!["-black-threshold", "35%"],
+            Box::new(BlackThreshold::new(0.35)),
+        ),
+        (
+            vec!["-black-threshold", "35%,20%,25%,50%"],
+            Box::new(BlackThreshold::per_channel(0.35, 0.2, 0.25, 0.5)),
+        ),
+        (
+            vec!["-channel", "RGBA", "-black-threshold", "40%"],
+            Box::new(BlackThreshold::new(0.4).with_channels(ChannelMask::ALL)),
+        ),
+        (
+            vec!["-range-threshold", "10%,30%,50%,70%"],
+            Box::new(RangeThreshold::new(0.1, 0.3, 0.5, 0.7)),
+        ),
+        (
+            vec!["-channel", "RGB", "-range-threshold", "10%,30%,50%,70%"],
+            Box::new(RangeThreshold::new(0.1, 0.3, 0.5, 0.7).with_channels(ChannelMask::RGB)),
+        ),
+        (
+            vec!["-range-threshold", "20%,20%,60%,60%"],
+            Box::new(RangeThreshold::new(0.2, 0.2, 0.6, 0.6)),
+        ),
+        (
+            vec![
+                "-color-threshold",
+                "rgba(40%,0%,0%,0.5)-rgba(100%,60%,60%,1)",
+            ],
+            Box::new(ColorThreshold::new(
+                [0.4, 0.0, 0.0, 0.5],
+                [1.0, 0.6, 0.6, 1.0],
+            )),
+        ),
+    ];
+    for (ops, f) in &cases {
+        let want = magick_rgba(&path, ops);
+        let got = f.apply(&input, ROSE_RGBA).unwrap();
+        let w = worst(&got.planes[0].data, &want);
+        eprintln!("{ops:?}: worst {w}");
+        assert!(w <= 1, "{ops:?}: off by {w} codes");
+    }
+    let _ = std::fs::remove_file(&path);
+}

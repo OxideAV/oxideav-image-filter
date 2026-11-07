@@ -701,6 +701,7 @@ pub mod canvas;
 pub mod catalog;
 pub mod channel_extract;
 pub mod channel_mixer;
+pub mod channel_threshold;
 pub mod charcoal;
 pub mod chromatic_aberration;
 pub mod clamp;
@@ -862,6 +863,9 @@ pub use canny::Canny;
 pub use canvas::Canvas;
 pub use channel_extract::{Channel, ChannelExtract};
 pub use channel_mixer::ChannelMixer;
+pub use channel_threshold::{
+    BlackThreshold, ColorThreshold, RandomThreshold, RangeThreshold, WhiteThreshold,
+};
 pub use charcoal::Charcoal;
 pub use chromatic_aberration::ChromaticAberration;
 pub use clamp::Clamp;

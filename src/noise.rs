@@ -125,9 +125,14 @@ impl AddNoise {
 }
 
 /// SplitMix64 with Box–Muller and Knuth / normal-approximation Poisson.
-struct Rng(u64);
+pub(crate) struct Rng(u64);
 
 impl Rng {
+    /// A generator from `seed`.
+    pub(crate) fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
     fn next(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
@@ -137,7 +142,7 @@ impl Rng {
     }
 
     /// Uniform in `[0, 1)`.
-    fn unit(&mut self) -> f64 {
+    pub(crate) fn unit(&mut self) -> f64 {
         (self.next() >> 11) as f64 / (1u64 << 53) as f64
     }
 

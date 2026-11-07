@@ -50,6 +50,7 @@ pub fn all_single() -> Vec<Entry> {
         e("AutoTrim", AutoTrim::new()),
         e("BarrelInverse", BarrelInverse::new(0.0, 0.0, 0.0, 1.0)),
         e("BilateralBlur", BilateralBlur::new(1, 1.0, 20.0)),
+        e("BlackThreshold", BlackThreshold::new(0.4)),
         e("Bloom", Bloom::new(128, 1, 0.5)),
         e("BlueShift", BlueShift::new(1.5)),
         e("Blur", Blur::new(1)),
@@ -58,6 +59,10 @@ pub fn all_single() -> Vec<Entry> {
         e("BwMix", BwMix::new(0.3, 0.6, 0.1)),
         e("Canny", Canny::new(1, 1.0, 20, 60)),
         e("Canvas", Canvas::new([1, 2, 3, 255])),
+        e(
+            "ColorThreshold",
+            ColorThreshold::new([0.2, 0.2, 0.2, 0.0], [0.8, 0.8, 0.8, 1.0]),
+        ),
         e("ChannelExtract", ChannelExtract::new(Channel::Red)),
         e("ChannelExtract(U)", ChannelExtract::new(Channel::U)),
         e("ChannelMixer", ChannelMixer::identity()),
@@ -259,6 +264,11 @@ pub fn all_single() -> Vec<Entry> {
         e("Swirl", Swirl::new(45.0)),
         e("Temperature", Temperature::new(0.3)),
         e("Threshold", Threshold::new(128)),
+        e(
+            "RandomThreshold",
+            RandomThreshold::new(0.3, 0.6).with_seed(7),
+        ),
+        e("RangeThreshold", RangeThreshold::new(0.1, 0.3, 0.6, 0.9)),
         e("TiltShift", TiltShift::new(0.5, 0.3, 0.2, 1, 1.0)),
         e("Tint", Tint::new([200, 100, 50, 255], 0.5)),
         e("Toon", Toon::new(4, 64, [0, 0, 0])),
@@ -270,6 +280,7 @@ pub fn all_single() -> Vec<Entry> {
         e("Vignette", Vignette::new(0.5, 0.5, 0.5, 0.3)),
         e("VignetteSoft", VignetteSoft::new(0.5, 0.5, 0.3, 0.8)),
         e("Wave", Wave::new(1.0, 4.0)),
+        e("WhiteThreshold", WhiteThreshold::new(0.6)),
         e(
             "WeightedDistanceTransform",
             WeightedDistanceTransform::new(1.0),
