@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   luma (`0.21267 / 0.71526 / 0.07217`), all measured on `magick`;
   `Cdl::from_xml` reads the colour-correction document; bit-exact
   against `magick` on an RGBA `rose:`
+- `Shear` (#12 `-shear XxY` / `shearImage`): a row pass then a column
+  pass onto the sheared parallelogram's bounding canvas, linear
+  resampling, background fill; the extents, offsets and pivots measured
+  on `magick` — bit-exact for single-axis shears (either sign) and for
+  most angle pairs, ≥ 59 dB for the rest
 - `Raise` (#12 `-raise` / `+raise`): the raised or sunk bevel, its
   diagonal corner split and its four shading factors measured on
   `magick`; within one 8-bit code of `magick` on an RGBA `rose:`

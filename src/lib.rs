@@ -817,6 +817,7 @@ pub mod shade;
 pub mod shadow_highlight;
 pub mod sharpen;
 pub mod shave;
+pub mod shear;
 #[doc(hidden)]
 pub mod side_channels;
 pub mod sigmoidal_contrast;
@@ -993,6 +994,7 @@ pub use shade::Shade;
 pub use shadow_highlight::ShadowHighlight;
 pub use sharpen::Sharpen;
 pub use shave::Shave;
+pub use shear::Shear;
 pub use sigmoidal_contrast::SigmoidalContrast;
 pub use signed_distance_field::SignedDistanceField;
 pub use sketch::Sketch;

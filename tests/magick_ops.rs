@@ -907,3 +907,83 @@ fn cdl_matches_magick() {
     }
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn shear_matches_magick() {
+    use oxideav_image_filter::Shear;
+    if !reference() {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    }
+    let src = magick(&["rose:", "-depth", "8", "rgb:-"]).unwrap();
+    let input = VideoFrame {
+        pts: None,
+        planes: vec![VideoPlane {
+            stride: 210,
+            data: src,
+        }],
+    };
+    let p = VideoStreamParams {
+        format: PixelFormat::Rgb24,
+        width: 70,
+        height: 46,
+    };
+    for (x, y) in [
+        (10.0, 0.0),
+        (30.0, 0.0),
+        (-20.0, 0.0),
+        (0.0, 10.0),
+        (0.0, -25.0),
+        (30.0, 20.0),
+        (20.0, 30.0),
+        (-15.0, 40.0),
+        (10.0, 10.0),
+        (40.0, 5.0),
+        (-30.0, -20.0),
+        (15.0, -40.0),
+        (-25.0, 15.0),
+        (5.0, 30.0),
+        (33.0, 33.0),
+    ] {
+        let geo = format!("{x}x{y}");
+        let dims = String::from_utf8(
+            magick(&["rose:", "-shear", &geo, "-format", "%w %h", "info:"]).unwrap(),
+        )
+        .unwrap();
+        let want = magick(&[
+            "rose:",
+            "-background",
+            "#204080",
+            "-shear",
+            &geo,
+            "-depth",
+            "8",
+            "rgb:-",
+        ])
+        .unwrap();
+        let got = Shear::new(x, y)
+            .with_background([32.0 / 255.0, 64.0 / 255.0, 128.0 / 255.0, 1.0])
+            .apply(&input, p)
+            .unwrap();
+        let gw = got.planes[0].stride / 3;
+        let gh = got.planes[0].data.len() / got.planes[0].stride;
+        assert_eq!(format!("{gw} {gh}"), dims.trim(), "-shear {geo} extent");
+        let w = worst(&got.planes[0].data, &want);
+        let mse = got.planes[0]
+            .data
+            .iter()
+            .zip(&want)
+            .map(|(a, b)| (*a as f64 - *b as f64).powi(2))
+            .sum::<f64>()
+            / want.len() as f64;
+        let psnr = 10.0 * (255.0f64 * 255.0 / mse.max(1e-12)).log10();
+        eprintln!("-shear {geo}: worst {w}, {psnr:.1} dB");
+        if x == 0.0 || y == 0.0 {
+            assert!(w <= 1, "-shear {geo}: off by {w}");
+        } else {
+            // Both angles: the column pass matches to within a fraction
+            // of a code on average, not bit-exactly (see the module docs).
+            assert!(psnr >= 50.0, "-shear {geo}: {psnr:.1} dB");
+        }
+    }
+}

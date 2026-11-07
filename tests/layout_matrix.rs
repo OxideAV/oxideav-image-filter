@@ -124,6 +124,7 @@ const CHANGES_EXTENT: &[&str] = &[
     "Sample",
     "Scale",
     "Shave",
+    "Shear",
     "Splice",
     "Transpose",
     "Transverse",
