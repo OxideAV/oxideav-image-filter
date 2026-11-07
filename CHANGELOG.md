@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   positioning rules measured on `magick` (including its west-gravity
   row centring and the negative-offset fills); bit-exact against
   `magick` for every gravity on `rose:` with alpha
+- ordered dither (#15): every map `magick -list threshold` names is
+  built in — `o3x3`, `o8x8`, the halftones `h4x4a` / `h6x6a` / `h8x8a`
+  / `h4x4o` / `h6x6o` / `h8x8o` / `h16x16o` and the circles `c5x5b` /
+  `c5x5w` / `c6x6b` / `c6x6w` / `c7x7b` / `c7x7w`, with their aliases —
+  their cells and divisors recovered black-box from `magick`'s output on
+  flat 16-bit pictures; `ThresholdMap::names`; all 19 maps bit-exact
+  against `magick` at 2, 3 and 6 levels on a ramp and on `rose:`
 - `Raise` (#12 `-raise` / `+raise`): the raised or sunk bevel, its
   diagonal corner split and its four shading factors measured on
   `magick`; within one 8-bit code of `magick` on an RGBA `rose:`
@@ -33,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- ordered dither quantises in binary64 and takes a sample that is a
+  16-bit code as that exact code, so a sample on a level boundary falls
+  on the same side as `magick`'s (one circle map at 3 levels differed)
 - `#[non_exhaustive]` on the filter parameter structs
   `AdaptiveThreshold`, `Affine`, `AnisotropicBlur`, `AutoTrim`,
   `BarrelInverse`, `BilateralBlur`, `Bloom`, `BlueShift`,

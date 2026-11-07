@@ -1,6 +1,7 @@
 //! Ordered dither against `magick -ordered-dither map,levels`, live when
 //! the binary is on the path: a 256 × 8 grey ramp and the `rose:`
-//! picture through every built-in map at 2, 3 and 6 levels, bit-exact.
+//! picture through every built-in map (all 19 `magick -list threshold`
+//! names) at 2, 3 and 6 levels, bit-exact.
 
 use std::process::Command;
 
@@ -51,7 +52,7 @@ fn built_in_maps_match_magick() {
                 data: src,
             }],
         };
-        for map in ["threshold", "checks", "o2x2", "o4x4"] {
+        for map in oxideav_image_filter::ThresholdMap::names() {
             for levels in ["", ",3", ",6"] {
                 let spec = format!("{map}{levels}");
                 let mut a: Vec<&str> = src_args.to_vec();
@@ -78,8 +79,9 @@ fn built_in_maps_match_magick() {
                     .max()
                     .unwrap();
                 eprintln!("{label} {spec}: {bad}/{} differ, worst {worst}", g.len());
-                assert!(
-                    bad * 100 <= g.len(),
+                assert_eq!(
+                    bad,
+                    0,
                     "{label} {spec}: {bad} of {} samples differ",
                     g.len()
                 );
