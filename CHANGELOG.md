@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their cells and divisors recovered black-box from `magick`'s output on
   flat 16-bit pictures; `ThresholdMap::names`; all 19 maps bit-exact
   against `magick` at 2, 3 and 6 levels on a ramp and on `rose:`
+- image lists (#12): `evaluate_sequence` with `SequenceOp` Mean,
+  Median (whole pixels ranked by sample sum), Min, Max, Add, Abs,
+  Subtract, Multiply, Divide, RootMeanSquare, AddModulus, And, Or, Xor
+  and Set — each rule measured on `magick`, all within one 8-bit code of
+  `magick -evaluate-sequence` on three `rose:` variants (13 of 15
+  exact); `separate` / `combine_channels` (`-separate` / `-combine`),
+  exact
 - `Raise` (#12 `-raise` / `+raise`): the raised or sunk bevel, its
   diagonal corner split and its four shading factors measured on
   `magick`; within one 8-bit code of `magick` on an RGBA `rose:`

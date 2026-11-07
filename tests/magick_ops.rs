@@ -728,3 +728,89 @@ fn raise_matches_magick() {
     assert!(Raise::new(35, 1).apply(&input, ROSE_RGBA).is_err());
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn evaluate_sequence_separate_combine_match_magick() {
+    use oxideav_image_filter::deep::{FloatImage, narrow_u8, widen_u8};
+    use oxideav_image_filter::{SequenceOp, combine_channels, evaluate_sequence, separate};
+    if !reference() {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    }
+    let p = VideoStreamParams {
+        format: PixelFormat::Rgb24,
+        width: 70,
+        height: 46,
+    };
+    let variants: [&[&str]; 3] = [
+        &["rose:"],
+        &["rose:", "-flop"],
+        &["rose:", "-modulate", "80,40,150"],
+    ];
+    let dir = std::env::temp_dir();
+    let mut paths = Vec::new();
+    let mut imgs: Vec<FloatImage> = Vec::new();
+    for (i, v) in variants.iter().enumerate() {
+        let mut a = v.to_vec();
+        a.extend(["-depth", "8", "rgb:-"]);
+        let data = magick(&a).unwrap();
+        let path = dir.join(format!("oxideav-if-seq-{i}-{}.rgb", std::process::id()));
+        std::fs::write(&path, &data).unwrap();
+        paths.push(format!("rgb:{}", path.display()));
+        let f = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane { stride: 210, data }],
+        };
+        imgs.push(widen_u8(&f, p).unwrap());
+    }
+    for name in [
+        "Mean",
+        "Median",
+        "Min",
+        "Max",
+        "Add",
+        "Abs",
+        "Subtract",
+        "Multiply",
+        "Divide",
+        "RMS",
+        "AddModulus",
+        "And",
+        "Or",
+        "Xor",
+        "Set",
+    ] {
+        let mut a = vec!["-size", "70x46", "-depth", "8"];
+        a.extend(paths.iter().map(String::as_str));
+        a.extend(["-evaluate-sequence", name, "-depth", "8", "rgb:-"]);
+        let want = magick(&a).unwrap();
+        let op = SequenceOp::from_name(name).unwrap();
+        let got = narrow_u8(&evaluate_sequence(&imgs, op).unwrap());
+        let w = worst(&got.planes[0].data, &want);
+        eprintln!("evaluate-sequence {name}: worst {w}");
+        assert!(w <= 1, "{name}: off by {w}");
+    }
+    // -separate then -combine is the identity; each part matches magick.
+    let parts = separate(&imgs[2]);
+    for (i, part) in parts.iter().enumerate() {
+        let want = magick(&[
+            "-size",
+            "70x46",
+            "-depth",
+            "8",
+            &paths[2],
+            "-channel",
+            ["R", "G", "B"][i],
+            "-separate",
+            "-depth",
+            "8",
+            "gray:-",
+        ])
+        .unwrap();
+        assert_eq!(narrow_u8(part).planes[0].data, want, "channel {i}");
+    }
+    assert_eq!(combine_channels(&parts).unwrap(), imgs[2]);
+    for p in &paths {
+        let _ = std::fs::remove_file(p.trim_start_matches("rgb:"));
+    }
+}
