@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pixel; whole pixels copied, every packed layout) and the exact box
   average in both directions (alpha-weighted); bit-exact against
   `magick` shrinking and enlarging, RGB and RGBA
+- `Cdl` (#12 `-cdl` / `colorDecisionListImage`): slope / offset /
+  power clamped after the power, then saturation about the input pixel's
+  luma (`0.21267 / 0.71526 / 0.07217`), all measured on `magick`;
+  `Cdl::from_xml` reads the colour-correction document; bit-exact
+  against `magick` on an RGBA `rose:`
 - `Raise` (#12 `-raise` / `+raise`): the raised or sunk bevel, its
   diagonal corner split and its four shading factors measured on
   `magick`; within one 8-bit code of `magick` on an RGBA `rose:`

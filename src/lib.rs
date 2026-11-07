@@ -699,6 +699,7 @@ pub mod canny;
 pub mod canvas;
 #[doc(hidden)]
 pub mod catalog;
+pub mod cdl;
 pub mod channel_extract;
 pub mod channel_mixer;
 pub mod channel_threshold;
@@ -865,6 +866,7 @@ pub use brightness_contrast::BrightnessContrast;
 pub use bw_mix::BwMix;
 pub use canny::Canny;
 pub use canvas::Canvas;
+pub use cdl::Cdl;
 pub use channel_extract::{Channel, ChannelExtract};
 pub use channel_mixer::ChannelMixer;
 pub use channel_threshold::{

@@ -69,6 +69,14 @@ pub fn all_single() -> Vec<Entry> {
         e("Charcoal", Charcoal::new(0.5)),
         e("ChromaticAberration", ChromaticAberration::new(1, 0, -1, 0)),
         e("Clamp", Clamp::new(10, 200)),
+        e(
+            "Cdl",
+            Cdl::new()
+                .with_slope([0.9, 1.1, 1.0])
+                .with_offset([0.05, -0.02, 0.0])
+                .with_power([1.0, 0.9, 1.2])
+                .with_saturation(0.8),
+        ),
         e("Chop", Chop::new(2, 1, 1, 1)),
         e("Clarity", Clarity::new(0.5)),
         e(

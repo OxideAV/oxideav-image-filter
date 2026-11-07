@@ -874,3 +874,36 @@ fn sample_and_scale_match_magick() {
     }
     let _ = std::fs::remove_file(&path);
 }
+
+#[test]
+fn cdl_matches_magick() {
+    use oxideav_image_filter::Cdl;
+    let Some((src, path)) = rose_rgba("cdl") else {
+        eprintln!("magick not on the path: live comparison skipped");
+        return;
+    };
+    let input = rgba_frame(&src);
+    for (slope, offset, power, sat) in [
+        ("0.9 1.2 0.5", "0.4 -0.5 0.6", "1.0 0.8 1.5", "0.85"),
+        ("1.1 0.95 1.3", "-0.05 0.02 0.0", "0.7 1.0 2.0", "1.4"),
+    ] {
+        let xml = format!(
+            "<ColorCorrectionCollection><ColorCorrection id=\"a\"><SOPNode>\
+             <Slope>{slope}</Slope><Offset>{offset}</Offset><Power>{power}</Power>\
+             </SOPNode><SATNode><Saturation>{sat}</Saturation></SATNode>\
+             </ColorCorrection></ColorCorrectionCollection>"
+        );
+        let cc = std::env::temp_dir().join(format!("oxideav-if-cdl-{}.cc", std::process::id()));
+        std::fs::write(&cc, &xml).unwrap();
+        let want = magick_rgba(&path, &["-cdl", cc.to_str().unwrap()]);
+        let got = Cdl::from_xml(&xml)
+            .unwrap()
+            .apply(&input, ROSE_RGBA)
+            .unwrap();
+        let w = worst(&got.planes[0].data, &want);
+        eprintln!("cdl {slope} / {offset} / {power} / {sat}: worst {w}");
+        assert!(w <= 1, "cdl off by {w}");
+        let _ = std::fs::remove_file(&cc);
+    }
+    let _ = std::fs::remove_file(&path);
+}
