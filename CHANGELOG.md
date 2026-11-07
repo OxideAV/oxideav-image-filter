@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.4...v0.2.0) - 2026-11-07
+
+### Other
+
+- the r484 Imagick operations
+- row and column passes with magick's extents, offsets and pivots ([#12](https://github.com/OxideAV/oxideav-image-filter/pull/12))
+- ASC colour decision list with magick's clamp and luma rules, bit-exact ([#12](https://github.com/OxideAV/oxideav-image-filter/pull/12))
+- live magick_ops comparisons pin the 7.1.2 reference build, skip the Windows runner's
+- sample / scale, bit-exact against magick ([#10](https://github.com/OxideAV/oxideav-image-filter/pull/10))
+- evaluate-sequence (15 operators), separate and combine, matched on magick ([#12](https://github.com/OxideAV/oxideav-image-filter/pull/12))
+- ordered dither: every magick threshold map built in, recovered black-box, bit-exact at 2/3/6 levels ([#15](https://github.com/OxideAV/oxideav-image-filter/pull/15))
+- raise / +raise bevel, matched on magick ([#12](https://github.com/OxideAV/oxideav-image-filter/pull/12))
+- splice / chop with gravity, bit-exact against magick ([#12](https://github.com/OxideAV/oxideav-image-filter/pull/12))
+- threshold family: white / black / range / color / random threshold, matched on magick ([#12](https://github.com/OxideAV/oxideav-image-filter/pull/12))
+- API hygiene: non_exhaustive parameter records + enums, builders, hidden internals
+
 ### Added
 
 - the threshold family of `-white-threshold`, `-black-threshold`,
