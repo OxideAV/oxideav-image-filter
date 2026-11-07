@@ -31,12 +31,21 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Blue-shift / moonlight effect.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct BlueShift {
     /// Scale divisor applied to all three output channels. The documented CLI
     /// uses `1.5` by default (so `255 / 1.5 = 170` is the saturation
     /// ceiling on the blue channel). `1.0` is a no-scale moonlight tint;
     /// larger values darken further.
     pub factor: f32,
+}
+
+impl BlueShift {
+    /// Builder-style setter for [`factor`](Self::factor).
+    pub fn with_factor(mut self, factor: f32) -> Self {
+        self.factor = factor;
+        self
+    }
 }
 
 impl Default for BlueShift {

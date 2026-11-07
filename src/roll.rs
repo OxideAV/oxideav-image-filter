@@ -24,6 +24,7 @@ use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Wrap-around translation of every pixel by `(dx, dy)`.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Roll {
     /// Horizontal shift in pixels. Positive shifts right, negative
     /// shifts left. Wraps modulo image width.
@@ -31,6 +32,19 @@ pub struct Roll {
     /// Vertical shift in pixels. Positive shifts down, negative shifts
     /// up. Wraps modulo image height.
     pub dy: i32,
+}
+
+impl Roll {
+    /// Builder-style setter for [`dx`](Self::dx).
+    pub fn with_dx(mut self, dx: i32) -> Self {
+        self.dx = dx;
+        self
+    }
+    /// Builder-style setter for [`dy`](Self::dy).
+    pub fn with_dy(mut self, dy: i32) -> Self {
+        self.dy = dy;
+        self
+    }
 }
 
 impl Roll {

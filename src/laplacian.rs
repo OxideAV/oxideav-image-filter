@@ -25,6 +25,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Laplacian (second-derivative) filter.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct Laplacian {
     /// Stencil radius. Currently only `1` is supported (3×3 kernel);
     /// reserved for a future 5×5 / 7×7 family.

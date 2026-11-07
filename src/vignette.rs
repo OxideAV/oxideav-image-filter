@@ -29,11 +29,35 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// "no falloff" (the image stays untouched outside the radius), so for
 /// any meaningful effect callers should pass a positive sigma.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Vignette {
     pub x: f32,
     pub y: f32,
     pub radius: f32,
     pub sigma: f32,
+}
+
+impl Vignette {
+    /// Builder-style setter for [`x`](Self::x).
+    pub fn with_x(mut self, x: f32) -> Self {
+        self.x = x;
+        self
+    }
+    /// Builder-style setter for [`y`](Self::y).
+    pub fn with_y(mut self, y: f32) -> Self {
+        self.y = y;
+        self
+    }
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: f32) -> Self {
+        self.radius = radius;
+        self
+    }
+    /// Builder-style setter for [`sigma`](Self::sigma).
+    pub fn with_sigma(mut self, sigma: f32) -> Self {
+        self.sigma = sigma;
+        self
+    }
 }
 
 impl Default for Vignette {

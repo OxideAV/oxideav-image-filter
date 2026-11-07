@@ -43,6 +43,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Directional shading from a virtual light source.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Shade {
     /// Light azimuth in degrees (rotation around the surface normal,
     /// `0` = +X direction, `90` = +Y direction).
@@ -55,6 +56,24 @@ pub struct Shade {
     /// each colour pixel is multiplied by the shading intensity so the
     /// original colour shows through.
     pub gray_only: bool,
+}
+
+impl Shade {
+    /// Builder-style setter for [`azimuth_degrees`](Self::azimuth_degrees).
+    pub fn with_azimuth_degrees(mut self, azimuth_degrees: f32) -> Self {
+        self.azimuth_degrees = azimuth_degrees;
+        self
+    }
+    /// Builder-style setter for [`elevation_degrees`](Self::elevation_degrees).
+    pub fn with_elevation_degrees(mut self, elevation_degrees: f32) -> Self {
+        self.elevation_degrees = elevation_degrees;
+        self
+    }
+    /// Builder-style setter for [`gray_only`](Self::gray_only).
+    pub fn with_gray_only(mut self, gray_only: bool) -> Self {
+        self.gray_only = gray_only;
+        self
+    }
 }
 
 impl Default for Shade {

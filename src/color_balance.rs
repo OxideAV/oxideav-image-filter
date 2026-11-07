@@ -29,6 +29,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Three-way ASC CDL-style colour balance.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ColorBalance {
     /// Per-channel additive offset applied before gamma. Sensible
     /// range is roughly `[-0.5, 0.5]`.
@@ -39,6 +40,24 @@ pub struct ColorBalance {
     pub gamma: [f32; 3],
     /// Per-channel multiplicative gain applied to the input.
     pub gain: [f32; 3],
+}
+
+impl ColorBalance {
+    /// Builder-style setter for [`lift`](Self::lift).
+    pub fn with_lift(mut self, lift: [f32; 3]) -> Self {
+        self.lift = lift;
+        self
+    }
+    /// Builder-style setter for [`gamma`](Self::gamma).
+    pub fn with_gamma(mut self, gamma: [f32; 3]) -> Self {
+        self.gamma = gamma;
+        self
+    }
+    /// Builder-style setter for [`gain`](Self::gain).
+    pub fn with_gain(mut self, gain: [f32; 3]) -> Self {
+        self.gain = gain;
+        self
+    }
 }
 
 impl Default for ColorBalance {

@@ -30,12 +30,21 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Relief filter with configurable light direction.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct EmbossDirectional {
     /// Light azimuth in degrees (CCW from East).
     pub azimuth_degrees: f32,
     /// Relief depth. `1.0` reproduces the classic look; higher numbers
     /// exaggerate contrast.
     pub depth: f32,
+}
+
+impl EmbossDirectional {
+    /// Builder-style setter for [`azimuth_degrees`](Self::azimuth_degrees).
+    pub fn with_azimuth_degrees(mut self, azimuth_degrees: f32) -> Self {
+        self.azimuth_degrees = azimuth_degrees;
+        self
+    }
 }
 
 impl Default for EmbossDirectional {

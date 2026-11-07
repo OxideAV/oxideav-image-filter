@@ -27,9 +27,23 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// applied above the local mean — bright biases the output toward
 /// black, dark biases toward white.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct AdaptiveThreshold {
     pub radius: u32,
     pub offset: i32,
+}
+
+impl AdaptiveThreshold {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
+    /// Builder-style setter for [`offset`](Self::offset).
+    pub fn with_offset(mut self, offset: i32) -> Self {
+        self.offset = offset;
+        self
+    }
 }
 
 impl Default for AdaptiveThreshold {

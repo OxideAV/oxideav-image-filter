@@ -70,6 +70,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// distance transforms; separable lower-envelope-of-parabolas per
 /// dimension).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct SignedDistanceField {
     /// Foreground threshold. Pixels with `value >= threshold` count as
     /// foreground (negative side of the field); everything else is
@@ -90,6 +91,14 @@ pub struct SignedDistanceField {
     /// interior and exterior have symmetric headroom. Clamped into
     /// `[0, 255]` at construction.
     pub midpoint: u8,
+}
+
+impl SignedDistanceField {
+    /// Builder-style setter for [`threshold`](Self::threshold).
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = threshold;
+        self
+    }
 }
 
 impl Default for SignedDistanceField {

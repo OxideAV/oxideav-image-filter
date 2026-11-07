@@ -18,6 +18,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Solid-colour border filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct BorderedFrame {
     /// Pixels of border on the left edge.
     pub left: u32,
@@ -29,6 +30,34 @@ pub struct BorderedFrame {
     pub bottom: u32,
     /// Border fill colour as `[R, G, B, A]`. For `Gray8` only `R` is used.
     pub colour: [u8; 4],
+}
+
+impl BorderedFrame {
+    /// Builder-style setter for [`left`](Self::left).
+    pub fn with_left(mut self, left: u32) -> Self {
+        self.left = left;
+        self
+    }
+    /// Builder-style setter for [`top`](Self::top).
+    pub fn with_top(mut self, top: u32) -> Self {
+        self.top = top;
+        self
+    }
+    /// Builder-style setter for [`right`](Self::right).
+    pub fn with_right(mut self, right: u32) -> Self {
+        self.right = right;
+        self
+    }
+    /// Builder-style setter for [`bottom`](Self::bottom).
+    pub fn with_bottom(mut self, bottom: u32) -> Self {
+        self.bottom = bottom;
+        self
+    }
+    /// Builder-style setter for [`colour`](Self::colour).
+    pub fn with_colour(mut self, colour: [u8; 4]) -> Self {
+        self.colour = colour;
+        self
+    }
 }
 
 impl Default for BorderedFrame {

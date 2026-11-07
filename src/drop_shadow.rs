@@ -29,6 +29,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Drop-shadow filter.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct DropShadow {
     /// Horizontal shadow offset in pixels (`+` shifts the shadow right).
     pub offset_x: i32,
@@ -42,6 +43,24 @@ pub struct DropShadow {
     pub opacity: f32,
     /// RGB colour of the shadow.
     pub colour: [u8; 3],
+}
+
+impl DropShadow {
+    /// Builder-style setter for [`offset_x`](Self::offset_x).
+    pub fn with_offset_x(mut self, offset_x: i32) -> Self {
+        self.offset_x = offset_x;
+        self
+    }
+    /// Builder-style setter for [`offset_y`](Self::offset_y).
+    pub fn with_offset_y(mut self, offset_y: i32) -> Self {
+        self.offset_y = offset_y;
+        self
+    }
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl Default for DropShadow {

@@ -32,6 +32,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Oil-paint stylise filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Paint {
     /// Window radius in pixels. The window is `(2 * radius + 1)²`.
     pub radius: u32,
@@ -39,6 +40,14 @@ pub struct Paint {
     /// Default `20`; smaller values create flatter / more cartoonish
     /// strokes, larger values approach an identity blur.
     pub levels: u32,
+}
+
+impl Paint {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl Default for Paint {

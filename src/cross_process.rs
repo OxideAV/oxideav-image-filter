@@ -30,6 +30,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Cross-processed film-look filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct CrossProcess {
     /// `[0, 1]` — blend the cross-processed result with the original.
     /// 0 = identity; 1 = full effect.
@@ -40,6 +41,14 @@ pub struct CrossProcess {
     /// Per-channel sigmoid contrast slope. Larger ⇒ steeper S. Defaults
     /// to `6.0` (a "moderate cross-process" pop).
     pub contrast: f32,
+}
+
+impl CrossProcess {
+    /// Builder-style setter for [`amount`](Self::amount).
+    pub fn with_amount(mut self, amount: f32) -> Self {
+        self.amount = amount;
+        self
+    }
 }
 
 impl Default for CrossProcess {

@@ -36,6 +36,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Zoom-blur filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ZoomBlur {
     /// Centre (normalised image coordinates): `(0.5, 0.5)` is the
     /// frame centre.
@@ -48,6 +49,24 @@ pub struct ZoomBlur {
     /// Number of samples along the radial line (≥ 2). Higher values
     /// look smoother but cost linearly more.
     pub samples: u32,
+}
+
+impl ZoomBlur {
+    /// Builder-style setter for [`centre_x`](Self::centre_x).
+    pub fn with_centre_x(mut self, centre_x: f32) -> Self {
+        self.centre_x = centre_x;
+        self
+    }
+    /// Builder-style setter for [`centre_y`](Self::centre_y).
+    pub fn with_centre_y(mut self, centre_y: f32) -> Self {
+        self.centre_y = centre_y;
+        self
+    }
+    /// Builder-style setter for [`strength`](Self::strength).
+    pub fn with_strength(mut self, strength: f32) -> Self {
+        self.strength = strength;
+        self
+    }
 }
 
 impl Default for ZoomBlur {

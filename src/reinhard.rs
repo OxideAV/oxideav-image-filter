@@ -35,6 +35,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Global Reinhard tone-mapping operator.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Reinhard {
     /// Reinhard "key" value `a` (paper eq. (2)). Controls the overall
     /// exposure: low-key (`0.045`) preserves shadows, mid-key (`0.18`,
@@ -53,6 +54,14 @@ pub struct Reinhard {
     /// toward neutral grey (the tone curve compresses chroma along with
     /// luminance), `s > 1` boosts it. Clamped non-negative.
     pub saturation: f32,
+}
+
+impl Reinhard {
+    /// Builder-style setter for [`key`](Self::key).
+    pub fn with_key(mut self, key: f32) -> Self {
+        self.key = key;
+        self
+    }
 }
 
 impl Default for Reinhard {

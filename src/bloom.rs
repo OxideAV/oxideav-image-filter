@@ -23,6 +23,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Bloom / glow filter.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Bloom {
     /// Luminance cut-off (`0..=255`) — only pixels at or above this
     /// value contribute to the bloom.
@@ -33,6 +34,24 @@ pub struct Bloom {
     /// Intensity multiplier for the additive composite. `1.0` adds the
     /// blurred highlights at full strength; `0.0` is identity.
     pub intensity: f32,
+}
+
+impl Bloom {
+    /// Builder-style setter for [`threshold`](Self::threshold).
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = threshold;
+        self
+    }
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
+    /// Builder-style setter for [`intensity`](Self::intensity).
+    pub fn with_intensity(mut self, intensity: f32) -> Self {
+        self.intensity = intensity;
+        self
+    }
 }
 
 impl Default for Bloom {

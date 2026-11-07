@@ -54,6 +54,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Four-corner perspective warp.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Perspective {
     pub src_corners: [(f32, f32); 4],
     pub dst_corners: [(f32, f32); 4],
@@ -64,6 +65,19 @@ pub struct Perspective {
     /// the input dimensions — handy when the destination quad escapes
     /// the source rectangle.
     pub output_size: Option<(u32, u32)>,
+}
+
+impl Perspective {
+    /// Builder-style setter for [`src_corners`](Self::src_corners).
+    pub fn with_src_corners(mut self, src_corners: [(f32, f32); 4]) -> Self {
+        self.src_corners = src_corners;
+        self
+    }
+    /// Builder-style setter for [`dst_corners`](Self::dst_corners).
+    pub fn with_dst_corners(mut self, dst_corners: [(f32, f32); 4]) -> Self {
+        self.dst_corners = dst_corners;
+        self
+    }
 }
 
 impl Perspective {

@@ -35,6 +35,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which extremum the morphology pass takes over its window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MorphologyOp {
     /// Pixel becomes the **maximum** of the window — bright regions
     /// expand. documented CLI: `-morphology Dilate`.
@@ -46,6 +47,7 @@ pub enum MorphologyOp {
 
 /// Structuring element shape.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StructuringElement {
     /// 3×3 square (8-connected). 9 taps.
     #[default]
@@ -79,10 +81,29 @@ impl StructuringElement {
 /// input. For `Open` and `Close` build it as two `Morphology` filters
 /// chained — see [`Morphology::open`] / [`Morphology::close`].
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Morphology {
     pub op: MorphologyOp,
     pub element: StructuringElement,
     pub iterations: u32,
+}
+
+impl Morphology {
+    /// Builder-style setter for [`op`](Self::op).
+    pub fn with_op(mut self, op: MorphologyOp) -> Self {
+        self.op = op;
+        self
+    }
+    /// Builder-style setter for [`element`](Self::element).
+    pub fn with_element(mut self, element: StructuringElement) -> Self {
+        self.element = element;
+        self
+    }
+    /// Builder-style setter for [`iterations`](Self::iterations).
+    pub fn with_iterations(mut self, iterations: u32) -> Self {
+        self.iterations = iterations;
+        self
+    }
 }
 
 impl Morphology {
@@ -176,9 +197,28 @@ impl Morphology {
 
 /// Two-pass morphology composition (open / close).
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct MorphologyChain {
     pub first: Morphology,
     pub second: Morphology,
+}
+
+impl MorphologyChain {
+    /// Chain two passes: `first` runs, then `second` on its output.
+    pub fn new(first: Morphology, second: Morphology) -> Self {
+        Self { first, second }
+    }
+
+    /// Builder-style setter for [`first`](Self::first).
+    pub fn with_first(mut self, first: Morphology) -> Self {
+        self.first = first;
+        self
+    }
+    /// Builder-style setter for [`second`](Self::second).
+    pub fn with_second(mut self, second: Morphology) -> Self {
+        self.second = second;
+        self
+    }
 }
 
 impl PixelFilter for MorphologyChain {
@@ -216,6 +256,7 @@ impl PixelFilter for MorphologyChain {
 /// the same primitives as [`Morphology`] so the structuring element
 /// behaviour matches exactly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EdgeOp {
     /// `src - erode(src)` (inner boundary).
     EdgeIn,
@@ -232,9 +273,23 @@ pub enum EdgeOp {
 /// alpha channel passes through unchanged (matching `Morphology`'s
 /// "alpha isn't tonal" rule). On planar YUV every plane is processed.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct MorphologyEdge {
     pub op: EdgeOp,
     pub element: StructuringElement,
+}
+
+impl MorphologyEdge {
+    /// Builder-style setter for [`op`](Self::op).
+    pub fn with_op(mut self, op: EdgeOp) -> Self {
+        self.op = op;
+        self
+    }
+    /// Builder-style setter for [`element`](Self::element).
+    pub fn with_element(mut self, element: StructuringElement) -> Self {
+        self.element = element;
+        self
+    }
 }
 
 impl MorphologyEdge {

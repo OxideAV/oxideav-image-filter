@@ -62,6 +62,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// Edge-feathering filter (soft coverage falloff from an exact
 /// Euclidean inner-distance transform).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Feather {
     /// Feather band width in pixels. Interior pixels within `radius` of
     /// the boundary fade linearly from full coverage (a full `radius`
@@ -75,6 +76,14 @@ pub struct Feather {
     /// If `true`, the test is flipped so pixels *below* `threshold`
     /// become the foreground (useful for a dark-on-light mask).
     pub invert: bool,
+}
+
+impl Feather {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: f32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl Default for Feather {

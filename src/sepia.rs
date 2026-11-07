@@ -20,8 +20,17 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// `threshold` weights the mix between the original pixel (0.0) and
 /// the full sepia-transformed pixel (1.0). Alpha passes through.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Sepia {
     pub threshold: f32,
+}
+
+impl Sepia {
+    /// Builder-style setter for [`threshold`](Self::threshold).
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.threshold = threshold;
+        self
+    }
 }
 
 impl Default for Sepia {

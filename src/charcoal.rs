@@ -33,9 +33,18 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// default) skips it, `> 0` thickens the strokes by suppressing fine
 /// texture before the Sobel pass.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Charcoal {
     pub factor: f32,
     pub radius: u32,
+}
+
+impl Charcoal {
+    /// Builder-style setter for [`factor`](Self::factor).
+    pub fn with_factor(mut self, factor: f32) -> Self {
+        self.factor = factor;
+        self
+    }
 }
 
 impl Default for Charcoal {

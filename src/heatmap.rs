@@ -31,6 +31,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Built-in colour ramps.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HeatmapRamp {
     /// Classic blue → cyan → green → yellow → red (MATLAB jet).
     #[default]

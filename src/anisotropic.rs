@@ -36,6 +36,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Perona-Malik anisotropic diffusion filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct AnisotropicBlur {
     /// Number of diffusion iterations (≥ 1). More iterations =
     /// smoother flat areas, but edges still stop the flow.
@@ -47,6 +48,14 @@ pub struct AnisotropicBlur {
     /// Time step λ in `(0, 0.25]`. The 4-neighbour explicit scheme
     /// requires `λ ≤ 1/4` for stability.
     pub lambda: f32,
+}
+
+impl AnisotropicBlur {
+    /// Builder-style setter for [`iterations`](Self::iterations).
+    pub fn with_iterations(mut self, iterations: u32) -> Self {
+        self.iterations = iterations;
+        self
+    }
 }
 
 impl Default for AnisotropicBlur {

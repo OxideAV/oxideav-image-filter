@@ -19,9 +19,23 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// `[0.0, 1.0]`; 0.0 returns the input unchanged, 1.0 returns the
 /// target colour for every channel.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Colorize {
     pub color: [u8; 4],
     pub amount: f32,
+}
+
+impl Colorize {
+    /// Builder-style setter for [`color`](Self::color).
+    pub fn with_color(mut self, color: [u8; 4]) -> Self {
+        self.color = color;
+        self
+    }
+    /// Builder-style setter for [`amount`](Self::amount).
+    pub fn with_amount(mut self, amount: f32) -> Self {
+        self.amount = amount;
+        self
+    }
 }
 
 impl Default for Colorize {

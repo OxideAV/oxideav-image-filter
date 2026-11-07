@@ -131,6 +131,7 @@ use oxideav_core::{Error, VideoFrame, VideoPlane};
 /// `Var = E(X²) − E(X)²` evaluation order, and the box-sum cost
 /// argument.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Niblack {
     /// Half-extent of the square neighbourhood; the window side is
     /// `2·radius + 1`. Default `7` (a 15×15 window, a typical

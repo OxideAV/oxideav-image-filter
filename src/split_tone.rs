@@ -26,6 +26,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Split-toning filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct SplitTone {
     /// Tint colour applied to the shadow half (RGB).
     pub shadow_color: [u8; 3],
@@ -37,6 +38,29 @@ pub struct SplitTone {
     /// `[0, 1]` — global blend amount. 0 returns input, 1 saturates the
     /// per-pixel tint.
     pub amount: f32,
+}
+
+impl SplitTone {
+    /// Builder-style setter for [`shadow_color`](Self::shadow_color).
+    pub fn with_shadow_color(mut self, shadow_color: [u8; 3]) -> Self {
+        self.shadow_color = shadow_color;
+        self
+    }
+    /// Builder-style setter for [`highlight_color`](Self::highlight_color).
+    pub fn with_highlight_color(mut self, highlight_color: [u8; 3]) -> Self {
+        self.highlight_color = highlight_color;
+        self
+    }
+    /// Builder-style setter for [`balance`](Self::balance).
+    pub fn with_balance(mut self, balance: f32) -> Self {
+        self.balance = balance;
+        self
+    }
+    /// Builder-style setter for [`amount`](Self::amount).
+    pub fn with_amount(mut self, amount: f32) -> Self {
+        self.amount = amount;
+        self
+    }
 }
 
 impl Default for SplitTone {

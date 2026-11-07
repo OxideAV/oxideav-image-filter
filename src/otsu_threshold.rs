@@ -22,6 +22,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Otsu auto-thresholder.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct OtsuThreshold {
     /// Invert the binarisation. Default `false`: `< t` → 0, `≥ t` → 255.
     /// `true` swaps the two.

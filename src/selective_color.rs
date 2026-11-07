@@ -83,6 +83,7 @@ pub struct BandAdjust {
 
 /// Selective colour filter.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct SelectiveColor {
     pub reds: BandAdjust,
     pub yellows: BandAdjust,
@@ -90,6 +91,39 @@ pub struct SelectiveColor {
     pub cyans: BandAdjust,
     pub blues: BandAdjust,
     pub magentas: BandAdjust,
+}
+
+impl SelectiveColor {
+    /// Builder-style setter for [`reds`](Self::reds).
+    pub fn with_reds(mut self, reds: BandAdjust) -> Self {
+        self.reds = reds;
+        self
+    }
+    /// Builder-style setter for [`yellows`](Self::yellows).
+    pub fn with_yellows(mut self, yellows: BandAdjust) -> Self {
+        self.yellows = yellows;
+        self
+    }
+    /// Builder-style setter for [`greens`](Self::greens).
+    pub fn with_greens(mut self, greens: BandAdjust) -> Self {
+        self.greens = greens;
+        self
+    }
+    /// Builder-style setter for [`cyans`](Self::cyans).
+    pub fn with_cyans(mut self, cyans: BandAdjust) -> Self {
+        self.cyans = cyans;
+        self
+    }
+    /// Builder-style setter for [`blues`](Self::blues).
+    pub fn with_blues(mut self, blues: BandAdjust) -> Self {
+        self.blues = blues;
+        self
+    }
+    /// Builder-style setter for [`magentas`](Self::magentas).
+    pub fn with_magentas(mut self, magentas: BandAdjust) -> Self {
+        self.magentas = magentas;
+        self
+    }
 }
 
 impl SelectiveColor {

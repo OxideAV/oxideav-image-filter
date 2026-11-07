@@ -34,10 +34,19 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Kuwahara edge-preserving smoothing filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Kuwahara {
     /// Half-window radius (≥ 1). The full window is `(2*radius+1)²`;
     /// each quadrant is `(radius+1)²`.
     pub radius: u32,
+}
+
+impl Kuwahara {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl Default for Kuwahara {

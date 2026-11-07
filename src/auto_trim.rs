@@ -31,6 +31,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 /// Auto-trim filter — pick the dominant colour and crop to its
 /// complement bounding box.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct AutoTrim {
     /// Maximum per-channel absolute difference (`0..=255`) that still
     /// counts as "background". `0` means an exact-match background.

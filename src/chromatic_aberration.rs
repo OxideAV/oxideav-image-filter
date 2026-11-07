@@ -33,11 +33,35 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// channel content by `(dx, dy)`" — i.e. the channel sample originally
 /// at `(x, y)` ends up at `(x + dx, y + dy)`.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct ChromaticAberration {
     pub r_dx: i32,
     pub r_dy: i32,
     pub b_dx: i32,
     pub b_dy: i32,
+}
+
+impl ChromaticAberration {
+    /// Builder-style setter for [`r_dx`](Self::r_dx).
+    pub fn with_r_dx(mut self, r_dx: i32) -> Self {
+        self.r_dx = r_dx;
+        self
+    }
+    /// Builder-style setter for [`r_dy`](Self::r_dy).
+    pub fn with_r_dy(mut self, r_dy: i32) -> Self {
+        self.r_dy = r_dy;
+        self
+    }
+    /// Builder-style setter for [`b_dx`](Self::b_dx).
+    pub fn with_b_dx(mut self, b_dx: i32) -> Self {
+        self.b_dx = b_dx;
+        self
+    }
+    /// Builder-style setter for [`b_dy`](Self::b_dy).
+    pub fn with_b_dy(mut self, b_dy: i32) -> Self {
+        self.b_dy = b_dy;
+        self
+    }
 }
 
 impl ChromaticAberration {

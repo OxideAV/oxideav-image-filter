@@ -29,6 +29,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Comic / manga stylise filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Comic {
     /// Smoothing radius (≥ 1). Larger values flatten more fine detail.
     pub smooth_radius: u32,

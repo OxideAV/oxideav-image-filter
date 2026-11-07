@@ -23,6 +23,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Toon / cel-shading filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Toon {
     /// Per-channel palette buckets (≥ 2). Smaller ⇒ flatter look.
     pub levels: u32,
@@ -31,6 +32,24 @@ pub struct Toon {
     pub edge_threshold: u8,
     /// Colour painted over the detected edges (RGB).
     pub edge_color: [u8; 3],
+}
+
+impl Toon {
+    /// Builder-style setter for [`levels`](Self::levels).
+    pub fn with_levels(mut self, levels: u32) -> Self {
+        self.levels = levels;
+        self
+    }
+    /// Builder-style setter for [`edge_threshold`](Self::edge_threshold).
+    pub fn with_edge_threshold(mut self, edge_threshold: u8) -> Self {
+        self.edge_threshold = edge_threshold;
+        self
+    }
+    /// Builder-style setter for [`edge_color`](Self::edge_color).
+    pub fn with_edge_color(mut self, edge_color: [u8; 3]) -> Self {
+        self.edge_color = edge_color;
+        self
+    }
 }
 
 impl Default for Toon {

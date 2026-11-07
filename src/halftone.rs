@@ -29,6 +29,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Halftone / dot-screen filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Halftone {
     /// Side length of one halftone cell in pixels (≥ 2). Bigger cells
     /// make chunkier dots.
@@ -38,6 +39,24 @@ pub struct Halftone {
     /// Background (paper) colour painted around the dot. Defaults to
     /// white.
     pub paper_color: [u8; 3],
+}
+
+impl Halftone {
+    /// Builder-style setter for [`cell_size`](Self::cell_size).
+    pub fn with_cell_size(mut self, cell_size: u32) -> Self {
+        self.cell_size = cell_size;
+        self
+    }
+    /// Builder-style setter for [`ink_color`](Self::ink_color).
+    pub fn with_ink_color(mut self, ink_color: [u8; 3]) -> Self {
+        self.ink_color = ink_color;
+        self
+    }
+    /// Builder-style setter for [`paper_color`](Self::paper_color).
+    pub fn with_paper_color(mut self, paper_color: [u8; 3]) -> Self {
+        self.paper_color = paper_color;
+        self
+    }
 }
 
 impl Default for Halftone {

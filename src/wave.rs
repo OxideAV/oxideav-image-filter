@@ -30,9 +30,23 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// horizontal distance between adjacent wave crests in pixels.
 /// Negative amplitudes simply flip the wave's phase.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Wave {
     pub amplitude: f32,
     pub wavelength: f32,
+}
+
+impl Wave {
+    /// Builder-style setter for [`amplitude`](Self::amplitude).
+    pub fn with_amplitude(mut self, amplitude: f32) -> Self {
+        self.amplitude = amplitude;
+        self
+    }
+    /// Builder-style setter for [`wavelength`](Self::wavelength).
+    pub fn with_wavelength(mut self, wavelength: f32) -> Self {
+        self.wavelength = wavelength;
+        self
+    }
 }
 
 impl Default for Wave {

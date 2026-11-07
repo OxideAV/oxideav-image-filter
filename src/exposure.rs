@@ -26,11 +26,20 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// EV-stop linear-light exposure adjustment.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Exposure {
     /// Stops of exposure to add. Positive brightens, negative darkens.
     /// `0.0` is identity (within sRGB round-trip rounding). Non-finite
     /// values coerce to `0.0`.
     pub ev: f32,
+}
+
+impl Exposure {
+    /// Builder-style setter for [`ev`](Self::ev).
+    pub fn with_ev(mut self, ev: f32) -> Self {
+        self.ev = ev;
+        self
+    }
 }
 
 impl Default for Exposure {

@@ -35,11 +35,35 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// at full darkness. `inner >= outer` collapses to a hard cutoff
 /// (constant `1` inside, constant `0` outside).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct VignetteSoft {
     pub x: f32,
     pub y: f32,
     pub inner: f32,
     pub outer: f32,
+}
+
+impl VignetteSoft {
+    /// Builder-style setter for [`x`](Self::x).
+    pub fn with_x(mut self, x: f32) -> Self {
+        self.x = x;
+        self
+    }
+    /// Builder-style setter for [`y`](Self::y).
+    pub fn with_y(mut self, y: f32) -> Self {
+        self.y = y;
+        self
+    }
+    /// Builder-style setter for [`inner`](Self::inner).
+    pub fn with_inner(mut self, inner: f32) -> Self {
+        self.inner = inner;
+        self
+    }
+    /// Builder-style setter for [`outer`](Self::outer).
+    pub fn with_outer(mut self, outer: f32) -> Self {
+        self.outer = outer;
+        self
+    }
 }
 
 impl Default for VignetteSoft {

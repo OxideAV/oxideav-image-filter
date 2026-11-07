@@ -31,8 +31,17 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// off linearly to 0° at the inscribed-circle edge. Negative values
 /// swirl counter-clockwise.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Swirl {
     pub degrees: f32,
+}
+
+impl Swirl {
+    /// Builder-style setter for [`degrees`](Self::degrees).
+    pub fn with_degrees(mut self, degrees: f32) -> Self {
+        self.degrees = degrees;
+        self
+    }
 }
 
 impl Default for Swirl {

@@ -50,6 +50,7 @@ pub enum PolarDirection {
 
 /// Polar / Cartesian distortion.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct Polar {
     pub direction: PolarDirection,
     /// Optional horizontal centre override (in pixel coordinates).
@@ -61,6 +62,19 @@ pub struct Polar {
     /// Optional maximum-radius override (in pixels). `None` means the
     /// distance from the centre to the farthest corner.
     pub max_radius: Option<f32>,
+}
+
+impl Polar {
+    /// Builder-style setter for [`cx`](Self::cx).
+    pub fn with_cx(mut self, cx: Option<f32>) -> Self {
+        self.cx = cx;
+        self
+    }
+    /// Builder-style setter for [`cy`](Self::cy).
+    pub fn with_cy(mut self, cy: Option<f32>) -> Self {
+        self.cy = cy;
+        self
+    }
 }
 
 impl Polar {

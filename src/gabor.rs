@@ -125,6 +125,7 @@ use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Output mode for the [`Gabor`] filter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum GaborMode {
     /// Signed response: raw filter output linearly remapped from
     /// `[−R, +R]` to `[0, 255]`. Neutral grey (`128`) marks zero
@@ -144,6 +145,7 @@ pub enum GaborMode {
 /// the parametrisation, the DC-removal step, and the two output
 /// modes.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Gabor {
     /// Carrier wavelength in pixels (period of the cosine along the
     /// rotated `x'` axis). Must be `≥ 2.0` by the spatial Nyquist

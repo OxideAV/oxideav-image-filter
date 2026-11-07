@@ -33,6 +33,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Hable / Uncharted-2 "filmic" tone-mapping operator.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Hable {
     /// Multiplier applied before the curve. Hable's GDC slides used
     /// `2.0` ("exposure bias"). Larger values brighten.
@@ -40,6 +41,14 @@ pub struct Hable {
     /// Linear white-point used to renormalise the curve so `Ld(W) = 1`.
     /// Uncharted-2 used `W = 11.2`.
     pub white: f32,
+}
+
+impl Hable {
+    /// Builder-style setter for [`exposure_bias`](Self::exposure_bias).
+    pub fn with_exposure_bias(mut self, exposure_bias: f32) -> Self {
+        self.exposure_bias = exposure_bias;
+        self
+    }
 }
 
 impl Default for Hable {

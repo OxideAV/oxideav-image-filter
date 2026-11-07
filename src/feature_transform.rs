@@ -160,6 +160,7 @@ pub(crate) fn cell_label(x: u32, y: u32) -> u8 {
 
 /// Exact nearest-feature (Voronoi cell-label) filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct VoronoiTransform {
     /// Foreground threshold. Pixels with `value >= threshold` are
     /// feature sites; everything else is partitioned to its nearest
@@ -168,6 +169,14 @@ pub struct VoronoiTransform {
     /// If `true`, dark pixels (`value < threshold`) become the feature
     /// sites instead (black seeds on a white field).
     pub invert: bool,
+}
+
+impl VoronoiTransform {
+    /// Builder-style setter for [`threshold`](Self::threshold).
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = threshold;
+        self
+    }
 }
 
 impl Default for VoronoiTransform {
@@ -289,6 +298,7 @@ impl PixelFilter for VoronoiTransform {
 /// dimensions. With no feature pixels the output is a verbatim copy of
 /// the input (no seed to propagate from).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ProximityFill {
     /// Feature (seed) threshold. Pixels with `value >= threshold` are
     /// seeds whose value is propagated to their Voronoi cell.
@@ -296,6 +306,14 @@ pub struct ProximityFill {
     /// If `true`, dark pixels (`value < threshold`) become the seeds
     /// instead.
     pub invert: bool,
+}
+
+impl ProximityFill {
+    /// Builder-style setter for [`threshold`](Self::threshold).
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = threshold;
+        self
+    }
 }
 
 impl Default for ProximityFill {

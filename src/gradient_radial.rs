@@ -20,6 +20,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Radial-gradient filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct GradientRadial {
     /// Normalised centre `x` in `[0, 1]` (0 = left edge, 1 = right edge).
     pub centre_x: f32,
@@ -32,6 +33,29 @@ pub struct GradientRadial {
     pub inner: [u8; 4],
     /// Colour at / beyond the outer radius (`t == 1`).
     pub outer: [u8; 4],
+}
+
+impl GradientRadial {
+    /// Builder-style setter for [`centre_x`](Self::centre_x).
+    pub fn with_centre_x(mut self, centre_x: f32) -> Self {
+        self.centre_x = centre_x;
+        self
+    }
+    /// Builder-style setter for [`centre_y`](Self::centre_y).
+    pub fn with_centre_y(mut self, centre_y: f32) -> Self {
+        self.centre_y = centre_y;
+        self
+    }
+    /// Builder-style setter for [`inner`](Self::inner).
+    pub fn with_inner(mut self, inner: [u8; 4]) -> Self {
+        self.inner = inner;
+        self
+    }
+    /// Builder-style setter for [`outer`](Self::outer).
+    pub fn with_outer(mut self, outer: [u8; 4]) -> Self {
+        self.outer = outer;
+        self
+    }
 }
 
 impl Default for GradientRadial {

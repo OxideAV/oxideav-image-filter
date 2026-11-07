@@ -33,6 +33,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Watermark overlay filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Watermark {
     /// Top-left placement of the overlay inside the source image.
     pub offset_x: i32,
@@ -44,6 +45,29 @@ pub struct Watermark {
     /// the overlay shape supplied up front).
     pub overlay_width: u32,
     pub overlay_height: u32,
+}
+
+impl Watermark {
+    /// Builder-style setter for [`offset_x`](Self::offset_x).
+    pub fn with_offset_x(mut self, offset_x: i32) -> Self {
+        self.offset_x = offset_x;
+        self
+    }
+    /// Builder-style setter for [`offset_y`](Self::offset_y).
+    pub fn with_offset_y(mut self, offset_y: i32) -> Self {
+        self.offset_y = offset_y;
+        self
+    }
+    /// Builder-style setter for [`overlay_width`](Self::overlay_width).
+    pub fn with_overlay_width(mut self, overlay_width: u32) -> Self {
+        self.overlay_width = overlay_width;
+        self
+    }
+    /// Builder-style setter for [`overlay_height`](Self::overlay_height).
+    pub fn with_overlay_height(mut self, overlay_height: u32) -> Self {
+        self.overlay_height = overlay_height;
+        self
+    }
 }
 
 impl Default for Watermark {

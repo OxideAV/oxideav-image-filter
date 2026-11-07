@@ -27,11 +27,20 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// HSL hue-rotation filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct HslRotate {
     /// Hue rotation in degrees. Positive rotates from red → yellow →
     /// green → cyan → blue → magenta. Non-finite values coerce to `0`.
     /// The rotation is taken modulo 360 internally.
     pub degrees: f32,
+}
+
+impl HslRotate {
+    /// Builder-style setter for [`degrees`](Self::degrees).
+    pub fn with_degrees(mut self, degrees: f32) -> Self {
+        self.degrees = degrees;
+        self
+    }
 }
 
 impl Default for HslRotate {

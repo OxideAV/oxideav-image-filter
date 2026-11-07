@@ -37,12 +37,26 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Displacement-map filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct DisplacementMap {
     /// Maximum X displacement in pixels (full-amplitude swing from `0` to
     /// `255` in the R channel of the map).
     pub scale_x: f32,
     /// Maximum Y displacement in pixels.
     pub scale_y: f32,
+}
+
+impl DisplacementMap {
+    /// Builder-style setter for [`scale_x`](Self::scale_x).
+    pub fn with_scale_x(mut self, scale_x: f32) -> Self {
+        self.scale_x = scale_x;
+        self
+    }
+    /// Builder-style setter for [`scale_y`](Self::scale_y).
+    pub fn with_scale_y(mut self, scale_y: f32) -> Self {
+        self.scale_y = scale_y;
+        self
+    }
 }
 
 impl Default for DisplacementMap {

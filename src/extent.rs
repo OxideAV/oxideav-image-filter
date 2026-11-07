@@ -27,6 +27,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// `(offset_x, offset_y)` shift. Padding outside the source rectangle
 /// is filled with [`background`](Self::background).
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Extent {
     pub width: u32,
     pub height: u32,
@@ -36,6 +37,29 @@ pub struct Extent {
     /// used; for YUV the Y plane uses `R` and the chroma planes are
     /// painted neutral 128.
     pub background: [u8; 4],
+}
+
+impl Extent {
+    /// Builder-style setter for [`width`](Self::width).
+    pub fn with_width(mut self, width: u32) -> Self {
+        self.width = width;
+        self
+    }
+    /// Builder-style setter for [`height`](Self::height).
+    pub fn with_height(mut self, height: u32) -> Self {
+        self.height = height;
+        self
+    }
+    /// Builder-style setter for [`offset_x`](Self::offset_x).
+    pub fn with_offset_x(mut self, offset_x: i32) -> Self {
+        self.offset_x = offset_x;
+        self
+    }
+    /// Builder-style setter for [`offset_y`](Self::offset_y).
+    pub fn with_offset_y(mut self, offset_y: i32) -> Self {
+        self.offset_y = offset_y;
+        self
+    }
 }
 
 impl Extent {

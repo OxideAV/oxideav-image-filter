@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `MorphologyChain::new(first, second)`, and a `with_<field>` builder
+  setter for every public field of the filter parameter structs below
+  that lacked one, so callers can build them without struct literals.
+
+### Changed
+
+- `#[non_exhaustive]` on the filter parameter structs
+  `AdaptiveThreshold`, `Affine`, `AnisotropicBlur`, `AutoTrim`,
+  `BarrelInverse`, `BilateralBlur`, `Bloom`, `BlueShift`,
+  `BorderedFrame`, `BwMix`, `Canny`, `Canvas`, `ChannelExtract`,
+  `ChannelMixer`, `Charcoal`, `ChromaticAberration`, `Clarity`,
+  `ColorBalance`, `ColorMatrix`, `Colorize`, `Comic`, `Convolve`,
+  `CrossProcess`, `Crystallize`, `Curves`, `Cyanotype`, `Cycle`,
+  `Deskew`, `Despeckle`, `DisplacementMap`, `DistanceMorphology`,
+  `DistanceOutline`, `DistanceTransform`, `Distort`, `Drago`,
+  `DropShadow`, `EdgeDetect`, `Emboss`, `EmbossDirectional`,
+  `EuclideanDistanceTransform`, `Evaluate`, `Exposure`, `Extent`,
+  `Feather`, `VoronoiTransform`, `ProximityFill`, `FloodFill`, `Frame`,
+  `FreiChen`, `Function`, `Gabor`, `GradientConic`, `GradientRadial`,
+  `GravityTranslate`, `Grayscale`, `Hable`, `Halftone`, `HoughCircles`,
+  `HoughLines`, `HslRotate`, `HslShift`, `Implode`, `InnerShadow`,
+  `Kuwahara`, `Laplacian`, `LaplacianOfGaussian`, `MaxRgb`, `Modulate`,
+  `Morphology`, `MorphologyChain`, `MorphologyEdge`, `MotionBlur`,
+  `Niblack`, `OtsuThreshold`, `Paint`, `Perspective`, `Pixelate`,
+  `Polar`, `PosterizeChannels`, `Prewitt`, `Quantize`, `RadialBlur`,
+  `Reinhard`, `ReinhardExtended`, `ReinhardLocal`, `Roberts`, `Roll`,
+  `Scharr`, `SelectiveColor`, `Sepia`, `Shade`, `ShadowHighlight`,
+  `Sharpen`, `Shave`, `SigmoidalContrast`, `SignedDistanceField`,
+  `Sketch`, `SplitTone`, `Spread`, `SrgbTransform`, `Srt`, `Statistic`,
+  `Stegano`, `Swirl`, `Temperature`, `TiltShift`, `Tint`, `Toon`,
+  `Trim`, `Unsharp`, `Vibrance`, `Vignette`, `VignetteSoft`,
+  `Watermark`, `Wave`, `WeightedDistanceTransform`, `ZoomBlur`.
+- `#[non_exhaustive]` on the enums `Channel`, `CurveInterpolation`,
+  `MorphOp`, `ChamferKind`, `BayerMatrix`, `DiffusionKernel`,
+  `ScanOrder`, `DitherMode`, `EdgeKernel`, `EvaluateOp`, `FreiChenMode`,
+  `FunctionOp`, `GaborMode`, `HeatmapRamp`, `LogMode`, `Planes`,
+  `MaxRgbMode`, `MorphologyOp`, `StructuringElement`, `EdgeOp`,
+  `PrewittMagnitude`, `RobertsMagnitude`, `ScharrMagnitude`,
+  `SrgbCurve`, `StatisticOp`. Left exhaustive: `Gravity`
+  (the fixed 3×3 compass grid), `PolarDirection` and `SrgbDirection`
+  (a transform and its inverse), `HueBand` (the six fixed hue bands).
+- `#[doc(hidden)]` on the internal `side_channels` module and on the
+  float-path helper functions / constants of `deep` (`FloatImage`
+  stays documented).
+- `VideoStreamParams` gains `new(format, width, height)` but stays
+  exhaustive: sibling crates still build it with a struct literal.
+
 ## [0.1.4](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.3...v0.1.4) - 2026-11-06
 
 ### Other

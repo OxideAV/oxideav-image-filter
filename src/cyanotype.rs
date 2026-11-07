@@ -33,6 +33,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Cyanotype vintage blue-print operator.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Cyanotype {
     /// Blend strength `[0, 1]`. `0` is the original image; `1` is the
     /// full cyanotype look.
@@ -41,6 +42,24 @@ pub struct Cyanotype {
     pub shadow: [u8; 3],
     /// Highlight / paper colour (sRGB 8-bit).
     pub highlight: [u8; 3],
+}
+
+impl Cyanotype {
+    /// Builder-style setter for [`strength`](Self::strength).
+    pub fn with_strength(mut self, strength: f32) -> Self {
+        self.strength = strength;
+        self
+    }
+    /// Builder-style setter for [`shadow`](Self::shadow).
+    pub fn with_shadow(mut self, shadow: [u8; 3]) -> Self {
+        self.shadow = shadow;
+        self
+    }
+    /// Builder-style setter for [`highlight`](Self::highlight).
+    pub fn with_highlight(mut self, highlight: [u8; 3]) -> Self {
+        self.highlight = highlight;
+        self
+    }
 }
 
 impl Default for Cyanotype {

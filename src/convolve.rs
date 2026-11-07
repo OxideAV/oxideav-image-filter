@@ -32,11 +32,25 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// sample after the weighted sum. `divisor` scales the result; `None`
 /// means "auto" — sum of kernel weights, falling back to 1.0 if zero.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Convolve {
     pub size: u32,
     pub kernel: Vec<f32>,
     pub bias: f32,
     pub divisor: Option<f32>,
+}
+
+impl Convolve {
+    /// Builder-style setter for [`size`](Self::size).
+    pub fn with_size(mut self, size: u32) -> Self {
+        self.size = size;
+        self
+    }
+    /// Builder-style setter for [`kernel`](Self::kernel).
+    pub fn with_kernel(mut self, kernel: Vec<f32>) -> Self {
+        self.kernel = kernel;
+        self
+    }
 }
 
 impl Convolve {

@@ -60,6 +60,7 @@ use oxideav_core::{Error, VideoFrame, VideoPlane};
 /// How to combine the two diagonal gradient responses into a single
 /// edge magnitude.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RobertsMagnitude {
     /// `sqrt(Gx² + Gy²)` — the true Euclidean gradient magnitude.
     #[default]
@@ -73,6 +74,7 @@ pub enum RobertsMagnitude {
 /// See the [module-level docs](self) for the kernels and the
 /// pixel-format coverage.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct Roberts {
     /// Magnitude combination — [`RobertsMagnitude::L2`] (default) or
     /// [`RobertsMagnitude::L1`].

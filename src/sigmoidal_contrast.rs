@@ -28,9 +28,23 @@ use oxideav_core::{Error, VideoFrame};
 /// `midpoint` is the inflection point on the input intensity scale
 /// (`0..=255`); the default 128 places it at mid-grey.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct SigmoidalContrast {
     pub contrast: f32,
     pub midpoint: f32,
+}
+
+impl SigmoidalContrast {
+    /// Builder-style setter for [`contrast`](Self::contrast).
+    pub fn with_contrast(mut self, contrast: f32) -> Self {
+        self.contrast = contrast;
+        self
+    }
+    /// Builder-style setter for [`midpoint`](Self::midpoint).
+    pub fn with_midpoint(mut self, midpoint: f32) -> Self {
+        self.midpoint = midpoint;
+        self
+    }
 }
 
 impl Default for SigmoidalContrast {

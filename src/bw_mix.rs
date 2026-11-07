@@ -27,6 +27,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// B&W mixer with per-channel weights.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct BwMix {
     /// `(r_weight, g_weight, b_weight)`. Non-finite entries coerce to
     /// `0.0`.
@@ -35,6 +36,14 @@ pub struct BwMix {
     /// `true` the input shape (Rgb24 / Rgba) is preserved with all
     /// three channels set to the mixed value (alpha pass-through).
     pub keep_format: bool,
+}
+
+impl BwMix {
+    /// Builder-style setter for [`weights`](Self::weights).
+    pub fn with_weights(mut self, weights: [f32; 3]) -> Self {
+        self.weights = weights;
+        self
+    }
 }
 
 impl Default for BwMix {

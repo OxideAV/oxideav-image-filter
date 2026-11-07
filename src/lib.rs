@@ -812,6 +812,7 @@ pub mod shade;
 pub mod shadow_highlight;
 pub mod sharpen;
 pub mod shave;
+#[doc(hidden)]
 pub mod side_channels;
 pub mod sigmoidal_contrast;
 pub mod signed_distance_field;
@@ -1021,6 +1022,35 @@ pub struct VideoStreamParams {
     pub format: PixelFormat,
     pub width: u32,
     pub height: u32,
+}
+
+impl VideoStreamParams {
+    /// Stream shape from its pixel layout and picture size.
+    pub fn new(format: PixelFormat, width: u32, height: u32) -> Self {
+        Self {
+            format,
+            width,
+            height,
+        }
+    }
+
+    /// Builder-style setter for [`format`](Self::format).
+    pub fn with_format(mut self, format: PixelFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Builder-style setter for [`width`](Self::width).
+    pub fn with_width(mut self, width: u32) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Builder-style setter for [`height`](Self::height).
+    pub fn with_height(mut self, height: u32) -> Self {
+        self.height = height;
+        self
+    }
 }
 
 /// A filter that transforms a single video frame without any external
@@ -1242,6 +1272,7 @@ impl<T: TwoInputPixelFilter> TwoInputImageFilter for T {
 /// (index 0) — use `All` to touch every channel, or let the per-filter
 /// documentation describe how it handles packed layouts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Planes {
     /// Apply to every plane of the input frame.
     #[default]

@@ -27,6 +27,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Per-channel posterise.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct PosterizeChannels {
     pub r_levels: u32,
     pub g_levels: u32,
@@ -34,6 +35,24 @@ pub struct PosterizeChannels {
     /// If `Some`, quantise alpha to that many levels; otherwise alpha
     /// passes through untouched (RGBA only).
     pub alpha_levels: Option<u32>,
+}
+
+impl PosterizeChannels {
+    /// Builder-style setter for [`r_levels`](Self::r_levels).
+    pub fn with_r_levels(mut self, r_levels: u32) -> Self {
+        self.r_levels = r_levels;
+        self
+    }
+    /// Builder-style setter for [`g_levels`](Self::g_levels).
+    pub fn with_g_levels(mut self, g_levels: u32) -> Self {
+        self.g_levels = g_levels;
+        self
+    }
+    /// Builder-style setter for [`b_levels`](Self::b_levels).
+    pub fn with_b_levels(mut self, b_levels: u32) -> Self {
+        self.b_levels = b_levels;
+        self
+    }
 }
 
 impl Default for PosterizeChannels {

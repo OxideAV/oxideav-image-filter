@@ -37,6 +37,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Radial / spin-blur filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct RadialBlur {
     /// Centre x in `[0, 1]` (normalised image coords).
     pub centre_x: f32,
@@ -47,6 +48,24 @@ pub struct RadialBlur {
     pub angle_degrees: f32,
     /// Number of samples along the arc (≥ 2).
     pub samples: u32,
+}
+
+impl RadialBlur {
+    /// Builder-style setter for [`centre_x`](Self::centre_x).
+    pub fn with_centre_x(mut self, centre_x: f32) -> Self {
+        self.centre_x = centre_x;
+        self
+    }
+    /// Builder-style setter for [`centre_y`](Self::centre_y).
+    pub fn with_centre_y(mut self, centre_y: f32) -> Self {
+        self.centre_y = centre_y;
+        self
+    }
+    /// Builder-style setter for [`angle_degrees`](Self::angle_degrees).
+    pub fn with_angle_degrees(mut self, angle_degrees: f32) -> Self {
+        self.angle_degrees = angle_degrees;
+        self
+    }
 }
 
 impl Default for RadialBlur {

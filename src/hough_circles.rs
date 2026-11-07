@@ -28,6 +28,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Hough-circle detector.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct HoughCircles {
     /// Sobel edge-magnitude threshold (`|Gx| + |Gy|`); pixels at or
     /// above this value vote.
@@ -42,6 +43,24 @@ pub struct HoughCircles {
     /// Maximum number of circle peaks to render. Strongest peaks are
     /// kept; ties broken by lower `(r, cy, cx)`.
     pub top_k: u32,
+}
+
+impl HoughCircles {
+    /// Builder-style setter for [`min_radius`](Self::min_radius).
+    pub fn with_min_radius(mut self, min_radius: u32) -> Self {
+        self.min_radius = min_radius;
+        self
+    }
+    /// Builder-style setter for [`max_radius`](Self::max_radius).
+    pub fn with_max_radius(mut self, max_radius: u32) -> Self {
+        self.max_radius = max_radius;
+        self
+    }
+    /// Builder-style setter for [`vote_threshold`](Self::vote_threshold).
+    pub fn with_vote_threshold(mut self, vote_threshold: u32) -> Self {
+        self.vote_threshold = vote_threshold;
+        self
+    }
 }
 
 impl Default for HoughCircles {

@@ -55,10 +55,19 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// `L_white` is "typically set to the maximum scene luminance (so the
 /// brightest pixel maps exactly to 1)".
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ReinhardExtended {
     /// Linear luminance mapped to pure white. `<= 0` triggers
     /// auto-selection from the per-frame `L_max` (the §5.1 default).
     pub l_white: f32,
+}
+
+impl ReinhardExtended {
+    /// Builder-style setter for [`l_white`](Self::l_white).
+    pub fn with_l_white(mut self, l_white: f32) -> Self {
+        self.l_white = l_white;
+        self
+    }
 }
 
 impl Default for ReinhardExtended {

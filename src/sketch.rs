@@ -24,6 +24,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Pencil-sketch stylise.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Sketch {
     /// Half-length of the directional blur kernel (samples on each
     /// side of the centre tap; total taps = `2 * radius + 1`).
@@ -35,6 +36,24 @@ pub struct Sketch {
     /// Direction of the hatch strokes in screen-space degrees. `0.0`
     /// produces horizontal strokes; `45.0` slants them.
     pub angle_degrees: f32,
+}
+
+impl Sketch {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
+    /// Builder-style setter for [`sigma`](Self::sigma).
+    pub fn with_sigma(mut self, sigma: f32) -> Self {
+        self.sigma = sigma;
+        self
+    }
+    /// Builder-style setter for [`angle_degrees`](Self::angle_degrees).
+    pub fn with_angle_degrees(mut self, angle_degrees: f32) -> Self {
+        self.angle_degrees = angle_degrees;
+        self
+    }
 }
 
 impl Default for Sketch {

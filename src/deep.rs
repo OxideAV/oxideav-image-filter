@@ -27,6 +27,7 @@ use crate::{VideoStreamParams, layout};
 
 /// `true` for the three packed float layouts a filter's deep path takes
 /// natively (`GrayF32Le`, `RgbF32Le`, `RgbaF32Le`).
+#[doc(hidden)]
 pub fn is_float(fmt: PixelFormat) -> bool {
     matches!(
         fmt,
@@ -35,6 +36,7 @@ pub fn is_float(fmt: PixelFormat) -> bool {
 }
 
 /// Channels per pixel of a packed float layout (`None` otherwise).
+#[doc(hidden)]
 pub fn float_channels(fmt: PixelFormat) -> Option<usize> {
     Some(match fmt {
         PixelFormat::GrayF32Le => 1,
@@ -45,6 +47,7 @@ pub fn float_channels(fmt: PixelFormat) -> Option<usize> {
 }
 
 /// The packed float layout holding `channels` samples per pixel.
+#[doc(hidden)]
 pub fn float_format(channels: usize) -> Option<PixelFormat> {
     Some(match channels {
         1 => PixelFormat::GrayF32Le,
@@ -400,6 +403,7 @@ impl FloatImage {
 /// side of the step as its 8-bit original; the snap is four orders of
 /// magnitude below 16-bit resolution.
 #[inline]
+#[doc(hidden)]
 pub fn code8(v: f32) -> f32 {
     let c = v * 255.0;
     let r = c.round();
@@ -409,6 +413,7 @@ pub fn code8(v: f32) -> f32 {
 /// An 8-bit RGBA background colour as the fill of a `channels`-channel
 /// float picture (grey takes the red component, alpha `1.0` when the
 /// picture has none).
+#[doc(hidden)]
 pub fn background(bg: [u8; 4], channels: usize) -> Vec<f32> {
     let f = bg.map(|v| v as f32 / 255.0);
     match channels {
@@ -421,6 +426,7 @@ pub fn background(bg: [u8; 4], channels: usize) -> Vec<f32> {
 /// IEC 61966-2-1 sRGB decode of a normalised tone (the piecewise curve;
 /// tones above `1.0` follow the power segment unclamped).
 #[inline]
+#[doc(hidden)]
 pub fn srgb_decode(x: f32) -> f32 {
     if x <= 0.04045 {
         x / 12.92
@@ -431,6 +437,7 @@ pub fn srgb_decode(x: f32) -> f32 {
 
 /// IEC 61966-2-1 sRGB encode of a linear value clamped to `[0, 1]`.
 #[inline]
+#[doc(hidden)]
 pub fn srgb_encode(x: f32) -> f32 {
     let x = if x.is_nan() { 0.0 } else { x.clamp(0.0, 1.0) };
     let y = if x <= 0.003_130_8 {
@@ -444,6 +451,7 @@ pub fn srgb_encode(x: f32) -> f32 {
 /// Decode every colour channel of a picture from sRGB to linear light,
 /// returning the linear RGB triples (grey replicated) alongside the
 /// picture's alpha (or `1.0`).
+#[doc(hidden)]
 pub fn linear_rgb(img: &FloatImage) -> Vec<[f32; 3]> {
     let ch = img.channels;
     img.data
@@ -461,6 +469,7 @@ pub fn linear_rgb(img: &FloatImage) -> Vec<[f32; 3]> {
 
 /// Write linear RGB triples back into `img`'s colour channels, sRGB
 /// encoded (grey takes the green component), alpha untouched.
+#[doc(hidden)]
 pub fn store_linear_rgb(img: &mut FloatImage, rgb: &[[f32; 3]]) {
     let ch = img.channels;
     for (px, lin) in img.data.chunks_exact_mut(ch).zip(rgb) {
@@ -476,6 +485,7 @@ pub fn store_linear_rgb(img: &mut FloatImage, rgb: &[[f32; 3]]) {
 
 /// Run `kernel` on a packed-float frame: unpack, apply, repack. The
 /// one-liner every filter's deep path is built on.
+#[doc(hidden)]
 pub fn run(
     input: &VideoFrame,
     params: VideoStreamParams,
@@ -487,6 +497,7 @@ pub fn run(
 
 /// Run a per-sample tone function on a packed-float frame (alpha
 /// untouched).
+#[doc(hidden)]
 pub fn map_tone(
     input: &VideoFrame,
     params: VideoStreamParams,
@@ -498,6 +509,7 @@ pub fn map_tone(
 /// Separable convolution with replicate-edge addressing: `kx` along
 /// rows then `ky` down columns, every channel (alpha included when
 /// `with_alpha`). Both kernels are odd-length and centred.
+#[doc(hidden)]
 pub fn convolve_separable(
     img: &FloatImage,
     kx: &[f32],
@@ -546,6 +558,7 @@ pub fn convolve_separable(
 
 /// Full 2-D convolution with a `size × size` row-major kernel and
 /// replicate-edge addressing on the colour channels (alpha untouched).
+#[doc(hidden)]
 pub fn convolve_2d(img: &FloatImage, kernel: &[f32], size: usize) -> FloatImage {
     let w = img.width as usize;
     let h = img.height as usize;
@@ -580,6 +593,7 @@ pub fn convolve_2d(img: &FloatImage, kernel: &[f32], size: usize) -> FloatImage 
 /// channel, `reduce` sees the `(2·rx+1) × (2·ry+1)` window of samples
 /// (replicate-edge, row-major) and returns the output sample. Alpha is
 /// untouched.
+#[doc(hidden)]
 pub fn neighbourhood(
     img: &FloatImage,
     rx: usize,
@@ -617,9 +631,11 @@ pub fn neighbourhood(
 
 /// Bins of the float histograms the statistics-driven tonal filters
 /// build (`65 536`: one per 16-bit code of the clamped tone).
+#[doc(hidden)]
 pub const HIST_BINS: usize = 65536;
 
 /// Histogram of `values` clamped to `[0, 1]` over [`HIST_BINS`] bins.
+#[doc(hidden)]
 pub fn histogram(values: impl Iterator<Item = f32>) -> Vec<u32> {
     let mut hist = vec![0u32; HIST_BINS];
     let full = (HIST_BINS - 1) as f32;
@@ -638,6 +654,7 @@ pub fn histogram(values: impl Iterator<Item = f32>) -> Vec<u32> {
 /// `low_clip` and brightest `high_clip` fractions (same budget rule as
 /// the 8-bit histogram scans: the first bin whose running count exceeds
 /// the budget), as normalised endpoints at least one bin apart.
+#[doc(hidden)]
 pub fn clip_range(values: impl Iterator<Item = f32>, low_clip: f32, high_clip: f32) -> (f32, f32) {
     let hist = histogram(values);
     let total: u32 = hist.iter().sum();
@@ -677,12 +694,14 @@ pub fn clip_range(values: impl Iterator<Item = f32>, low_clip: f32, high_clip: f
 }
 
 /// Channel `c` of every pixel.
+#[doc(hidden)]
 pub fn channel_iter(img: &FloatImage, c: usize) -> impl Iterator<Item = f32> + '_ {
     img.data.chunks_exact(img.channels).map(move |px| px[c])
 }
 
 /// Widen an 8-bit packed picture (`Gray8` / `Rgb24` / `Rgba`) to its
 /// float counterpart (`v / 255`). Test and bridging helper.
+#[doc(hidden)]
 pub fn widen_u8(frame: &VideoFrame, params: VideoStreamParams) -> Result<FloatImage, Error> {
     let channels = match params.format {
         PixelFormat::Gray8 => 1,
@@ -713,6 +732,7 @@ pub fn widen_u8(frame: &VideoFrame, params: VideoStreamParams) -> Result<FloatIm
 
 /// Quantise a float picture to its 8-bit packed counterpart
 /// (`round(clamp(v, 0, 1) · 255)`). Test and bridging helper.
+#[doc(hidden)]
 pub fn narrow_u8(img: &FloatImage) -> VideoFrame {
     let stride = img.width as usize * img.channels;
     let data = img

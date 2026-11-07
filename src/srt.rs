@@ -35,6 +35,7 @@ use oxideav_core::{Error, VideoFrame};
 
 /// Scale / Rotate / Translate warp wrapping [`Affine`].
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Srt {
     pub origin: (f32, f32),
     pub scale: (f32, f32),
@@ -42,6 +43,29 @@ pub struct Srt {
     pub translate: (f32, f32),
     pub background: [u8; 4],
     pub output_size: Option<(u32, u32)>,
+}
+
+impl Srt {
+    /// Builder-style setter for [`origin`](Self::origin).
+    pub fn with_origin(mut self, origin: (f32, f32)) -> Self {
+        self.origin = origin;
+        self
+    }
+    /// Builder-style setter for [`scale`](Self::scale).
+    pub fn with_scale(mut self, scale: (f32, f32)) -> Self {
+        self.scale = scale;
+        self
+    }
+    /// Builder-style setter for [`angle_degrees`](Self::angle_degrees).
+    pub fn with_angle_degrees(mut self, angle_degrees: f32) -> Self {
+        self.angle_degrees = angle_degrees;
+        self
+    }
+    /// Builder-style setter for [`translate`](Self::translate).
+    pub fn with_translate(mut self, translate: (f32, f32)) -> Self {
+        self.translate = translate;
+        self
+    }
 }
 
 impl Srt {

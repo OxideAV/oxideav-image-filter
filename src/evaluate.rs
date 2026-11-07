@@ -33,6 +33,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 /// Names match the documented `-evaluate` CLI operator argument so the
 /// pipeline can map a JSON `op` string straight onto a variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EvaluateOp {
     /// `out = clamp(src + value, 0, 255)`.
     Add,
@@ -109,9 +110,23 @@ impl EvaluateOp {
 /// Per-pixel arithmetic filter — apply [`EvaluateOp`] with the given
 /// scalar `value` to every channel of every pixel.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Evaluate {
     pub op: EvaluateOp,
     pub value: f32,
+}
+
+impl Evaluate {
+    /// Builder-style setter for [`op`](Self::op).
+    pub fn with_op(mut self, op: EvaluateOp) -> Self {
+        self.op = op;
+        self
+    }
+    /// Builder-style setter for [`value`](Self::value).
+    pub fn with_value(mut self, value: f32) -> Self {
+        self.value = value;
+        self
+    }
 }
 
 impl Evaluate {

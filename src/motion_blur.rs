@@ -11,10 +11,29 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Directional motion blur.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct MotionBlur {
     pub radius: u32,
     pub sigma: f32,
     pub angle_degrees: f32,
+}
+
+impl MotionBlur {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
+    /// Builder-style setter for [`sigma`](Self::sigma).
+    pub fn with_sigma(mut self, sigma: f32) -> Self {
+        self.sigma = sigma;
+        self
+    }
+    /// Builder-style setter for [`angle_degrees`](Self::angle_degrees).
+    pub fn with_angle_degrees(mut self, angle_degrees: f32) -> Self {
+        self.angle_degrees = angle_degrees;
+        self
+    }
 }
 
 impl Default for MotionBlur {

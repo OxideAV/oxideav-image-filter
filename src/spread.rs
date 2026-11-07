@@ -29,9 +29,18 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// `seed` makes the noise reproducible — calling `apply` twice with the
 /// same seed and input gives byte-identical output.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Spread {
     pub radius: u32,
     pub seed: u64,
+}
+
+impl Spread {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl Default for Spread {

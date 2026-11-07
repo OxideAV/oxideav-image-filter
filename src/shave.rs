@@ -19,9 +19,23 @@ use oxideav_core::{Error, VideoFrame};
 /// [`Error::invalid`](oxideav_core::Error) when the requested borders
 /// would shrink the image to zero or negative width/height.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Shave {
     pub x_border: u32,
     pub y_border: u32,
+}
+
+impl Shave {
+    /// Builder-style setter for [`x_border`](Self::x_border).
+    pub fn with_x_border(mut self, x_border: u32) -> Self {
+        self.x_border = x_border;
+        self
+    }
+    /// Builder-style setter for [`y_border`](Self::y_border).
+    pub fn with_y_border(mut self, y_border: u32) -> Self {
+        self.y_border = y_border;
+        self
+    }
 }
 
 impl Shave {

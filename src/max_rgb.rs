@@ -46,6 +46,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// Collapse direction for [`MaxRgb`]: take the pointwise channel
 /// maximum (HSV-V) or minimum.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MaxRgbMode {
     /// `out = max(R, G, B)` — the V channel of HSV.
     #[default]
@@ -59,6 +60,7 @@ pub enum MaxRgbMode {
 /// See the [module-level docs](self) for the mathematical definition
 /// and the pixel-format coverage.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct MaxRgb {
     /// Which collapse direction — [`MaxRgbMode::Max`] (default) or
     /// [`MaxRgbMode::Min`].
@@ -68,6 +70,14 @@ pub struct MaxRgb {
     /// all three colour channels equalled to the picked value (alpha
     /// pass-through for RGBA).
     pub keep_format: bool,
+}
+
+impl MaxRgb {
+    /// Builder-style setter for [`mode`](Self::mode).
+    pub fn with_mode(mut self, mode: MaxRgbMode) -> Self {
+        self.mode = mode;
+        self
+    }
 }
 
 impl MaxRgb {

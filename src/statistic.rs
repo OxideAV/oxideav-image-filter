@@ -24,6 +24,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Which statistic to compute over the window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum StatisticOp {
     /// Median sample of the window (robust to impulsive noise).
     Median,
@@ -60,6 +61,7 @@ impl StatisticOp {
 
 /// Rolling-window statistic filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Statistic {
     pub op: StatisticOp,
     /// Window width in pixels (must be ≥ 1; even values still work but
@@ -68,6 +70,24 @@ pub struct Statistic {
     pub width: u32,
     /// Window height in pixels (same semantics as `width`).
     pub height: u32,
+}
+
+impl Statistic {
+    /// Builder-style setter for [`op`](Self::op).
+    pub fn with_op(mut self, op: StatisticOp) -> Self {
+        self.op = op;
+        self
+    }
+    /// Builder-style setter for [`width`](Self::width).
+    pub fn with_width(mut self, width: u32) -> Self {
+        self.width = width;
+        self
+    }
+    /// Builder-style setter for [`height`](Self::height).
+    pub fn with_height(mut self, height: u32) -> Self {
+        self.height = height;
+        self
+    }
 }
 
 impl Statistic {

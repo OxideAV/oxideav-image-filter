@@ -68,6 +68,7 @@ use oxideav_core::{Error, VideoFrame, VideoPlane};
 /// How to combine the two gradient responses into a single edge
 /// magnitude.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PrewittMagnitude {
     /// `sqrt(Gx² + Gy²)` — the true Euclidean gradient magnitude.
     #[default]
@@ -81,6 +82,7 @@ pub enum PrewittMagnitude {
 /// See the [module-level docs](self) for the kernels and the
 /// pixel-format coverage.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct Prewitt {
     /// Magnitude combination — [`PrewittMagnitude::L2`] (default) or
     /// [`PrewittMagnitude::L1`].

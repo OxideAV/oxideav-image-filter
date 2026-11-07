@@ -16,12 +16,21 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Constant-colour canvas filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Canvas {
     /// Fill colour as `[R, G, B, A]`. For `Gray8` only `R` is used; for
     /// YUV the Y plane uses `R` and chroma planes are painted with the
     /// neutral value `128` (matching the documented CLI behaviour when an
     /// RGB colour is laid down on a YUV pipeline).
     pub colour: [u8; 4],
+}
+
+impl Canvas {
+    /// Builder-style setter for [`colour`](Self::colour).
+    pub fn with_colour(mut self, colour: [u8; 4]) -> Self {
+        self.colour = colour;
+        self
+    }
 }
 
 impl Default for Canvas {

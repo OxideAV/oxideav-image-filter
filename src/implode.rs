@@ -32,8 +32,17 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// outward. Typical range is roughly `-1.0..=1.0`; values outside that
 /// can fold pixels and produce wrap-around artefacts.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Implode {
     pub factor: f32,
+}
+
+impl Implode {
+    /// Builder-style setter for [`factor`](Self::factor).
+    pub fn with_factor(mut self, factor: f32) -> Self {
+        self.factor = factor;
+        self
+    }
 }
 
 impl Default for Implode {

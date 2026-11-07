@@ -69,6 +69,7 @@ impl Gravity {
 
 /// Gravity-anchored canvas placement.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct GravityTranslate {
     /// Canvas width in pixels.
     pub width: u32,
@@ -79,6 +80,24 @@ pub struct GravityTranslate {
     /// Background colour for the padded region (`[R, G, B, A]`). YUV
     /// chroma planes are painted neutral 128 — see [`Extent`].
     pub background: [u8; 4],
+}
+
+impl GravityTranslate {
+    /// Builder-style setter for [`width`](Self::width).
+    pub fn with_width(mut self, width: u32) -> Self {
+        self.width = width;
+        self
+    }
+    /// Builder-style setter for [`height`](Self::height).
+    pub fn with_height(mut self, height: u32) -> Self {
+        self.height = height;
+        self
+    }
+    /// Builder-style setter for [`gravity`](Self::gravity).
+    pub fn with_gravity(mut self, gravity: Gravity) -> Self {
+        self.gravity = gravity;
+        self
+    }
 }
 
 impl GravityTranslate {

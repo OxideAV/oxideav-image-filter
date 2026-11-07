@@ -31,6 +31,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 /// "ink"). `max_angle_degrees` bounds the search range — the filter
 /// scans `(-max, +max)` in `step_degrees` increments.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Deskew {
     /// Binarisation threshold on the 0..=255 luma scale. Values at or
     /// below this count as "ink" pixels for the histogram-variance
@@ -43,6 +44,24 @@ pub struct Deskew {
     pub step_degrees: f32,
     /// Background fill for the rotated output (`[R, G, B, A]`).
     pub background: [u8; 4],
+}
+
+impl Deskew {
+    /// Builder-style setter for [`threshold`](Self::threshold).
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = threshold;
+        self
+    }
+    /// Builder-style setter for [`max_angle_degrees`](Self::max_angle_degrees).
+    pub fn with_max_angle_degrees(mut self, max_angle_degrees: f32) -> Self {
+        self.max_angle_degrees = max_angle_degrees;
+        self
+    }
+    /// Builder-style setter for [`step_degrees`](Self::step_degrees).
+    pub fn with_step_degrees(mut self, step_degrees: f32) -> Self {
+        self.step_degrees = step_degrees;
+        self
+    }
 }
 
 impl Default for Deskew {

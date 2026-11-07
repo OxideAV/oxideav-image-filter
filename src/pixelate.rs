@@ -26,9 +26,18 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Spatial block-average mosaic.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Pixelate {
     /// Tile size in pixels. `block <= 1` is a no-op pass-through.
     pub block: u32,
+}
+
+impl Pixelate {
+    /// Builder-style setter for [`block`](Self::block).
+    pub fn with_block(mut self, block: u32) -> Self {
+        self.block = block;
+        self
+    }
 }
 
 impl Default for Pixelate {

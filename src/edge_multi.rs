@@ -28,6 +28,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Choice of gradient kernel for [`EdgeDetect`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EdgeKernel {
     /// 3×3 Sobel — the classical default (matches [`Edge`](crate::Edge)).
     #[default]
@@ -55,8 +56,17 @@ impl EdgeKernel {
 
 /// Multi-kernel edge-magnitude filter.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct EdgeDetect {
     pub kernel: EdgeKernel,
+}
+
+impl EdgeDetect {
+    /// Builder-style setter for [`kernel`](Self::kernel).
+    pub fn with_kernel(mut self, kernel: EdgeKernel) -> Self {
+        self.kernel = kernel;
+        self
+    }
 }
 
 impl EdgeDetect {

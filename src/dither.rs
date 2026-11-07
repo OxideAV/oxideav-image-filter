@@ -148,6 +148,7 @@ fn bayer_threshold_q8(matrix: BayerMatrix, x: usize, y: usize) -> i32 {
 
 /// Which Bayer matrix size the ordered dither tiles with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum BayerMatrix {
     /// 2×2 — the coarsest dither, very visible structure.
     M2,
@@ -167,6 +168,7 @@ pub enum BayerMatrix {
 
 /// Which error-diffusion kernel the filter pushes residues through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum DiffusionKernel {
     /// Floyd–Steinberg, ÷16 (Floyd & Steinberg 1976).
     #[default]
@@ -193,6 +195,7 @@ pub enum DiffusionKernel {
 /// per-row traversal direction (and, on the reversed rows, the
 /// horizontal mirroring of the stencil) differs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum ScanOrder {
     /// Every scanline is processed left→right (top→bottom). The stencil
     /// is used exactly as drawn. This is the classic ordering and the
@@ -351,6 +354,7 @@ fn kernel_table(k: DiffusionKernel) -> KernelTable {
 
 /// Which dithering algorithm the filter runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DitherMode {
     /// Tiled Bayer ordered dither — no state, perfectly parallel,
     /// produces the characteristic crosshatch texture.

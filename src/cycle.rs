@@ -19,10 +19,19 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 
 /// Per-channel modular value rotation.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct Cycle {
     /// Signed rotation amount, taken modulo 256. `1` adds 1 to every
     /// channel byte (255 wraps to 0); `-1` subtracts.
     pub amount: i32,
+}
+
+impl Cycle {
+    /// Builder-style setter for [`amount`](Self::amount).
+    pub fn with_amount(mut self, amount: i32) -> Self {
+        self.amount = amount;
+        self
+    }
 }
 
 impl Cycle {

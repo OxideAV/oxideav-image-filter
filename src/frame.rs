@@ -33,6 +33,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Picture-frame border with a 3-D bevel.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Frame {
     /// Border width in pixels added on each of the left / right sides.
     pub width: u32,
@@ -44,6 +45,29 @@ pub struct Frame {
     pub outer_bevel: u32,
     /// Mat colour `[R, G, B, A]`. Alpha is used on RGBA only.
     pub matte: [u8; 4],
+}
+
+impl Frame {
+    /// Builder-style setter for [`width`](Self::width).
+    pub fn with_width(mut self, width: u32) -> Self {
+        self.width = width;
+        self
+    }
+    /// Builder-style setter for [`height`](Self::height).
+    pub fn with_height(mut self, height: u32) -> Self {
+        self.height = height;
+        self
+    }
+    /// Builder-style setter for [`inner_bevel`](Self::inner_bevel).
+    pub fn with_inner_bevel(mut self, inner_bevel: u32) -> Self {
+        self.inner_bevel = inner_bevel;
+        self
+    }
+    /// Builder-style setter for [`outer_bevel`](Self::outer_bevel).
+    pub fn with_outer_bevel(mut self, outer_bevel: u32) -> Self {
+        self.outer_bevel = outer_bevel;
+        self
+    }
 }
 
 impl Default for Frame {

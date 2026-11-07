@@ -34,6 +34,7 @@ use oxideav_core::{Error, VideoFrame};
 
 /// Which mathematical kind the [`Function`] filter applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FunctionOp {
     /// `Σ aᵢ · xⁱ`, args descending.
     Polynomial,
@@ -71,9 +72,23 @@ impl FunctionOp {
 
 /// Per-pixel mathematical function map.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Function {
     pub op: FunctionOp,
     pub args: Vec<f32>,
+}
+
+impl Function {
+    /// Builder-style setter for [`op`](Self::op).
+    pub fn with_op(mut self, op: FunctionOp) -> Self {
+        self.op = op;
+        self
+    }
+    /// Builder-style setter for [`args`](Self::args).
+    pub fn with_args(mut self, args: Vec<f32>) -> Self {
+        self.args = args;
+        self
+    }
 }
 
 impl Function {

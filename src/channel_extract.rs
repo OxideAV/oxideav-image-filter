@@ -26,6 +26,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which channel to pull out as a `Gray8` frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Channel {
     /// Red channel of `Rgb24` / `Rgba`.
     Red,
@@ -64,8 +65,17 @@ impl Channel {
 
 /// Extract one channel of the input as a single-plane `Gray8` frame.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ChannelExtract {
     pub channel: Channel,
+}
+
+impl ChannelExtract {
+    /// Builder-style setter for [`channel`](Self::channel).
+    pub fn with_channel(mut self, channel: Channel) -> Self {
+        self.channel = channel;
+        self
+    }
 }
 
 impl ChannelExtract {

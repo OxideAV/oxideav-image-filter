@@ -61,6 +61,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// Exact-Euclidean Distance-Transform filter (Felzenszwalb–Huttenlocher
 /// lower-envelope-of-parabolas, separable per dimension).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct EuclideanDistanceTransform {
     /// Foreground threshold. Pixels with `value >= threshold` count as
     /// foreground and emit distance `0`; everything else is
@@ -76,6 +77,14 @@ pub struct EuclideanDistanceTransform {
     /// dynamic range; `4.0` quadruples it so a small detail's
     /// neighbourhood saturates quickly. Must be finite and positive.
     pub scale: f32,
+}
+
+impl EuclideanDistanceTransform {
+    /// Builder-style setter for [`threshold`](Self::threshold).
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = threshold;
+        self
+    }
 }
 
 impl Default for EuclideanDistanceTransform {

@@ -23,6 +23,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Hough-line detector.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct HoughLines {
     /// Sobel edge-magnitude threshold; pixels at or above this value
     /// vote. Lower values produce more voters (and more noise).
@@ -34,6 +35,19 @@ pub struct HoughLines {
     /// Maximum number of line peaks to draw. The strongest peaks are
     /// kept; ties broken by lower `(rho_bin, theta_bin)` index.
     pub top_k: u32,
+}
+
+impl HoughLines {
+    /// Builder-style setter for [`edge_threshold`](Self::edge_threshold).
+    pub fn with_edge_threshold(mut self, edge_threshold: u32) -> Self {
+        self.edge_threshold = edge_threshold;
+        self
+    }
+    /// Builder-style setter for [`vote_threshold`](Self::vote_threshold).
+    pub fn with_vote_threshold(mut self, vote_threshold: u32) -> Self {
+        self.vote_threshold = vote_threshold;
+        self
+    }
 }
 
 impl Default for HoughLines {

@@ -36,10 +36,19 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Uniform-grid colour quantizer.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Quantize {
     /// Maximum number of palette entries. Internally rounded UP to the
     /// next perfect cube `k³` (RGB) or to the value itself (Gray8).
     pub colors: u32,
+}
+
+impl Quantize {
+    /// Builder-style setter for [`colors`](Self::colors).
+    pub fn with_colors(mut self, colors: u32) -> Self {
+        self.colors = colors;
+        self
+    }
 }
 
 impl Default for Quantize {

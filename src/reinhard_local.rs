@@ -65,6 +65,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// per-pixel scale selection is controlled by `phi` (sharpening, §3.2)
 /// and `epsilon` (§3.3 uniformity threshold).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ReinhardLocal {
     /// Reinhard middle-grey key `a` (§2.1). `0.18` is the photographic
     /// middle-grey default; lower values preserve shadows (low-key),
@@ -86,6 +87,19 @@ pub struct ReinhardLocal {
     /// Log-average bias `δ` (§1.1) to avoid `ln(0)` on black pixels.
     /// Default `1e-6`.
     pub delta: f32,
+}
+
+impl ReinhardLocal {
+    /// Builder-style setter for [`key`](Self::key).
+    pub fn with_key(mut self, key: f32) -> Self {
+        self.key = key;
+        self
+    }
+    /// Builder-style setter for [`delta`](Self::delta).
+    pub fn with_delta(mut self, delta: f32) -> Self {
+        self.delta = delta;
+        self
+    }
 }
 
 impl Default for ReinhardLocal {

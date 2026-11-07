@@ -134,6 +134,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Interpolation mode for [`Curves`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CurveInterpolation {
     /// Straight segments between knots — no smoothing.
     Linear,
@@ -917,6 +918,7 @@ impl Curve {
 
 /// Per-channel curves filter.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct Curves {
     /// Master curve applied to every tone channel by default.
     pub master: Curve,
@@ -927,6 +929,14 @@ pub struct Curves {
     pub blue: Option<Curve>,
     /// Interpolation kind for all curves in this filter.
     pub interpolation: CurveInterpolation,
+}
+
+impl Curves {
+    /// Builder-style setter for [`master`](Self::master).
+    pub fn with_master(mut self, master: Curve) -> Self {
+        self.master = master;
+        self
+    }
 }
 
 impl Curves {

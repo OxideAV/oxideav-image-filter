@@ -59,6 +59,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// the orthogonal step-weight `a` used to rescale the integer chamfer
 /// metric back into pixel units (`pixels ≈ chamfer / a`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ChamferKind {
     /// 3-4 chamfer: orthogonal step = 3, diagonal step = 4. `a = 3`.
     /// Cheapest two-pass chamfer with sub-10% Euclidean error.
@@ -93,6 +94,7 @@ impl ChamferKind {
 
 /// Distance-Transform filter (configurable chamfer kernel).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct DistanceTransform {
     /// Foreground threshold. Pixels `>= threshold` count as foreground
     /// (distance `0`); others are background.
@@ -107,6 +109,14 @@ pub struct DistanceTransform {
     /// Which chamfer kernel to propagate. Defaults to
     /// [`ChamferKind::Chamfer34`] to preserve r1 behaviour.
     pub kind: ChamferKind,
+}
+
+impl DistanceTransform {
+    /// Builder-style setter for [`threshold`](Self::threshold).
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = threshold;
+        self
+    }
 }
 
 impl Default for DistanceTransform {

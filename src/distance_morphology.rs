@@ -49,6 +49,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which morphological operation a [`DistanceMorphology`] performs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MorphOp {
     /// Grow the foreground by a Euclidean disc of the given radius
     /// (`D_FG ≤ r²`).
@@ -89,6 +90,7 @@ fn morph_primitive(mask: &[bool], w: usize, h: usize, dilate: bool, r2: f64) -> 
 /// See the module docs for the distance-transform derivation. The disc
 /// is a true Euclidean circle of radius [`radius`](Self::radius).
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct DistanceMorphology {
     /// The operation to perform.
     pub op: MorphOp,
@@ -103,6 +105,19 @@ pub struct DistanceMorphology {
     /// Output value written on result-foreground pixels (background is
     /// always `0`).
     pub fg_value: u8,
+}
+
+impl DistanceMorphology {
+    /// Builder-style setter for [`op`](Self::op).
+    pub fn with_op(mut self, op: MorphOp) -> Self {
+        self.op = op;
+        self
+    }
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: f32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl DistanceMorphology {
@@ -274,6 +289,7 @@ impl PixelFilter for DistanceMorphology {
 /// Single-plane `Gray8` in / out. Output is `fg_value` on the band, `0`
 /// elsewhere.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct DistanceOutline {
     /// Band half-width *inside* the boundary (pixels of the shape interior
     /// painted). `0` keeps the stroke entirely outside.
@@ -288,6 +304,19 @@ pub struct DistanceOutline {
     pub invert: bool,
     /// Output value written on band pixels (background is always `0`).
     pub fg_value: u8,
+}
+
+impl DistanceOutline {
+    /// Builder-style setter for [`inner`](Self::inner).
+    pub fn with_inner(mut self, inner: f32) -> Self {
+        self.inner = inner;
+        self
+    }
+    /// Builder-style setter for [`outer`](Self::outer).
+    pub fn with_outer(mut self, outer: f32) -> Self {
+        self.outer = outer;
+        self
+    }
 }
 
 impl DistanceOutline {

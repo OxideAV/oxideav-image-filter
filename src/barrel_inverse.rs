@@ -38,6 +38,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Inverse-barrel polynomial distortion.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct BarrelInverse {
     /// Cubic coefficient.
     pub a: f32,
@@ -54,6 +55,29 @@ pub struct BarrelInverse {
     pub r_norm: Option<f32>,
     /// Out-of-bounds fill colour `[R, G, B, A]`.
     pub background: [u8; 4],
+}
+
+impl BarrelInverse {
+    /// Builder-style setter for [`a`](Self::a).
+    pub fn with_a(mut self, a: f32) -> Self {
+        self.a = a;
+        self
+    }
+    /// Builder-style setter for [`b`](Self::b).
+    pub fn with_b(mut self, b: f32) -> Self {
+        self.b = b;
+        self
+    }
+    /// Builder-style setter for [`c`](Self::c).
+    pub fn with_c(mut self, c: f32) -> Self {
+        self.c = c;
+        self
+    }
+    /// Builder-style setter for [`d`](Self::d).
+    pub fn with_d(mut self, d: f32) -> Self {
+        self.d = d;
+        self
+    }
 }
 
 impl BarrelInverse {

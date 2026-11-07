@@ -29,11 +29,20 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Saturation booster that spares already-saturated pixels.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Vibrance {
     /// Strength of the boost in `[-1, 1]`. Positive values increase
     /// saturation of drab pixels; negative values desaturate (mirroring
     /// the slider semantics).
     pub amount: f32,
+}
+
+impl Vibrance {
+    /// Builder-style setter for [`amount`](Self::amount).
+    pub fn with_amount(mut self, amount: f32) -> Self {
+        self.amount = amount;
+        self
+    }
 }
 
 impl Default for Vibrance {

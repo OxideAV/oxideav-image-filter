@@ -68,6 +68,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// Weighted (generalised) distance-transform filter — the continuous-
 /// seed form of `D_f(p) = min_q(‖p − q‖² + f(q))`.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct WeightedDistanceTransform {
     /// Cost weight on the per-pixel seed. The seed cost is
     /// `f(q) = (weight · c(q))²` with `c(q) ∈ [0, 1]` the normalised

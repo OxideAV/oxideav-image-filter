@@ -24,9 +24,23 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// the input unchanged, 1.0 lets fully-bright pixels reach the target
 /// colour completely while leaving black pixels untouched.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Tint {
     pub color: [u8; 4],
     pub amount: f32,
+}
+
+impl Tint {
+    /// Builder-style setter for [`color`](Self::color).
+    pub fn with_color(mut self, color: [u8; 4]) -> Self {
+        self.color = color;
+        self
+    }
+    /// Builder-style setter for [`amount`](Self::amount).
+    pub fn with_amount(mut self, amount: f32) -> Self {
+        self.amount = amount;
+        self
+    }
 }
 
 impl Default for Tint {

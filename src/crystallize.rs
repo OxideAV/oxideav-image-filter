@@ -34,6 +34,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Crystallize / Voronoi-cell averaging filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Crystallize {
     /// Side length of the underlying grid cell in pixels (≥ 2). Larger
     /// values produce bigger crystal shards.
@@ -44,6 +45,14 @@ pub struct Crystallize {
     pub jitter: f32,
     /// PRNG seed for reproducible jitter. Same seed ⇒ identical output.
     pub seed: u64,
+}
+
+impl Crystallize {
+    /// Builder-style setter for [`cell_size`](Self::cell_size).
+    pub fn with_cell_size(mut self, cell_size: u32) -> Self {
+        self.cell_size = cell_size;
+        self
+    }
 }
 
 impl Default for Crystallize {

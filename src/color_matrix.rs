@@ -31,11 +31,20 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 /// B' = clamp(m[6]*R + m[7]*G + m[8]*B + offset[2])
 /// ```
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ColorMatrix {
     /// Row-major 3×3 matrix coefficients.
     pub matrix: [f32; 9],
     /// Per-channel additive offset in the 0..=255 input scale.
     pub offset: [f32; 3],
+}
+
+impl ColorMatrix {
+    /// Builder-style setter for [`matrix`](Self::matrix).
+    pub fn with_matrix(mut self, matrix: [f32; 9]) -> Self {
+        self.matrix = matrix;
+        self
+    }
 }
 
 impl Default for ColorMatrix {

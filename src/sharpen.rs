@@ -15,10 +15,24 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// Sharpen an image via unsharp-mask. See the module docs for the
 /// exact formula.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Sharpen {
     pub radius: u32,
     pub sigma: f32,
     pub amount: f32,
+}
+
+impl Sharpen {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
+    /// Builder-style setter for [`sigma`](Self::sigma).
+    pub fn with_sigma(mut self, sigma: f32) -> Self {
+        self.sigma = sigma;
+        self
+    }
 }
 
 impl Default for Sharpen {

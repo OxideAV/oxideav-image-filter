@@ -116,6 +116,7 @@ use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Output mode for the Laplacian-of-Gaussian filter.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LogMode {
     /// `|LoG(x, y)|` (absolute response) clamped to `[0, 255]`. Default.
     #[default]
@@ -133,6 +134,7 @@ pub enum LogMode {
 /// See the [module-level docs](self) for the continuous and discrete
 /// kernel definitions and the trade-off between the two output modes.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct LaplacianOfGaussian {
     /// Standard deviation of the Gaussian envelope, in pixels. Must
     /// be `> 0`; values around `1.0..3.0` are typical. Default `1.4`

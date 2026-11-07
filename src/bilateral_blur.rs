@@ -52,6 +52,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Edge-preserving bilateral blur.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct BilateralBlur {
     /// Spatial half-window in pixels. `radius == 0` is a no-op.
     pub radius: u32,
@@ -60,6 +61,24 @@ pub struct BilateralBlur {
     /// Range Gaussian sigma in 0..255 sample units. Smaller values
     /// preserve edges more aggressively.
     pub sigma_range: f32,
+}
+
+impl BilateralBlur {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
+    /// Builder-style setter for [`sigma_spatial`](Self::sigma_spatial).
+    pub fn with_sigma_spatial(mut self, sigma_spatial: f32) -> Self {
+        self.sigma_spatial = sigma_spatial;
+        self
+    }
+    /// Builder-style setter for [`sigma_range`](Self::sigma_range).
+    pub fn with_sigma_range(mut self, sigma_range: f32) -> Self {
+        self.sigma_range = sigma_range;
+        self
+    }
 }
 
 impl Default for BilateralBlur {

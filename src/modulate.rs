@@ -21,10 +21,29 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// Pixel formats: `Rgb24`, `Rgba`. YUV inputs return
 /// [`Error::unsupported`] because a round-trip to RGB isn't done here.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Modulate {
     pub brightness: f32,
     pub saturation: f32,
     pub hue_degrees: f32,
+}
+
+impl Modulate {
+    /// Builder-style setter for [`brightness`](Self::brightness).
+    pub fn with_brightness(mut self, brightness: f32) -> Self {
+        self.brightness = brightness;
+        self
+    }
+    /// Builder-style setter for [`saturation`](Self::saturation).
+    pub fn with_saturation(mut self, saturation: f32) -> Self {
+        self.saturation = saturation;
+        self
+    }
+    /// Builder-style setter for [`hue_degrees`](Self::hue_degrees).
+    pub fn with_hue_degrees(mut self, hue_degrees: f32) -> Self {
+        self.hue_degrees = hue_degrees;
+        self
+    }
 }
 
 impl Default for Modulate {

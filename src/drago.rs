@@ -54,6 +54,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Drago adaptive logarithmic tone mapper.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Drago {
     /// Bias parameter `b` from the doc §4 params table. `0.85` is the
     /// recommended default; the useful range is `0.7–0.9`.
@@ -75,6 +76,14 @@ pub struct Drago {
     /// values `> 1` brighten. Kept separate from [`Self::ld_max`] so a
     /// caller can dim output without changing the cd/m² target.
     pub display_scale: f32,
+}
+
+impl Drago {
+    /// Builder-style setter for [`bias`](Self::bias).
+    pub fn with_bias(mut self, bias: f32) -> Self {
+        self.bias = bias;
+        self
+    }
 }
 
 impl Default for Drago {

@@ -26,6 +26,7 @@ use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Canny edge detector.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Canny {
     /// Gaussian pre-blur radius (kernel half-width). `0` skips the
     /// pre-blur step.
@@ -36,6 +37,29 @@ pub struct Canny {
     pub low: u8,
     /// Upper hysteresis threshold (0..=255). Must be `>= low`.
     pub high: u8,
+}
+
+impl Canny {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
+    /// Builder-style setter for [`sigma`](Self::sigma).
+    pub fn with_sigma(mut self, sigma: f32) -> Self {
+        self.sigma = sigma;
+        self
+    }
+    /// Builder-style setter for [`low`](Self::low).
+    pub fn with_low(mut self, low: u8) -> Self {
+        self.low = low;
+        self
+    }
+    /// Builder-style setter for [`high`](Self::high).
+    pub fn with_high(mut self, high: u8) -> Self {
+        self.high = high;
+        self
+    }
 }
 
 impl Default for Canny {

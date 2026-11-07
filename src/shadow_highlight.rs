@@ -29,12 +29,26 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Independent shadow + highlight tonal-range recovery.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ShadowHighlight {
     /// Lift / dip applied to dark pixels, `[-1, 1]`.
     pub shadow_amount: f32,
     /// Lift / dip applied to bright pixels, `[-1, 1]`. Positive recovers
     /// blown highlights, negative boosts them.
     pub highlight_amount: f32,
+}
+
+impl ShadowHighlight {
+    /// Builder-style setter for [`shadow_amount`](Self::shadow_amount).
+    pub fn with_shadow_amount(mut self, shadow_amount: f32) -> Self {
+        self.shadow_amount = shadow_amount;
+        self
+    }
+    /// Builder-style setter for [`highlight_amount`](Self::highlight_amount).
+    pub fn with_highlight_amount(mut self, highlight_amount: f32) -> Self {
+        self.highlight_amount = highlight_amount;
+        self
+    }
 }
 
 impl Default for ShadowHighlight {

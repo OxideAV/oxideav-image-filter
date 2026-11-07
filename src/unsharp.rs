@@ -17,11 +17,35 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 /// See [`crate::Sharpen`] for a simpler variant that always applies
 /// the mask.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Unsharp {
     pub radius: u32,
     pub sigma: f32,
     pub amount: f32,
     pub threshold: u8,
+}
+
+impl Unsharp {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
+    /// Builder-style setter for [`sigma`](Self::sigma).
+    pub fn with_sigma(mut self, sigma: f32) -> Self {
+        self.sigma = sigma;
+        self
+    }
+    /// Builder-style setter for [`amount`](Self::amount).
+    pub fn with_amount(mut self, amount: f32) -> Self {
+        self.amount = amount;
+        self
+    }
+    /// Builder-style setter for [`threshold`](Self::threshold).
+    pub fn with_threshold(mut self, threshold: u8) -> Self {
+        self.threshold = threshold;
+        self
+    }
 }
 
 impl Default for Unsharp {

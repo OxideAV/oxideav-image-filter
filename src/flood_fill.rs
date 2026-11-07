@@ -29,6 +29,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Seeded flood-fill filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct FloodFill {
     /// Starting pixel.
     pub seed_x: u32,
@@ -39,6 +40,29 @@ pub struct FloodFill {
     /// Per-channel maximum difference from the seed sample that still
     /// counts as a region member. 0 ⇒ exact match.
     pub tolerance: u8,
+}
+
+impl FloodFill {
+    /// Builder-style setter for [`seed_x`](Self::seed_x).
+    pub fn with_seed_x(mut self, seed_x: u32) -> Self {
+        self.seed_x = seed_x;
+        self
+    }
+    /// Builder-style setter for [`seed_y`](Self::seed_y).
+    pub fn with_seed_y(mut self, seed_y: u32) -> Self {
+        self.seed_y = seed_y;
+        self
+    }
+    /// Builder-style setter for [`fill_color`](Self::fill_color).
+    pub fn with_fill_color(mut self, fill_color: [u8; 4]) -> Self {
+        self.fill_color = fill_color;
+        self
+    }
+    /// Builder-style setter for [`tolerance`](Self::tolerance).
+    pub fn with_tolerance(mut self, tolerance: u8) -> Self {
+        self.tolerance = tolerance;
+        self
+    }
 }
 
 impl Default for FloodFill {

@@ -29,6 +29,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// 2-D affine warp.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Affine {
     /// Six matrix coefficients in `(sx, ry, rx, sy, tx, ty)` order
     /// matching the documented `-distort Affine` argument convention:
@@ -45,6 +46,14 @@ pub struct Affine {
     /// Optional explicit output canvas size. `None` ⇒ use the input
     /// frame's `(width, height)`.
     pub output_size: Option<(u32, u32)>,
+}
+
+impl Affine {
+    /// Builder-style setter for [`matrix`](Self::matrix).
+    pub fn with_matrix(mut self, matrix: [f32; 6]) -> Self {
+        self.matrix = matrix;
+        self
+    }
 }
 
 impl Affine {

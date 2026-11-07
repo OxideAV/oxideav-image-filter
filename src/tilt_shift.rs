@@ -51,6 +51,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// perpendicular to a configurable axis (horizontal by default,
 /// rotatable via [`Self::with_angle_degrees`]).
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct TiltShift {
     /// Centre of the in-focus band along the axis perpendicular to
     /// the focus axis, in normalised image coordinates `[0.0, 1.0]`.
@@ -76,6 +77,19 @@ pub struct TiltShift {
     /// blurred regions to the left and right. Any finite value works
     /// — the math is fully continuous.
     pub angle_degrees: f32,
+}
+
+impl TiltShift {
+    /// Builder-style setter for [`blur_radius`](Self::blur_radius).
+    pub fn with_blur_radius(mut self, blur_radius: u32) -> Self {
+        self.blur_radius = blur_radius;
+        self
+    }
+    /// Builder-style setter for [`blur_sigma`](Self::blur_sigma).
+    pub fn with_blur_sigma(mut self, blur_sigma: f32) -> Self {
+        self.blur_sigma = blur_sigma;
+        self
+    }
 }
 
 impl Default for TiltShift {

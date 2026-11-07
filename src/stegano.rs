@@ -30,12 +30,21 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// LSB-plane steganographic embed.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Stegano {
     /// Bit position within each `src` byte that gets stamped into the
     /// LSB of the matching `dst` byte. Defaults to 7 (the MSB) — gives
     /// the most visible reconstruction of the watermark when later
     /// extracted, at the cost of mild perceptual artefacts in `dst`.
     pub offset: u8,
+}
+
+impl Stegano {
+    /// Builder-style setter for [`offset`](Self::offset).
+    pub fn with_offset(mut self, offset: u8) -> Self {
+        self.offset = offset;
+        self
+    }
 }
 
 impl Default for Stegano {

@@ -19,6 +19,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame};
 /// Crop the frame down to the bounding box of pixels that differ from
 /// a reference background colour by more than `fuzz` per channel.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct Trim {
     /// Maximum per-channel absolute difference (`0..=255`) that still
     /// counts as "background". `0` means an exact-match background;

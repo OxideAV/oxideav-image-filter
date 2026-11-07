@@ -121,6 +121,7 @@ use oxideav_core::{Error, VideoFrame, VideoPlane};
 
 /// Which sub-space the Frei–Chen magnitude projects onto.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum FreiChenMode {
     /// Cosine angle to the **edge** sub-space (templates `S1..S4`).
     /// The classical Frei–Chen output; sensitive to step edges /
@@ -138,6 +139,7 @@ pub enum FreiChenMode {
 /// See the [module-level docs](self) for the 9 templates and the
 /// cosine-based magnitude.
 #[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
 pub struct FreiChen {
     /// Which sub-space projection to report.
     pub mode: FreiChenMode,

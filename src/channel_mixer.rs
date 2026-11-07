@@ -32,9 +32,23 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// 4×4 channel-mixing matrix (row-major) + 4-vector offset.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct ChannelMixer {
     pub matrix: [[f32; 4]; 4],
     pub offset: [f32; 4],
+}
+
+impl ChannelMixer {
+    /// Builder-style setter for [`matrix`](Self::matrix).
+    pub fn with_matrix(mut self, matrix: [[f32; 4]; 4]) -> Self {
+        self.matrix = matrix;
+        self
+    }
+    /// Builder-style setter for [`offset`](Self::offset).
+    pub fn with_offset(mut self, offset: [f32; 4]) -> Self {
+        self.offset = offset;
+        self
+    }
 }
 
 impl Default for ChannelMixer {

@@ -20,6 +20,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Conic-gradient filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct GradientConic {
     pub centre_x: f32,
     pub centre_y: f32,
@@ -29,6 +30,29 @@ pub struct GradientConic {
     pub start_angle: f32,
     pub inner: [u8; 4],
     pub outer: [u8; 4],
+}
+
+impl GradientConic {
+    /// Builder-style setter for [`centre_x`](Self::centre_x).
+    pub fn with_centre_x(mut self, centre_x: f32) -> Self {
+        self.centre_x = centre_x;
+        self
+    }
+    /// Builder-style setter for [`centre_y`](Self::centre_y).
+    pub fn with_centre_y(mut self, centre_y: f32) -> Self {
+        self.centre_y = centre_y;
+        self
+    }
+    /// Builder-style setter for [`inner`](Self::inner).
+    pub fn with_inner(mut self, inner: [u8; 4]) -> Self {
+        self.inner = inner;
+        self
+    }
+    /// Builder-style setter for [`outer`](Self::outer).
+    pub fn with_outer(mut self, outer: [u8; 4]) -> Self {
+        self.outer = outer;
+        self
+    }
 }
 
 impl Default for GradientConic {

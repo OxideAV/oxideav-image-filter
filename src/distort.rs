@@ -49,6 +49,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Radial-polynomial lens distortion.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Distort {
     /// Quadratic radial coefficient. Negative → barrel; positive →
     /// pincushion.
@@ -68,6 +69,29 @@ pub struct Distort {
     pub r_norm: Option<f32>,
     /// Out-of-bounds fill colour (`[R, G, B, A]`).
     pub background: [u8; 4],
+}
+
+impl Distort {
+    /// Builder-style setter for [`k1`](Self::k1).
+    pub fn with_k1(mut self, k1: f32) -> Self {
+        self.k1 = k1;
+        self
+    }
+    /// Builder-style setter for [`k2`](Self::k2).
+    pub fn with_k2(mut self, k2: f32) -> Self {
+        self.k2 = k2;
+        self
+    }
+    /// Builder-style setter for [`p1`](Self::p1).
+    pub fn with_p1(mut self, p1: f32) -> Self {
+        self.p1 = p1;
+        self
+    }
+    /// Builder-style setter for [`p2`](Self::p2).
+    pub fn with_p2(mut self, p2: f32) -> Self {
+        self.p2 = p2;
+        self
+    }
 }
 
 impl Distort {

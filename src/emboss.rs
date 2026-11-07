@@ -16,10 +16,19 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Relief / "emboss" 3×3 convolution.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Emboss {
     /// Reserved — the current implementation is fixed at 3×3; this
     /// field lets us grow to larger kernels later without an API break.
     pub radius: u32,
+}
+
+impl Emboss {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl Default for Emboss {

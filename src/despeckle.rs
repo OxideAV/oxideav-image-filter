@@ -18,8 +18,17 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 /// `radius` is the half-window size in pixels: `0` is identity,
 /// `1` is the standard 3×3 median, `2` is a 5×5 median, etc.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Despeckle {
     pub radius: u32,
+}
+
+impl Despeckle {
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl Default for Despeckle {

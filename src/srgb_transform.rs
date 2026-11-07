@@ -48,6 +48,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Which transfer curve the transform uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SrgbCurve {
     /// IEC 61966-2-1 piecewise sRGB curve (linear toe + `^2.4` shoulder).
     Srgb,
@@ -86,6 +87,7 @@ pub enum SrgbDirection {
 
 /// sRGB / power-law transfer-function transform.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct SrgbTransform {
     /// Which transfer curve to apply.
     pub curve: SrgbCurve,

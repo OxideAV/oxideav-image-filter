@@ -23,6 +23,7 @@ use oxideav_core::{Error, VideoFrame};
 
 /// Mid-frequency local-contrast boost ("clarity").
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Clarity {
     /// Blur radius for the unsharp pass (large = mid-frequency emphasis).
     pub radius: u32,
@@ -32,6 +33,14 @@ pub struct Clarity {
     pub amount: f32,
     /// Skip pixels with `|orig - blur| < threshold` to spare smooth regions.
     pub threshold: u8,
+}
+
+impl Clarity {
+    /// Builder-style setter for [`amount`](Self::amount).
+    pub fn with_amount(mut self, amount: f32) -> Self {
+        self.amount = amount;
+        self
+    }
 }
 
 impl Default for Clarity {

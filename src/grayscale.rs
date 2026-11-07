@@ -9,6 +9,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// RGB → grayscale desaturation.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Grayscale {
     /// Keep the alpha channel when the input is `Rgba`. Has no effect
     /// on `Rgb24` / `Gray8`.

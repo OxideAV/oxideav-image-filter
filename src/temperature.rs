@@ -27,9 +27,18 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Colour-temperature shift filter.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Temperature {
     /// Warmth slider in `[-1, 1]`. Non-finite values coerce to `0.0`.
     pub warmth: f32,
+}
+
+impl Temperature {
+    /// Builder-style setter for [`warmth`](Self::warmth).
+    pub fn with_warmth(mut self, warmth: f32) -> Self {
+        self.warmth = warmth;
+        self
+    }
 }
 
 impl Default for Temperature {

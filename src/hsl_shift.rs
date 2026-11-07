@@ -23,6 +23,7 @@ use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
 
 /// Independent H / S / L shifts.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct HslShift {
     /// Hue shift in degrees, applied modulo 360. Non-finite ⇒ 0.
     pub h_shift: f32,
@@ -30,6 +31,24 @@ pub struct HslShift {
     pub s_shift: f32,
     /// Luminance shift in `[-1, 1]` (added to L, then clamped).
     pub l_shift: f32,
+}
+
+impl HslShift {
+    /// Builder-style setter for [`h_shift`](Self::h_shift).
+    pub fn with_h_shift(mut self, h_shift: f32) -> Self {
+        self.h_shift = h_shift;
+        self
+    }
+    /// Builder-style setter for [`s_shift`](Self::s_shift).
+    pub fn with_s_shift(mut self, s_shift: f32) -> Self {
+        self.s_shift = s_shift;
+        self
+    }
+    /// Builder-style setter for [`l_shift`](Self::l_shift).
+    pub fn with_l_shift(mut self, l_shift: f32) -> Self {
+        self.l_shift = l_shift;
+        self
+    }
 }
 
 impl Default for HslShift {
