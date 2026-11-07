@@ -1099,6 +1099,15 @@ Also from the `-fx` family of operations: `Fx` (an expression evaluator,
 (magnitude / phase DFT pair), `OrderedDither` (threshold maps with
 per-channel levels, bit-exact) and `Transpose` / `Transverse`.
 
+More of the Imagick surface, each rule measured on `magick` 7.1.2 and
+held by `tests/magick_ops.rs`: the threshold family (`WhiteThreshold`,
+`BlackThreshold`, `RangeThreshold`, `ColorThreshold`,
+`RandomThreshold`), `Splice` / `Chop` with gravity, `Raise`, `Shear`,
+`Sample` / `Scale`, `Cdl`, and the image-list operations
+`evaluate_sequence` (15 operators), `separate` and `combine_channels`.
+`OrderedDither` carries every map `magick -list threshold` names, their
+cells recovered black-box and bit-exact at any level count.
+
 ## Measurement
 
 `measure` is the read-only side of the Imagick surface: `statistics`
