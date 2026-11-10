@@ -191,7 +191,7 @@ impl DistanceMorphology {
 
 impl PixelFilter for DistanceMorphology {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::GRAY8
+        crate::layout::GRAY_DEEP
     }
 
     fn apply_pixels(
@@ -199,6 +199,11 @@ impl PixelFilter for DistanceMorphology {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // A deep picture is read through the threshold exactly and
+            // the result codes come back in its layout (`deep::run_mask`).
+            return crate::deep::run_mask(input, params, |g, p| self.apply_pixels(g, p));
+        }
         if !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: DistanceMorphology requires Gray8, got {:?}",
@@ -375,7 +380,7 @@ impl DistanceOutline {
 
 impl PixelFilter for DistanceOutline {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::GRAY8
+        crate::layout::GRAY_DEEP
     }
 
     fn apply_pixels(
@@ -383,6 +388,11 @@ impl PixelFilter for DistanceOutline {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // A deep picture is read through the threshold exactly and
+            // the result codes come back in its layout (`deep::run_mask`).
+            return crate::deep::run_mask(input, params, |g, p| self.apply_pixels(g, p));
+        }
         if !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: DistanceOutline requires Gray8, got {:?}",

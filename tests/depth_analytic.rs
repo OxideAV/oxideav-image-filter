@@ -6,9 +6,9 @@
 
 use oxideav_core::{ExecutionContext, PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{
-    BayerMatrix, Blur, Despeckle, DiffusionKernel, Dither, EdgeOp, ImageFilter, Morphology,
-    MorphologyEdge, MorphologyOp, Paint, ScanOrder, Statistic, StatisticOp, StructuringElement,
-    VideoStreamParams, with_execution_context,
+    BayerMatrix, Blur, Despeckle, DiffusionKernel, Dither, EdgeOp, EuclideanDistanceTransform,
+    ImageFilter, Morphology, MorphologyEdge, MorphologyOp, Paint, ScanOrder, Statistic,
+    StatisticOp, StructuringElement, VideoStreamParams, with_execution_context,
 };
 
 /// Storage depth of a test picture.
@@ -1038,5 +1038,32 @@ fn windows_larger_than_the_picture_weigh_the_edges_as_replication_does() {
         let want = (vals[0] + vals[2]) / 2.0;
         let tol = if depth == Depth::F32 { 1e-6 } else { 0.51 };
         assert!(codes(depth, &out).iter().all(|v| (*v - want).abs() <= tol));
+    }
+}
+
+#[test]
+fn mask_operators_threshold_a_16_bit_picture_at_its_own_precision() {
+    // One row. Code 32 896 is exactly 128 on the 8-bit scale (128 · 257)
+    // — at a threshold of 128 it is foreground; code 32 768 is
+    // 127.5 on that scale — background, though rounding it to 8 bits
+    // first would have made it foreground. So only the pixel at x = 5 is
+    // a feature, and the distance transform is |x − 5| pixels, returned
+    // as the 8-bit code d at 16 bits (d · 257).
+    let w = 12usize;
+    let mut src = vec![32_768.0f64; w];
+    src[5] = 32_896.0;
+    let (f, p) = frame(Depth::U16, w, 1, &src);
+    let out = EuclideanDistanceTransform::new(128).apply(&f, p).unwrap();
+    let got = codes(Depth::U16, &out);
+    for (x, g) in got.iter().enumerate() {
+        assert_eq!(*g, (x as f64 - 5.0).abs() * 257.0, "x = {x}");
+    }
+    // The same picture as binary32.
+    let float: Vec<f64> = src.iter().map(|c| ((*c / 65535.0) as f32) as f64).collect();
+    let (f, p) = frame(Depth::F32, w, 1, &float);
+    let out = EuclideanDistanceTransform::new(128).apply(&f, p).unwrap();
+    for (x, g) in codes(Depth::F32, &out).iter().enumerate() {
+        let want = ((x as f64 - 5.0).abs() as f32 / 255.0) as f64;
+        assert_eq!(*g, want, "float x = {x}");
     }
 }

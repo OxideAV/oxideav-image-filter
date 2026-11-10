@@ -559,6 +559,60 @@ pub fn map_pixels(
     })
 }
 
+/// Run a `Gray8` mask operator on a `GrayF32Le` picture.
+///
+/// A mask operator reads its input only through an integer threshold on
+/// the 8-bit scale (`code ≥ t` / `code < t`) and writes a result that is
+/// 8-bit codes by its own definition (a distance in pixels, a label, a
+/// binary mask). Flooring the float picture's 8-bit-scale code
+/// `⌊255 v⌋` preserves every such predicate exactly (`⌊c⌋ ≥ t ⇔ c ≥ t`
+/// for integer `t`), so the operator sees the mask the deep picture
+/// defines — not a rounded one — and its result codes are returned as
+/// `code / 255` in the input's layout.
+#[doc(hidden)]
+pub fn run_mask(
+    input: &VideoFrame,
+    params: VideoStreamParams,
+    op: impl FnOnce(&VideoFrame, VideoStreamParams) -> Result<VideoFrame, Error>,
+) -> Result<VideoFrame, Error> {
+    let img = FloatImage::from_frame(input, params)?;
+    let codes: Vec<u8> = img
+        .data
+        .iter()
+        .map(|&v| {
+            // NaN is background (code 0); `as` saturates.
+            code8(if v.is_nan() { 0.0 } else { v }).floor() as u8
+        })
+        .collect();
+    let gray = VideoFrame {
+        pts: input.pts,
+        planes: vec![VideoPlane {
+            stride: params.width as usize,
+            data: codes,
+        }],
+    };
+    let gray_params = VideoStreamParams {
+        format: PixelFormat::Gray8,
+        ..params
+    };
+    let out = op(&gray, gray_params)?;
+    let plane = out
+        .planes
+        .first()
+        .ok_or_else(|| Error::invalid("oxideav-image-filter: mask operator returned no plane"))?;
+    if plane.stride == 0 {
+        return Err(Error::invalid(
+            "oxideav-image-filter: mask operator returned an empty plane",
+        ));
+    }
+    let (w, h) = (plane.stride, plane.data.len() / plane.stride);
+    let data: Vec<f32> = plane.data[..w * h]
+        .iter()
+        .map(|&b| b as f32 / 255.0)
+        .collect();
+    Ok(FloatImage::from_samples(w as u32, h as u32, 1, data)?.into_frame(input.pts))
+}
+
 /// Separable convolution with replicate-edge addressing: `kx` along
 /// rows then `ky` down columns, every channel (alpha included when
 /// `with_alpha`). Both kernels are odd-length and centred.

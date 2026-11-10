@@ -47,9 +47,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the thread budget.
 - `AnisotropicBlur`, `Bloom`, `Quantize`, `TiltShift` and `Stereo` at
   every depth (they were 8-bit only).
+- The mask operators (`DistanceTransform`,
+  `EuclideanDistanceTransform`, `SignedDistanceField`,
+  `VoronoiTransform`, `ProximityFill`, `DistanceMorphology`,
+  `DistanceOutline`, `WeightedDistanceTransform`) take float and 16-bit
+  pictures: the threshold is applied at the picture's precision and the
+  result codes come back in its layout.
 - README: a filter × {8-bit, 16-bit, float} support table generated
   from the filters' declarations (`tests/depth_support_table.rs` fails
-  when it is out of date) — 147 of 170 catalogued filters take 16-bit
+  when it is out of date) — 155 of 170 catalogued filters take 16-bit
   and float pictures — and a before → after throughput table.
 - `benches/throughput.rs`: wall-clock throughput of the most used
   filters at 1 MP / 12 MP, 8- and 16-bit, any thread budget.

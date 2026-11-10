@@ -1181,7 +1181,7 @@ a kernel averages colour across pixels of different coverage (`Blur`,
 `Sharpen`, `Unsharp`, the resampler, the distortions' EWA), the colour
 is weighted by it.
 
-147 of 170 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
+155 of 170 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
 `Unsupported` (never a silent narrowing). `tests/depth_support_table.rs`
 regenerates this table from the filters' own declarations and fails
 when a row here is out of date; `tests/depth_analytic.rs` and
@@ -1190,6 +1190,17 @@ blur, statistic, despeckle, morphology, paint, both dither families and
 the two-input filters to their closed-form definitions, with and
 without alpha; `tests/deep_parity.rs` holds every other float path to
 its 8-bit result on widened pictures.
+
+The mask operators (the distance transforms, `SignedDistanceField`,
+`VoronoiTransform`, `ProximityFill`, `DistanceMorphology`,
+`DistanceOutline`) read a picture only through an integer threshold on
+the 8-bit scale and write a result that is 8-bit codes by definition (a
+distance in pixels, a label, a binary mask). A deep picture is
+thresholded at its own precision — code 32 768 of 65 535 is 127.5 on the
+8-bit scale and stays below a threshold of 128 — and the result codes
+come back as `code / 255` in the picture's layout.
+`WeightedDistanceTransform` seeds its continuous cost from the deep
+sample directly.
 
 | filter | 8-bit | 16-bit | float | why not |
 |---|---|---|---|---|
@@ -1223,22 +1234,22 @@ its 8-bit result on widened pictures.
 | `ColorBalance` | yes | yes | yes |  |
 | `ColorMatrix` | yes | yes | yes |  |
 | `Colorize` | yes | yes | yes |  |
-| `Comic` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Comic` | yes | no | no | 8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal) |
 | `Composite(self)` | yes | yes | yes |  |
 | `ConnectedComponents` | yes | yes | yes |  |
 | `ContrastStretch` | yes | yes | yes |  |
 | `Convolve` | yes | yes | yes |  |
 | `Crop` | yes | yes | yes |  |
 | `CrossProcess` | yes | yes | yes |  |
-| `Crystallize` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Crystallize` | yes | no | no | 8-bit only: float path not written yet (typed refusal, never narrowed) |
 | `Curves` | yes | yes | yes |  |
 | `Cyanotype` | yes | yes | yes |  |
 | `Cycle` | yes | yes | yes |  |
-| `Deskew` | yes | no | no | 8-bit only: analysis on an 8-bit edge map; deep path not written yet |
+| `Deskew` | yes | no | no | 8-bit only: analysis on an 8-bit luma / edge map; float path not written yet (typed refusal) |
 | `Despeckle` | yes | yes | yes |  |
-| `DistanceMorphology` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
-| `DistanceOutline` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
-| `DistanceTransform` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `DistanceMorphology` | yes | yes | yes |  |
+| `DistanceOutline` | yes | yes | yes |  |
+| `DistanceTransform` | yes | yes | yes |  |
 | `Distort` | yes | yes | yes |  |
 | `DistortImage` | yes | yes | yes |  |
 | `Dither` | yes | yes | yes |  |
@@ -1249,21 +1260,21 @@ its 8-bit result on widened pictures.
 | `Emboss` | yes | yes | yes |  |
 | `EmbossDirectional` | yes | yes | yes |  |
 | `Equalize` | yes | yes | yes |  |
-| `EuclideanDistanceTransform` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `EuclideanDistanceTransform` | yes | yes | yes |  |
 | `Evaluate` | yes | yes | yes |  |
 | `Exposure` | yes | yes | yes |  |
 | `Extent` | yes | yes | yes |  |
-| `Feather` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
-| `VoronoiTransform` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
-| `ProximityFill` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `Feather` | yes | no | no | 8-bit only: float path not written yet (typed refusal, never narrowed) |
+| `VoronoiTransform` | yes | yes | yes |  |
+| `ProximityFill` | yes | yes | yes |  |
 | `Flip` | yes | yes | yes |  |
-| `FloodFill` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `FloodFill` | yes | no | no | 8-bit only: float path not written yet (typed refusal, never narrowed) |
 | `Flop` | yes | yes | yes |  |
 | `Frame` | yes | yes | yes |  |
-| `FreiChen` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `FreiChen` | yes | no | no | 8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal) |
 | `Function` | yes | yes | yes |  |
 | `Fx` | yes | yes | yes |  |
-| `Gabor` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Gabor` | yes | no | no | 8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal) |
 | `Gamma` | yes | yes | yes |  |
 | `GradientConic` | yes | yes | yes |  |
 | `GradientMap` | yes | yes | yes |  |
@@ -1272,14 +1283,14 @@ its 8-bit result on widened pictures.
 | `Grayscale` | yes | yes | yes |  |
 | `Grayscale(gray8)` | yes | yes | yes |  |
 | `Hable` | yes | yes | yes |  |
-| `Halftone` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Halftone` | yes | no | no | 8-bit only: float path not written yet (typed refusal, never narrowed) |
 | `Heatmap` | yes | yes | yes |  |
-| `HoughCircles` | yes | no | no | 8-bit only: analysis on an 8-bit edge map; deep path not written yet |
-| `HoughLines` | yes | no | no | 8-bit only: analysis on an 8-bit edge map; deep path not written yet |
+| `HoughCircles` | yes | no | no | 8-bit only: analysis on an 8-bit luma / edge map; float path not written yet (typed refusal) |
+| `HoughLines` | yes | no | no | 8-bit only: analysis on an 8-bit luma / edge map; float path not written yet (typed refusal) |
 | `HslRotate` | yes | yes | yes |  |
 | `HslShift` | yes | yes | yes |  |
 | `Implode` | yes | yes | yes |  |
-| `InnerShadow` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `InnerShadow` | yes | no | no | 8-bit only: float path not written yet (typed refusal, never narrowed) |
 | `Kmeans` | yes | yes | yes |  |
 | `Kuwahara` | yes | yes | yes |  |
 | `Laplacian` | yes | yes | yes |  |
@@ -1326,8 +1337,8 @@ its 8-bit result on widened pictures.
 | `Shave` | yes | yes | yes |  |
 | `Shear` | yes | yes | yes |  |
 | `SigmoidalContrast` | yes | yes | yes |  |
-| `SignedDistanceField` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
-| `Sketch` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `SignedDistanceField` | yes | yes | yes |  |
+| `Sketch` | yes | no | no | 8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal) |
 | `Solarize` | yes | yes | yes |  |
 | `SplitTone` | yes | yes | yes |  |
 | `SparseColor` | yes | yes | yes |  |
@@ -1343,7 +1354,7 @@ its 8-bit result on widened pictures.
 | `RangeThreshold` | yes | yes | yes |  |
 | `TiltShift` | yes | yes | yes |  |
 | `Tint` | yes | yes | yes |  |
-| `Toon` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Toon` | yes | no | no | 8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal) |
 | `Transpose` | yes | yes | yes |  |
 | `Transverse` | yes | yes | yes |  |
 | `Trim` | yes | yes | yes |  |
@@ -1353,7 +1364,7 @@ its 8-bit result on widened pictures.
 | `VignetteSoft` | yes | yes | yes |  |
 | `Wave` | yes | yes | yes |  |
 | `WhiteThreshold` | yes | yes | yes |  |
-| `WeightedDistanceTransform` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `WeightedDistanceTransform` | yes | yes | yes |  |
 | `ZoomBlur` | yes | yes | yes |  |
 | `Clut (two-input)` | yes | yes | yes |  |
 | `Composite (two-input)` | yes | yes | yes |  |

@@ -129,6 +129,21 @@ fn tolerance(name: &str) -> (i32, f32) {
         // path truncates its luma to a code, so one code of luma is up
         // to eight codes of ramp.
         "Heatmap" => (8, 1.0),
+        // Mask operators threshold the picture's grey. On a colour
+        // picture the 8-bit route first rounds the luma to a code
+        // (the packed-RGB hop to `Gray8`) while the deep route
+        // thresholds the unrounded luma, so a pixel whose luma lies
+        // within half a code below the threshold changes side — and
+        // with it the distances / labels around it. Grey pictures
+        // (no luma step) agree exactly.
+        "DistanceTransform"
+        | "EuclideanDistanceTransform"
+        | "SignedDistanceField"
+        | "WeightedDistanceTransform"
+        | "DistanceMorphology"
+        | "DistanceOutline"
+        | "VoronoiTransform"
+        | "ProximityFill" => (255, 0.05),
         _ => (1, 0.0),
     }
 }

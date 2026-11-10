@@ -135,7 +135,7 @@ impl WeightedDistanceTransform {
 
 impl PixelFilter for WeightedDistanceTransform {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::GRAY8
+        crate::layout::GRAY_DEEP
     }
 
     fn apply_pixels(
@@ -143,7 +143,15 @@ impl PixelFilter for WeightedDistanceTransform {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !matches!(params.format, PixelFormat::Gray8) {
+        // The cost is continuous in the sample, so a float (or 16-bit)
+        // picture seeds it at its own precision; the rendered distance
+        // is 8-bit codes by definition and comes back as `code / 255`.
+        let float = if crate::deep::is_float(params.format) {
+            Some(crate::deep::FloatImage::from_frame(input, params)?)
+        } else {
+            None
+        };
+        if float.is_none() && !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: WeightedDistanceTransform requires Gray8, got {:?}",
                 params.format
@@ -169,7 +177,17 @@ impl PixelFilter for WeightedDistanceTransform {
         let mut f = vec![INF; w * h];
         for y in 0..h {
             for x in 0..w {
-                let v = src.data[y * src.stride + x] as f64 / 255.0;
+                let v = match &float {
+                    Some(img) => {
+                        let s = img.samples()[y * w + x];
+                        if s.is_nan() {
+                            0.0
+                        } else {
+                            s.clamp(0.0, 1.0) as f64
+                        }
+                    }
+                    None => src.data[y * src.stride + x] as f64 / 255.0,
+                };
                 // Faintness: 0 = cheap seed, 1 = most expensive.
                 let c = if self.invert { v } else { 1.0 - v };
                 let cost = weight * c;
@@ -229,6 +247,11 @@ impl PixelFilter for WeightedDistanceTransform {
             out[i] = pix.round().clamp(0.0, 255.0) as u8;
         }
 
+        if float.is_some() {
+            let data: Vec<f32> = out.iter().map(|&b| b as f32 / 255.0).collect();
+            let img = crate::deep::FloatImage::from_samples(params.width, params.height, 1, data)?;
+            return Ok(img.into_frame(input.pts));
+        }
         Ok(VideoFrame {
             pts: input.pts,
             planes: vec![VideoPlane {

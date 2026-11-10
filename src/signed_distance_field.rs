@@ -192,7 +192,7 @@ fn edt_2d(f: &mut [f64], w: usize, h: usize) {
 
 impl PixelFilter for SignedDistanceField {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::GRAY8
+        crate::layout::GRAY_DEEP
     }
 
     fn apply_pixels(
@@ -200,6 +200,11 @@ impl PixelFilter for SignedDistanceField {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // A deep picture is read through the threshold exactly and
+            // the result codes come back in its layout (`deep::run_mask`).
+            return crate::deep::run_mask(input, params, |g, p| self.apply_pixels(g, p));
+        }
         if !matches!(params.format, PixelFormat::Gray8) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: SignedDistanceField requires Gray8, got {:?}",

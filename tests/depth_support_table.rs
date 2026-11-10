@@ -33,23 +33,14 @@ fn reason(name: &str) -> &'static str {
             "n/a: reads a chroma plane of 8-bit planar YUV; the deep layouts reach filters as packed RGB / grey"
         }
         "Stegano" => "n/a: hides a picture in the low bits of 8-bit codes; defined on that storage",
-        "DistanceTransform"
-        | "EuclideanDistanceTransform"
-        | "SignedDistanceField"
-        | "VoronoiTransform"
-        | "ProximityFill"
-        | "WeightedDistanceTransform"
-        | "DistanceMorphology"
-        | "DistanceOutline" => {
-            "8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet"
-        }
         "HoughLines" | "HoughCircles" | "Deskew" => {
-            "8-bit only: analysis on an 8-bit edge map; deep path not written yet"
+            "8-bit only: analysis on an 8-bit luma / edge map; float path not written yet (typed refusal)"
         }
-        "AnisotropicBlur" | "Bloom" | "Crystallize" | "FloodFill" | "Halftone" | "Quantize"
-        | "FreiChen" | "Gabor" | "Sketch" | "TiltShift" | "Comic" | "Toon" | "InnerShadow"
-        | "Feather" | "Stereo" => {
-            "8-bit only: deep path not written yet (typed refusal, never narrowed)"
+        "FreiChen" | "Gabor" | "Sketch" | "Toon" | "Comic" => {
+            "8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal)"
+        }
+        "Crystallize" | "FloodFill" | "Halftone" | "InnerShadow" | "Feather" => {
+            "8-bit only: float path not written yet (typed refusal, never narrowed)"
         }
         _ => "",
     }
