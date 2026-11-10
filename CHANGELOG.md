@@ -26,8 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their own precision (a 16-bit flat tone between two 8-bit codes keeps
   its mean; output levels are 16-bit codes), alpha untouched. It was an
   8-bit-only filter.
-- `StructuringElement::Square(r)`, `Diamond(r)` and `Disk(r)` with
-  `runs()`, `footprint()` and `radius()`; the morphology factories take
+- `StructuringElement::Square`, `Diamond` and `Disk`, sized by the new
+  `radius` of `Morphology` / `MorphologyEdge` (`with_radius`, also on
+  `MorphologyChain`), with `StructuringElement::runs(radius)`,
+  `footprint(radius)` and `reach(radius)`; the morphology factories take
   `{"element": "square" | "diamond" | "disk", "radius": r}`.
 - `Paint` at every depth (it was 8-bit only): the oil-paint vote on
   16-bit and float pictures, the bucket mean kept at the picture's

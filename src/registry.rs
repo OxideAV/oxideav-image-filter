@@ -1928,34 +1928,31 @@ fn make_depolar(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFil
 
 // --- r7 factories ---
 
+/// The structuring element and its radius: `{"element": "square" |
+/// "cross" | "diamond" | "disk", "radius": r}`. Without `radius` the
+/// square and the cross are the classic 3×3 elements.
 fn morph_element_from_json(
     p: Option<&serde_json::Map<String, Value>>,
-) -> Result<crate::StructuringElement> {
+) -> Result<(crate::StructuringElement, u32)> {
     let s = p.and_then(|m| m.get("element")).and_then(|v| v.as_str());
-    // `radius` selects the parametrised element of the named shape;
-    // without it the classic 3×3 elements.
     let radius = p
         .and_then(|m| m.get("radius"))
         .and_then(|v| v.as_u64())
         .map(|r| r.min(u32::MAX as u64) as u32);
-    match (s, radius) {
-        (None | Some("square") | Some("square3x3") | Some("Square3x3"), None) => {
-            Ok(crate::StructuringElement::Square3x3)
+    use crate::StructuringElement as E;
+    let element = match (s, radius) {
+        (None | Some("square") | Some("square3x3") | Some("Square3x3"), None) => E::Square3x3,
+        (Some("cross") | Some("cross3x3") | Some("plus") | Some("Cross3x3"), None) => E::Cross3x3,
+        (None | Some("square"), Some(_)) => E::Square,
+        (Some("diamond") | Some("cross") | Some("plus"), _) => E::Diamond,
+        (Some("disk") | Some("disc") | Some("circle"), _) => E::Disk,
+        (Some(other), _) => {
+            return Err(Error::invalid(format!(
+                "job: filter 'morphology-*': unknown element '{other}' (expected 'square', 'cross', 'diamond' or 'disk')"
+            )));
         }
-        (Some("cross") | Some("cross3x3") | Some("plus") | Some("Cross3x3"), None) => {
-            Ok(crate::StructuringElement::Cross3x3)
-        }
-        (None | Some("square"), Some(r)) => Ok(crate::StructuringElement::Square(r)),
-        (Some("diamond") | Some("cross") | Some("plus"), r) => {
-            Ok(crate::StructuringElement::Diamond(r.unwrap_or(1)))
-        }
-        (Some("disk") | Some("disc") | Some("circle"), r) => {
-            Ok(crate::StructuringElement::Disk(r.unwrap_or(1)))
-        }
-        (Some(other), _) => Err(Error::invalid(format!(
-            "job: filter 'morphology-*': unknown element '{other}' (expected 'square', 'cross', 'diamond' or 'disk')"
-        ))),
-    }
+    };
+    Ok((element, radius.unwrap_or(1)))
 }
 
 fn morph_iters_from_json(p: Option<&serde_json::Map<String, Value>>) -> u32 {
@@ -1968,9 +1965,9 @@ fn morph_iters_from_json(p: Option<&serde_json::Map<String, Value>>) -> u32 {
 fn make_morphology_dilate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::Morphology;
     let p = params.as_object();
-    let element = morph_element_from_json(p)?;
+    let (element, radius) = morph_element_from_json(p)?;
     let iterations = morph_iters_from_json(p);
-    let f = Morphology::dilate(element, iterations);
+    let f = Morphology::dilate(element, iterations).with_radius(radius);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(
@@ -1983,9 +1980,9 @@ fn make_morphology_dilate(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn
 fn make_morphology_erode(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::Morphology;
     let p = params.as_object();
-    let element = morph_element_from_json(p)?;
+    let (element, radius) = morph_element_from_json(p)?;
     let iterations = morph_iters_from_json(p);
-    let f = Morphology::erode(element, iterations);
+    let f = Morphology::erode(element, iterations).with_radius(radius);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(
@@ -1998,9 +1995,9 @@ fn make_morphology_erode(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn 
 fn make_morphology_open(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::Morphology;
     let p = params.as_object();
-    let element = morph_element_from_json(p)?;
+    let (element, radius) = morph_element_from_json(p)?;
     let iterations = morph_iters_from_json(p);
-    let f = Morphology::open(element, iterations);
+    let f = Morphology::open(element, iterations).with_radius(radius);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(
@@ -2013,9 +2010,9 @@ fn make_morphology_open(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn S
 fn make_morphology_close(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::Morphology;
     let p = params.as_object();
-    let element = morph_element_from_json(p)?;
+    let (element, radius) = morph_element_from_json(p)?;
     let iterations = morph_iters_from_json(p);
-    let f = Morphology::close(element, iterations);
+    let f = Morphology::close(element, iterations).with_radius(radius);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(
@@ -2518,8 +2515,8 @@ fn make_channel_extract(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn S
 fn make_morphology_edgein(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::MorphologyEdge;
     let p = params.as_object();
-    let element = morph_element_from_json(p)?;
-    let f = MorphologyEdge::edge_in(element);
+    let (element, radius) = morph_element_from_json(p)?;
+    let f = MorphologyEdge::edge_in(element).with_radius(radius);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(
@@ -2532,8 +2529,8 @@ fn make_morphology_edgein(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn
 fn make_morphology_edgeout(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::MorphologyEdge;
     let p = params.as_object();
-    let element = morph_element_from_json(p)?;
-    let f = MorphologyEdge::edge_out(element);
+    let (element, radius) = morph_element_from_json(p)?;
+    let f = MorphologyEdge::edge_out(element).with_radius(radius);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(
@@ -2549,8 +2546,8 @@ fn make_morphology_edge_magnitude(
 ) -> Result<Box<dyn StreamFilter>> {
     use crate::MorphologyEdge;
     let p = params.as_object();
-    let element = morph_element_from_json(p)?;
-    let f = MorphologyEdge::edge_magnitude(element);
+    let (element, radius) = morph_element_from_json(p)?;
+    let f = MorphologyEdge::edge_magnitude(element).with_radius(radius);
     let in_port = video_in_port(inputs);
     let out_port = passthrough_out_port(&in_port);
     Ok(Box::new(ImageFilterAdapter::new(

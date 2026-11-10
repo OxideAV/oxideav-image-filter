@@ -125,7 +125,7 @@ fn main() {
         ),
         (
             "morphology erode disk r5",
-            Box::new(Morphology::erode(StructuringElement::Disk(5), 1)),
+            Box::new(Morphology::erode(StructuringElement::Disk, 1).with_radius(5)),
         ),
         (
             "statistic median 5x5",

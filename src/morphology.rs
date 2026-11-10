@@ -49,23 +49,24 @@ pub enum MorphologyOp {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StructuringElement {
-    /// 3×3 square (8-connected). 9 taps. Same as `Square(1)`.
+    /// 3×3 square (8-connected). 9 taps. `Square` at radius 1.
     #[default]
     Square3x3,
-    /// 3×3 cross / plus (4-connected). 5 taps. Same as `Diamond(1)`.
+    /// 3×3 cross / plus (4-connected). 5 taps. `Diamond` at radius 1.
     Cross3x3,
-    /// The `(2r + 1)²` square: every offset with `max(|dx|, |dy|) ≤ r`.
-    Square(u32),
+    /// The `(2r + 1)²` square: every offset with `max(|dx|, |dy|) ≤ r`,
+    /// `r` the filter's radius ([`Morphology::with_radius`]).
+    Square,
     /// The diamond of radius `r`: every offset with `|dx| + |dy| ≤ r`.
-    Diamond(u32),
+    Diamond,
     /// The disk of radius `r`: every offset with `dx² + dy² ≤ r²`.
-    Disk(u32),
+    Disk,
 }
 
 impl StructuringElement {
     /// Yields the `(dx, dy)` offsets covered by the two fixed 3×3
-    /// elements. The parametrised elements (`Square(r)`, `Diamond(r)`,
-    /// `Disk(r)`) have no static table and return an empty slice here —
+    /// elements. The radius-parametrised elements (`Square`, `Diamond`,
+    /// `Disk`) have no static table and return an empty slice here —
     /// use [`footprint`](Self::footprint), which covers every element.
     pub fn offsets(&self) -> &'static [(i32, i32)] {
         match self {
@@ -85,28 +86,37 @@ impl StructuringElement {
         }
     }
 
-    /// The element as horizontal runs: entry `i` is the half-width of
-    /// the run on row offset `i − r` (`r` the element's radius), so the
-    /// element is `{(dx, dy) : |dx| ≤ runs[dy + r]}`. Every element
-    /// here is convex, symmetric and contains the origin.
-    pub fn runs(&self) -> Vec<u32> {
-        let run = |r: u32, half: &dyn Fn(u64, u64) -> u64| -> Vec<u32> {
-            (0..=2 * r as u64)
-                .map(|i| half(r as u64, i.abs_diff(r as u64)) as u32)
-                .collect()
-        };
-        match *self {
-            StructuringElement::Square3x3 => vec![1, 1, 1],
-            StructuringElement::Cross3x3 => vec![0, 1, 0],
-            StructuringElement::Square(r) => run(r, &|r, _| r),
-            StructuringElement::Diamond(r) => run(r, &|r, dy| r - dy),
-            StructuringElement::Disk(r) => run(r, &|r, dy| (r * r - dy * dy).isqrt()),
+    /// The radius the element has when the filter asks for `radius`:
+    /// the two fixed 3×3 elements always reach one pixel.
+    pub fn reach(&self, radius: u32) -> u32 {
+        match self {
+            StructuringElement::Square3x3 | StructuringElement::Cross3x3 => 1,
+            _ => radius,
         }
     }
 
-    /// Every `(dx, dy)` offset of the element, row by row.
-    pub fn footprint(&self) -> Vec<(i32, i32)> {
-        let runs = self.runs();
+    /// The element at `radius` as horizontal runs: entry `i` is the
+    /// half-width of the run on row offset `i − r` (`r` the element's
+    /// [`reach`](Self::reach)), so the element is
+    /// `{(dx, dy) : |dx| ≤ runs[dy + r]}`. Every element here is
+    /// convex, symmetric and contains the origin.
+    pub fn runs(&self, radius: u32) -> Vec<u32> {
+        let r = self.reach(radius) as u64;
+        (0..=2 * r)
+            .map(|i| {
+                let dy = i.abs_diff(r);
+                (match self {
+                    StructuringElement::Square3x3 | StructuringElement::Square => r,
+                    StructuringElement::Cross3x3 | StructuringElement::Diamond => r - dy,
+                    StructuringElement::Disk => (r * r - dy * dy).isqrt(),
+                }) as u32
+            })
+            .collect()
+    }
+
+    /// Every `(dx, dy)` offset of the element at `radius`, row by row.
+    pub fn footprint(&self, radius: u32) -> Vec<(i32, i32)> {
+        let runs = self.runs(radius);
         let r = (runs.len() / 2) as i32;
         let mut out = Vec::new();
         for (i, hw) in runs.iter().enumerate() {
@@ -116,16 +126,6 @@ impl StructuringElement {
             }
         }
         out
-    }
-
-    /// The element's radius (its reach along either axis).
-    pub fn radius(&self) -> u32 {
-        match *self {
-            StructuringElement::Square3x3 | StructuringElement::Cross3x3 => 1,
-            StructuringElement::Square(r)
-            | StructuringElement::Diamond(r)
-            | StructuringElement::Disk(r) => r,
-        }
     }
 }
 
@@ -149,46 +149,49 @@ pub(crate) fn morph_samples<T: crate::kernel::Sample>(
     nc: usize,
     op: MorphologyOp,
     element: StructuringElement,
+    radius: u32,
     iterations: u32,
 ) -> Vec<T> {
     use crate::kernel::{Window, extreme_filter, morph_runs};
     let max = matches!(op, MorphologyOp::Dilate);
+    let reach = element.reach(radius);
     // Beyond the picture's own extent a larger element changes nothing.
     let cap = w.max(h) as u64;
-    let grown = |r: u32| (r as u64 * iterations as u64).min(cap) as u32;
-    let tight = |src: &[T]| -> Vec<T> {
+    let grown = (reach as u64 * iterations as u64).min(cap) as u32;
+    if iterations == 0 || reach == 0 || w == 0 || h == 0 {
         let mut out = Vec::with_capacity(w * ch * h);
         for y in 0..h {
             out.extend_from_slice(&src[y * stride..y * stride + w * ch]);
         }
-        out
-    };
-    if iterations == 0 || element.radius() == 0 || w == 0 || h == 0 {
-        return tight(src);
+        return out;
     }
-    let run_pass = |src: &[T], stride: usize, element: StructuringElement| -> Vec<T> {
+    let run_pass = |src: &[T], stride: usize, element: StructuringElement, radius: u32| -> Vec<T> {
         let runs: Vec<Option<usize>> = element
-            .runs()
+            .runs(radius)
             .into_iter()
             .map(|hw| Some((hw as usize).min(w)))
             .collect();
         morph_runs(src, stride, w, h, ch, nc, &runs, max)
     };
     match element {
-        StructuringElement::Square3x3 | StructuringElement::Square(_) => {
-            let r = grown(element.radius()) as usize;
-            extreme_filter(src, stride, w, h, ch, nc, Window::radius(r), max)
-        }
-        StructuringElement::Cross3x3 | StructuringElement::Diamond(_) => run_pass(
+        StructuringElement::Square3x3 | StructuringElement::Square => extreme_filter(
             src,
             stride,
-            StructuringElement::Diamond(grown(element.radius())),
+            w,
+            h,
+            ch,
+            nc,
+            Window::radius(grown as usize),
+            max,
         ),
-        StructuringElement::Disk(r) => {
-            let element = StructuringElement::Disk((r as u64).min(cap) as u32);
-            let mut cur = run_pass(src, stride, element);
+        StructuringElement::Cross3x3 | StructuringElement::Diamond => {
+            run_pass(src, stride, StructuringElement::Diamond, grown)
+        }
+        StructuringElement::Disk => {
+            let radius = (reach as u64).min(cap) as u32;
+            let mut cur = run_pass(src, stride, element, radius);
             for _ in 1..iterations {
-                let next = run_pass(&cur, w * ch, element);
+                let next = run_pass(&cur, w * ch, element, radius);
                 if next == cur {
                     // A fixed point: further passes change nothing.
                     break;
@@ -210,6 +213,9 @@ pub struct Morphology {
     pub op: MorphologyOp,
     pub element: StructuringElement,
     pub iterations: u32,
+    /// Radius of the `Square` / `Diamond` / `Disk` elements (default 1;
+    /// the fixed 3×3 elements ignore it).
+    pub radius: u32,
 }
 
 impl Morphology {
@@ -228,6 +234,11 @@ impl Morphology {
         self.iterations = iterations;
         self
     }
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl Morphology {
@@ -237,6 +248,7 @@ impl Morphology {
             op,
             element,
             iterations,
+            radius: 1,
         }
     }
 
@@ -267,9 +279,15 @@ impl PixelFilter for Morphology {
             return Ok(input.clone());
         }
         if crate::deep::is_float(params.format) {
-            let (op, iterations, element) = (self.op, self.iterations, self.element);
-            return crate::deep::run(input, params, |img| {
-                Ok(morph_float(&img, op, element, iterations))
+            let me = self.clone();
+            return crate::deep::run(input, params, move |img| {
+                Ok(morph_float(
+                    &img,
+                    me.op,
+                    me.element,
+                    me.radius,
+                    me.iterations,
+                ))
             });
         }
 
@@ -295,6 +313,7 @@ impl PixelFilter for Morphology {
                     nc,
                     self.op,
                     self.element,
+                    self.radius,
                     self.iterations,
                 ),
             };
@@ -349,6 +368,13 @@ impl MorphologyChain {
     /// Builder-style setter for [`second`](Self::second).
     pub fn with_second(mut self, second: Morphology) -> Self {
         self.second = second;
+        self
+    }
+    /// Set the element radius of both passes
+    /// ([`Morphology::with_radius`]).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.first.radius = radius;
+        self.second.radius = radius;
         self
     }
 }
@@ -409,6 +435,9 @@ pub enum EdgeOp {
 pub struct MorphologyEdge {
     pub op: EdgeOp,
     pub element: StructuringElement,
+    /// Radius of the `Square` / `Diamond` / `Disk` elements (default 1;
+    /// the fixed 3×3 elements ignore it).
+    pub radius: u32,
 }
 
 impl MorphologyEdge {
@@ -422,13 +451,22 @@ impl MorphologyEdge {
         self.element = element;
         self
     }
+    /// Builder-style setter for [`radius`](Self::radius).
+    pub fn with_radius(mut self, radius: u32) -> Self {
+        self.radius = radius;
+        self
+    }
 }
 
 impl MorphologyEdge {
     /// Build an edge filter with the given operator and structuring
     /// element.
     pub fn new(op: EdgeOp, element: StructuringElement) -> Self {
-        Self { op, element }
+        Self {
+            op,
+            element,
+            radius: 1,
+        }
     }
 
     /// Convenience: inner-boundary edge.
@@ -458,20 +496,20 @@ impl PixelFilter for MorphologyEdge {
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
         if crate::deep::is_float(params.format) {
-            let (op, element) = (self.op, self.element);
+            let (op, element, radius) = (self.op, self.element, self.radius);
             return crate::deep::run(input, params, |img| {
                 let (a, b) = match op {
                     EdgeOp::EdgeIn => (
                         img.clone(),
-                        morph_float(&img, MorphologyOp::Erode, element, 1),
+                        morph_float(&img, MorphologyOp::Erode, element, radius, 1),
                     ),
                     EdgeOp::EdgeOut => (
-                        morph_float(&img, MorphologyOp::Dilate, element, 1),
+                        morph_float(&img, MorphologyOp::Dilate, element, radius, 1),
                         img.clone(),
                     ),
                     EdgeOp::EdgeMagnitude => (
-                        morph_float(&img, MorphologyOp::Dilate, element, 1),
-                        morph_float(&img, MorphologyOp::Erode, element, 1),
+                        morph_float(&img, MorphologyOp::Dilate, element, radius, 1),
+                        morph_float(&img, MorphologyOp::Erode, element, radius, 1),
                     ),
                 };
                 let mut out = a;
@@ -491,14 +529,20 @@ impl PixelFilter for MorphologyEdge {
         }
         // Reuse the same code path as `Morphology` for both passes.
         let dilated_or_erode = match self.op {
-            EdgeOp::EdgeIn => Morphology::erode(self.element, 1).apply(input, params)?,
-            EdgeOp::EdgeOut | EdgeOp::EdgeMagnitude => {
-                Morphology::dilate(self.element, 1).apply(input, params)?
-            }
+            EdgeOp::EdgeIn => Morphology::erode(self.element, 1)
+                .with_radius(self.radius)
+                .apply(input, params)?,
+            EdgeOp::EdgeOut | EdgeOp::EdgeMagnitude => Morphology::dilate(self.element, 1)
+                .with_radius(self.radius)
+                .apply(input, params)?,
         };
         let other = match self.op {
             EdgeOp::EdgeIn | EdgeOp::EdgeOut => None,
-            EdgeOp::EdgeMagnitude => Some(Morphology::erode(self.element, 1).apply(input, params)?),
+            EdgeOp::EdgeMagnitude => Some(
+                Morphology::erode(self.element, 1)
+                    .with_radius(self.radius)
+                    .apply(input, params)?,
+            ),
         };
 
         // Per-channel saturating subtract, alpha-preserving on RGBA.
@@ -611,6 +655,7 @@ pub(crate) fn morph_float(
     img: &crate::deep::FloatImage,
     op: MorphologyOp,
     element: StructuringElement,
+    radius: u32,
     iterations: u32,
 ) -> crate::deep::FloatImage {
     let (w, h, ch) = (img.width() as usize, img.height() as usize, img.channels());
@@ -623,6 +668,7 @@ pub(crate) fn morph_float(
         img.color_channels(),
         op,
         element,
+        radius,
         iterations,
     );
     crate::deep::FloatImage::from_samples(img.width(), img.height(), ch, data)

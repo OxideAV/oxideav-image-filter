@@ -433,8 +433,8 @@ fn outputs_are_identical_at_every_thread_budget() {
             Box::new(Statistic::new(StatisticOp::Max, 4, 7)),
             Box::new(Statistic::new(StatisticOp::Mean, 6, 6)),
             Box::new(Despeckle::new(2)),
-            Box::new(Morphology::dilate(StructuringElement::Disk(3), 2)),
-            Box::new(Morphology::erode(StructuringElement::Square(2), 2)),
+            Box::new(Morphology::dilate(StructuringElement::Disk, 2).with_radius(3)),
+            Box::new(Morphology::erode(StructuringElement::Square, 2).with_radius(2)),
             Box::new(Dither::ordered(BayerMatrix::M8).with_levels(4)),
             Box::new(Paint::new(3)),
         ];
@@ -741,20 +741,16 @@ fn dither_survives_degenerate_pictures_and_non_finite_samples() {
     assert!(got.iter().all(|v| *v == 0.0 || *v == 1.0));
 }
 
-/// The offsets of a structuring element from its definition.
-fn element_offsets(element: StructuringElement) -> Vec<(isize, isize)> {
+/// The offsets of a structuring element at a radius, from its
+/// definition.
+fn element_offsets(element: StructuringElement, radius: u32) -> Vec<(isize, isize)> {
+    let r = radius as isize;
     let (r, inside): (isize, Box<dyn Fn(isize, isize) -> bool>) = match element {
         StructuringElement::Square3x3 => (1, Box::new(|_, _| true)),
         StructuringElement::Cross3x3 => (1, Box::new(|dx, dy| dx.abs() + dy.abs() <= 1)),
-        StructuringElement::Square(r) => (r as isize, Box::new(|_, _| true)),
-        StructuringElement::Diamond(r) => {
-            let r = r as isize;
-            (r, Box::new(move |dx, dy| dx.abs() + dy.abs() <= r))
-        }
-        StructuringElement::Disk(r) => {
-            let r = r as isize;
-            (r, Box::new(move |dx, dy| dx * dx + dy * dy <= r * r))
-        }
+        StructuringElement::Square => (r, Box::new(|_, _| true)),
+        StructuringElement::Diamond => (r, Box::new(move |dx, dy| dx.abs() + dy.abs() <= r)),
+        StructuringElement::Disk => (r, Box::new(move |dx, dy| dx * dx + dy * dy <= r * r)),
         _ => unreachable!(),
     };
     let mut out = Vec::new();
@@ -803,15 +799,15 @@ fn morph_reference(
     out
 }
 
-const ELEMENTS: [StructuringElement; 8] = [
-    StructuringElement::Square3x3,
-    StructuringElement::Cross3x3,
-    StructuringElement::Square(2),
-    StructuringElement::Diamond(3),
-    StructuringElement::Disk(1),
-    StructuringElement::Disk(2),
-    StructuringElement::Disk(4),
-    StructuringElement::Square(0),
+const ELEMENTS: [(StructuringElement, u32); 8] = [
+    (StructuringElement::Square3x3, 1),
+    (StructuringElement::Cross3x3, 5),
+    (StructuringElement::Square, 2),
+    (StructuringElement::Diamond, 3),
+    (StructuringElement::Disk, 1),
+    (StructuringElement::Disk, 2),
+    (StructuringElement::Disk, 4),
+    (StructuringElement::Square, 0),
 ];
 
 #[test]
@@ -822,11 +818,11 @@ fn morphology_is_the_extreme_over_the_element_at_every_depth() {
             let nc = if ch == 4 { 3 } else { ch };
             let src = noise_codes(depth, w * h * ch, 31 + ch as u64);
             let (f, p) = frame(depth, w, ch, &src);
-            for element in ELEMENTS {
-                let offsets = element_offsets(element);
+            for (element, radius) in ELEMENTS {
+                let offsets = element_offsets(element, radius);
                 assert_eq!(
                     element
-                        .footprint()
+                        .footprint(radius)
                         .iter()
                         .map(|&(dx, dy)| (dx as isize, dy as isize))
                         .collect::<Vec<_>>(),
@@ -840,6 +836,7 @@ fn morphology_is_the_extreme_over_the_element_at_every_depth() {
                 for (op, dilate) in [(MorphologyOp::Dilate, true), (MorphologyOp::Erode, false)] {
                     for iterations in [1u32, 2, 3] {
                         let out = Morphology::new(op, element, iterations)
+                            .with_radius(radius)
                             .apply(&f, p)
                             .unwrap();
                         let mut want = src.clone();
@@ -849,7 +846,7 @@ fn morphology_is_the_extreme_over_the_element_at_every_depth() {
                         assert_eq!(
                             codes(depth, &out),
                             want,
-                            "{depth:?} ch{ch} {element:?} {op:?} x{iterations}"
+                            "{depth:?} ch{ch} {element:?} r{radius} {op:?} x{iterations}"
                         );
                     }
                 }
@@ -862,7 +859,10 @@ fn morphology_is_the_extreme_over_the_element_at_every_depth() {
                     (EdgeOp::EdgeOut, &dil, &src),
                     (EdgeOp::EdgeMagnitude, &dil, &ero),
                 ] {
-                    let out = MorphologyEdge::new(op, element).apply(&f, p).unwrap();
+                    let out = MorphologyEdge::new(op, element)
+                        .with_radius(radius)
+                        .apply(&f, p)
+                        .unwrap();
                     let got = codes(depth, &out);
                     for i in 0..src.len() {
                         let want = if i % ch >= nc { src[i] } else { a[i] - b[i] };
@@ -891,19 +891,20 @@ fn morphology_survives_huge_elements_and_tiny_pictures() {
         for (w, h) in [(1usize, 1usize), (1, 6), (6, 1), (3, 3)] {
             let src = noise_codes(depth, w * h * 4, 2);
             let (f, p) = frame(depth, w, 4, &src);
-            for element in [
-                StructuringElement::Square(u32::MAX),
-                StructuringElement::Diamond(u32::MAX),
-                StructuringElement::Disk(u32::MAX),
-                StructuringElement::Disk(0),
-                StructuringElement::Cross3x3,
+            for (element, radius) in [
+                (StructuringElement::Square, u32::MAX),
+                (StructuringElement::Diamond, u32::MAX),
+                (StructuringElement::Disk, u32::MAX),
+                (StructuringElement::Disk, 0),
+                (StructuringElement::Cross3x3, 0),
             ] {
                 for iterations in [0u32, 1, u32::MAX] {
                     let out = Morphology::dilate(element, iterations)
+                        .with_radius(radius)
                         .apply(&f, p)
                         .unwrap();
                     let got = codes(depth, &out);
-                    if iterations > 0 && element.radius() > 1 {
+                    if iterations > 0 && element.reach(radius) > 1 {
                         // The element covers the picture: every pixel is
                         // the global maximum, alpha untouched.
                         for c in 0..3 {
