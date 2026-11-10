@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Paint` at every depth (it was 8-bit only): the oil-paint vote on
   16-bit and float pictures, the bucket mean kept at the picture's
   precision.
+- `Watermark`, `Clut`, `HaldClut`, `DisplacementMap` and
+  `ChannelExtract` at every depth (they were 8-bit only): the same rules
+  in binary32, nothing rounded to 8 bits. `ChannelExtract` emits
+  `GrayF32Le` for a float or 16-bit input (a deep channel is never
+  narrowed) and `Gray8` for an 8-bit one, as before.
 - `benches/throughput.rs`: wall-clock throughput of the most used
   filters at 1 MP / 12 MP, 8- and 16-bit, any thread budget.
 

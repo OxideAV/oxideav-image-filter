@@ -87,7 +87,7 @@ impl DisplacementMap {
 
 impl TwoInputPixelFilter for DisplacementMap {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_two_pixels(
@@ -96,6 +96,26 @@ impl TwoInputPixelFilter for DisplacementMap {
         dst: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // The same warp in binary32: the map's first two channels
+            // (its one channel on grey), re-centred on 0.5 and scaled,
+            // displace the bilinear sampling position.
+            use crate::deep::FloatImage;
+            let img = FloatImage::from_frame(src, params)?;
+            let map = FloatImage::from_frame(dst, params)?;
+            let mut out = img.clone();
+            let ch = img.channels();
+            for y in 0..params.height {
+                for x in 0..params.width {
+                    let m = map.pixel(x, y);
+                    let (mr, mg) = if ch == 1 { (m[0], m[0]) } else { (m[0], m[1]) };
+                    let sx = x as f32 + (mr - 0.5) * self.scale_x;
+                    let sy = y as f32 + (mg - 0.5) * self.scale_y;
+                    img.bilinear_into(sx, sy, out.pixel_mut(x, y));
+                }
+            }
+            return Ok(out.into_frame(src.pts.or(dst.pts)));
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

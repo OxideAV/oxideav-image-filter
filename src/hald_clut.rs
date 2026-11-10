@@ -103,9 +103,60 @@ fn sample_cube(plane: &VideoPlane, l: u32, bpp: usize, cr: u32, cg: u32, cb: u32
     fetch(plane, x, y, bpp)
 }
 
+/// The float path: the same trilinear lookup in binary32 — the source
+/// colour, clamped to `[0, 1]` and scaled by `L − 1`, addresses the
+/// cube; the eight surrounding lattice colours are blended; nothing is
+/// rounded to 8 bits. Alpha is the source's.
+fn hald_float(
+    src: &VideoFrame,
+    dst: &VideoFrame,
+    params: VideoStreamParams,
+) -> Result<VideoFrame, Error> {
+    use crate::deep::FloatImage;
+    let l = infer_level(params.width, params.height).ok_or_else(|| {
+        Error::invalid(format!(
+            "oxideav-image-filter: HaldClut: dst must be a square Hald CLUT image \
+             of size L²×L² for some L≥2; got {}×{}",
+            params.width, params.height
+        ))
+    })?;
+    let mut img = FloatImage::from_frame(src, params)?;
+    let cube = FloatImage::from_frame(dst, params)?;
+    if img.color_channels() != 3 {
+        return Err(Error::unsupported(
+            "oxideav-image-filter: HaldClut requires an RGB(A) layout",
+        ));
+    }
+    let lf = (l - 1) as f32;
+    let at = |r: u32, g: u32, b: u32| -> [f32; 3] {
+        let (r, g, b) = (r.min(l - 1), g.min(l - 1), b.min(l - 1));
+        let p = cube.pixel(r + (b % l) * l, g + (b / l) * l);
+        [p[0], p[1], p[2]]
+    };
+    img.map_pixels_in_place(|px| {
+        let coord = |v: f32| if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) } * lf;
+        let (r, g, b) = (coord(px[0]), coord(px[1]), coord(px[2]));
+        let (r0, g0, b0) = (r.floor() as u32, g.floor() as u32, b.floor() as u32);
+        let (dr, dg, db) = (r - r0 as f32, g - g0 as f32, b - b0 as f32);
+        let corner = |i: u32| at(r0 + (i & 1), g0 + ((i >> 1) & 1), b0 + (i >> 2));
+        let c: [[f32; 3]; 8] = std::array::from_fn(|i| corner(i as u32));
+        for ch in 0..3 {
+            let lerp = |a: f32, b: f32, t: f32| a * (1.0 - t) + b * t;
+            let c00 = lerp(c[0][ch], c[1][ch], dr);
+            let c10 = lerp(c[2][ch], c[3][ch], dr);
+            let c01 = lerp(c[4][ch], c[5][ch], dr);
+            let c11 = lerp(c[6][ch], c[7][ch], dr);
+            let c0 = c00 * (1.0 - dg) + c10 * dg;
+            let c1 = c01 * (1.0 - dg) + c11 * dg;
+            px[ch] = c0 * (1.0 - db) + c1 * db;
+        }
+    });
+    Ok(img.into_frame(src.pts))
+}
+
 impl TwoInputPixelFilter for HaldClut {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_two_pixels(
@@ -114,6 +165,9 @@ impl TwoInputPixelFilter for HaldClut {
         dst: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            return hald_float(src, dst, params);
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

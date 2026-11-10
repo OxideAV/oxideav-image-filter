@@ -80,9 +80,52 @@ fn clut_samples(
     Ok((out, bpp, has_alpha))
 }
 
+/// The float path: the same lookup at the picture's precision. Each
+/// colour sample `v` picks entry `⌊clamp(v, 0, 1) · (n − 1)⌋` of the
+/// `n`-entry table (the CLUT picture read row-major) and takes that
+/// entry's own channel; grey takes the entry's luma
+/// `(77 R + 150 G + 29 B) / 256`. The table's values are not rounded to
+/// 8 bits. Alpha is the source's.
+fn clut_float(
+    src: &VideoFrame,
+    dst: &VideoFrame,
+    params: VideoStreamParams,
+) -> Result<VideoFrame, Error> {
+    use crate::deep::FloatImage;
+    let mut img = FloatImage::from_frame(src, params)?;
+    let table = FloatImage::from_frame(dst, params)?;
+    let (ch, cc) = (table.channels(), table.color_channels());
+    let n = table.samples().len() / ch;
+    if n == 0 {
+        return Err(Error::invalid(
+            "oxideav-image-filter: Clut received an empty CLUT (dst frame has no samples)",
+        ));
+    }
+    let scale = (n - 1) as f32;
+    let entries = table.samples();
+    let index = |v: f32| -> usize {
+        let t = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) } * scale;
+        // A sample that sits on an entry (to within binary32 rounding
+        // of `code / 255 · (n − 1)`) takes that entry.
+        let r = t.round();
+        let i = if (t - r).abs() < 1e-4 { r } else { t.floor() };
+        (i as usize).min(n - 1)
+    };
+    img.map_pixels_in_place(|px| {
+        if cc == 1 {
+            px[0] = entries[index(px[0]) * ch];
+        } else {
+            for c in 0..3 {
+                px[c] = entries[index(px[c]) * ch + c];
+            }
+        }
+    });
+    Ok(img.into_frame(src.pts))
+}
+
 impl TwoInputPixelFilter for Clut {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_two_pixels(
@@ -91,6 +134,9 @@ impl TwoInputPixelFilter for Clut {
         dst: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            return clut_float(src, dst, params);
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Gray8 => (1usize, false),
             PixelFormat::Rgb24 => (3usize, false),

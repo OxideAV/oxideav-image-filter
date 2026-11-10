@@ -101,9 +101,50 @@ impl Watermark {
     }
 }
 
+impl Watermark {
+    /// The float path: `out = base · (1 − a) + overlay · a` on the
+    /// colour channels with `a = overlay alpha · opacity` (`opacity`
+    /// alone without alpha), the base's alpha kept — the 8-bit rule in
+    /// binary32, nothing clamped.
+    fn apply_float(
+        &self,
+        src: &VideoFrame,
+        dst: &VideoFrame,
+        params: VideoStreamParams,
+    ) -> Result<VideoFrame, Error> {
+        use crate::deep::FloatImage;
+        if self.overlay_width == 0 || self.overlay_height == 0 {
+            return Err(Error::invalid(
+                "Watermark: overlay_width / overlay_height must both be > 0",
+            ));
+        }
+        let mut base = FloatImage::from_frame(src, params)?;
+        let over = FloatImage::from_frame(dst, self.dst_params(params))?;
+        let opacity = self.opacity.clamp(0.0, 1.0);
+        let (sw, sh) = (params.width as i64, params.height as i64);
+        let (ow, oh) = (self.overlay_width as i64, self.overlay_height as i64);
+        let (ox, oy) = (self.offset_x as i64, self.offset_y as i64);
+        let cc = base.color_channels();
+        let has_alpha = base.has_alpha();
+        if opacity > 0.0 {
+            for y in oy.max(0)..(oy + oh).min(sh) {
+                for x in ox.max(0)..(ox + ow).min(sw) {
+                    let o = over.pixel((x - ox) as u32, (y - oy) as u32);
+                    let a = if has_alpha { o[cc] * opacity } else { opacity };
+                    let b = base.pixel_mut(x as u32, y as u32);
+                    for c in 0..cc {
+                        b[c] = b[c] * (1.0 - a) + o[c] * a;
+                    }
+                }
+            }
+        }
+        Ok(base.into_frame(src.pts))
+    }
+}
+
 impl TwoInputPixelFilter for Watermark {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     /// The overlay on port 1 is `overlay_width × overlay_height`.
@@ -121,6 +162,9 @@ impl TwoInputPixelFilter for Watermark {
         dst: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            return self.apply_float(src, dst, params);
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Gray8 => (1usize, false),
             PixelFormat::Rgb24 => (3, false),

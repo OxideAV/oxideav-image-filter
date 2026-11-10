@@ -92,15 +92,6 @@ impl PixelFilter for ChannelExtract {
     /// need planar YUV.
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
         use oxideav_core::PixelFormat as P;
-        const Y: &[P] = &[
-            P::Gray8,
-            P::Yuv420P,
-            P::Yuv422P,
-            P::Yuv444P,
-            P::YuvJ420P,
-            P::YuvJ422P,
-            P::YuvJ444P,
-        ];
         const UV: &[P] = &[
             P::Yuv420P,
             P::Yuv422P,
@@ -109,18 +100,35 @@ impl PixelFilter for ChannelExtract {
             P::YuvJ422P,
             P::YuvJ444P,
         ];
+        const Y_DEEP: &[P] = &[
+            P::Gray8,
+            P::Yuv420P,
+            P::Yuv422P,
+            P::Yuv444P,
+            P::YuvJ420P,
+            P::YuvJ422P,
+            P::YuvJ444P,
+            P::GrayF32Le,
+        ];
         match self.channel {
-            Channel::Red => crate::layout::PACKED_8BIT,
-            Channel::Green | Channel::Blue => crate::layout::PACKED_RGB,
-            Channel::Alpha => crate::layout::RGBA_ONLY,
-            Channel::Y => Y,
+            Channel::Red => crate::layout::PACKED_8BIT_DEEP,
+            Channel::Green | Channel::Blue => crate::layout::PACKED_RGB_DEEP,
+            Channel::Alpha => crate::layout::RGBA_DEEP,
+            Channel::Y => Y_DEEP,
             Channel::U | Channel::V => UV,
         }
     }
 
-    /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    /// Collapses every input to a single-plane grey picture at the
+    /// input's precision: `Gray8` for the 8-bit layouts, `GrayF32Le`
+    /// for the float ones (and so for 16-bit pictures through the float
+    /// hop — a 16-bit channel is never narrowed).
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -128,6 +136,25 @@ impl PixelFilter for ChannelExtract {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            let img = crate::deep::FloatImage::from_frame(input, params)?;
+            let c = match (img.channels(), self.channel) {
+                (1, Channel::Red | Channel::Y) => 0,
+                (3 | 4, Channel::Red) => 0,
+                (3 | 4, Channel::Green) => 1,
+                (3 | 4, Channel::Blue) => 2,
+                (4, Channel::Alpha) => 3,
+                (_, ch) => {
+                    return Err(Error::unsupported(format!(
+                        "oxideav-image-filter: ChannelExtract: format {:?} has no {ch:?} channel",
+                        params.format
+                    )));
+                }
+            };
+            let data: Vec<f32> = crate::deep::channel_iter(&img, c).collect();
+            let out = crate::deep::FloatImage::from_samples(params.width, params.height, 1, data)?;
+            return Ok(out.into_frame(input.pts));
+        }
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: ChannelExtract does not yet handle {:?}",
@@ -311,68 +338,67 @@ mod tests {
     }
 
     #[test]
-    fn rejects_alpha_on_rgb24() {
-        // Every 8-bit layout outside the native set is taken through
-        // the packed-RGB hop; a deep layout never is (no silent
-        // narrowing) and is refused with a typed error.
+    fn sixteen_bit_channels_come_out_at_their_own_precision() {
+        // One `Rgb48Le` pixel whose codes no 8-bit value holds: each
+        // channel is returned as binary32 `code / 65535`, not narrowed.
+        let codes = [12_345u16, 40_001, 65_535];
         let input = VideoFrame {
             pts: None,
             planes: vec![VideoPlane {
-                stride: 3,
-                data: vec![0, 0, 0],
+                stride: 6,
+                data: codes.iter().flat_map(|c| c.to_le_bytes()).collect(),
             }],
         };
-        let err = ChannelExtract::new(Channel::Alpha)
+        let p = VideoStreamParams {
+            format: PixelFormat::Rgb48Le,
+            width: 1,
+            height: 1,
+        };
+        for (channel, code) in [
+            (Channel::Red, codes[0]),
+            (Channel::Green, codes[1]),
+            (Channel::Blue, codes[2]),
+        ] {
+            let f = ChannelExtract::new(channel);
+            assert_eq!(
+                crate::ImageFilter::output_pixel_format(&f, PixelFormat::Rgb48Le),
+                Some(PixelFormat::GrayF32Le)
+            );
+            let out = f.apply(&input, p).unwrap();
+            let d = &out.planes[0].data;
+            let v = f32::from_le_bytes([d[0], d[1], d[2], d[3]]);
+            assert_eq!(v, code as f32 / 65535.0, "{channel:?}");
+        }
+        // A picture without alpha is opaque.
+        let out = ChannelExtract::new(Channel::Alpha)
+            .apply(&input, p)
+            .unwrap();
+        let d = &out.planes[0].data;
+        assert_eq!(f32::from_le_bytes([d[0], d[1], d[2], d[3]]), 1.0);
+    }
+
+    #[test]
+    fn rejects_a_channel_no_route_reaches() {
+        // `U` reads a chroma plane of 8-bit planar YUV only: a packed
+        // float picture has none.
+        let input = VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 4,
+                data: vec![0; 4],
+            }],
+        };
+        let err = ChannelExtract::new(Channel::U)
             .apply(
                 &input,
                 VideoStreamParams {
-                    format: PixelFormat::Rgb48Le,
+                    format: PixelFormat::GrayF32Le,
                     width: 1,
                     height: 1,
                 },
             )
             .unwrap_err();
-        // `Alpha` declares `Rgba` only; the wrapper's refusal names the
-        // layout it was handed.
         assert!(matches!(err, Error::Unsupported(_)));
-        assert!(format!("{err}").contains("Rgb48Le"));
-    }
-
-    #[test]
-    fn rejects_red_on_yuv() {
-        // Every 8-bit layout outside the native set is taken through
-        // the packed-RGB hop; a deep layout never is (no silent
-        // narrowing) and is refused with a typed error.
-        let input = VideoFrame {
-            pts: None,
-            planes: vec![
-                VideoPlane {
-                    stride: 2,
-                    data: vec![0, 0, 0, 0],
-                },
-                VideoPlane {
-                    stride: 1,
-                    data: vec![128],
-                },
-                VideoPlane {
-                    stride: 1,
-                    data: vec![128],
-                },
-            ],
-        };
-        let err = ChannelExtract::new(Channel::Red)
-            .apply(
-                &input,
-                VideoStreamParams {
-                    format: PixelFormat::Yuv420P10Le,
-                    width: 2,
-                    height: 2,
-                },
-            )
-            .unwrap_err();
-        // Declared per channel: `Red` does not list the YUV layouts, so
-        // the wrapper refuses before the extractor runs.
-        assert!(matches!(err, Error::Unsupported(_)));
-        assert!(format!("{err}").contains("Yuv420P"));
+        assert!(format!("{err}").contains("GrayF32Le"));
     }
 }
