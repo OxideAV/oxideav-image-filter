@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StructuringElement::Square(r)`, `Diamond(r)` and `Disk(r)` with
   `runs()`, `footprint()` and `radius()`; the morphology factories take
   `{"element": "square" | "diamond" | "disk", "radius": r}`.
+- `Paint` at every depth (it was 8-bit only): the oil-paint vote on
+  16-bit and float pictures, the bucket mean kept at the picture's
+  precision.
 - `benches/throughput.rs`: wall-clock throughput of the most used
   filters at 1 MP / 12 MP, 8- and 16-bit, any thread budget.
 
@@ -49,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kernels at every depth: `k` passes of a square are one separable
   running extreme of radius `k` (cost independent of `k`), a diamond or
   disk is whole-row runs. Same results.
+- `Paint` slides its window (cost per pixel `O(radius + levels)`, was
+  `O(radius²)`) and runs under the thread budget. The intensity bucket
+  is now `⌊Y · levels⌋` on the normalised luma at every depth, and the
+  bucket mean is rounded to nearest (was truncated).
 - `Statistic` and `Despeckle` cost no longer grows with the window
   area: sliding-histogram median (8- and 16-bit; a sorted sliding window
   for arbitrary floats), block-scan minimum / maximum, running-sum mean.

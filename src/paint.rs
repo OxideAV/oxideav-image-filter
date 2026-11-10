@@ -11,7 +11,8 @@
 //!
 //! 1. Walk the `(2r + 1)²` window centred on `(x, y)`.
 //! 2. Compute each window-pixel's intensity bucket
-//!    `b = luma(px) * levels / 256` (default `levels = 20`).
+//!    `b = min(⌊Y · levels⌋, levels − 1)` on the normalised luma
+//!    `Y = (77 R + 150 G + 29 B) / 256` (default `levels = 20`).
 //! 3. Tally a histogram of bucket counts and accumulate per-bucket
 //!    channel sums.
 //! 4. Pick the bucket with the highest count — break ties by picking
@@ -25,10 +26,16 @@
 //! - `Rgb24` / `Rgba`: full effect; alpha is preserved on RGBA.
 //! - `Gray8`: per-pixel intensity is the sample itself; output is the
 //!   mean of the modal bucket.
-//! - YUV / other formats return `Error::unsupported`.
+//! - `GrayF32Le` / `RgbF32Le` / `RgbaF32Le` natively and every 16-bit
+//!   layout through them: the same kernel at the picture's precision
+//!   (the bucket mean is not rounded to 8 bits).
+//!
+//! The window slides along each row, so the cost per pixel grows with
+//! the radius, not with the window area.
 
+use crate::deep::FloatImage;
 use crate::{PixelFilter, VideoStreamParams};
-use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
+use oxideav_core::{Error, VideoFrame};
 
 /// Oil-paint stylise filter.
 #[derive(Clone, Copy, Debug)]
@@ -70,13 +77,9 @@ impl Paint {
     }
 }
 
-fn luma(r: u8, g: u8, b: u8) -> u8 {
-    ((r as u32 * 77 + g as u32 * 150 + b as u32 * 29) >> 8) as u8
-}
-
 impl PixelFilter for Paint {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -84,114 +87,134 @@ impl PixelFilter for Paint {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        let (bpp, has_alpha) = match params.format {
-            PixelFormat::Gray8 => (1usize, false),
-            PixelFormat::Rgb24 => (3usize, false),
-            PixelFormat::Rgba => (4usize, true),
-            other => {
-                return Err(Error::unsupported(format!(
-                    "oxideav-image-filter: Paint requires Gray8/Rgb24/Rgba, got {other:?}"
-                )));
-            }
-        };
-        let w = params.width as usize;
-        let h = params.height as usize;
-        let r = self.radius as i32;
-        let levels = self.levels.clamp(1, 256) as usize;
-        let src = &input.planes[0];
-        let row_bytes = w * bpp;
-        let mut out = vec![0u8; row_bytes * h];
-
-        if r == 0 {
-            // Identity — copy each row.
-            for y in 0..h {
-                let src_row = &src.data[y * src.stride..y * src.stride + row_bytes];
-                out[y * row_bytes..(y + 1) * row_bytes].copy_from_slice(src_row);
-            }
-            return Ok(VideoFrame {
-                pts: input.pts,
-                planes: vec![VideoPlane {
-                    stride: row_bytes,
-                    data: out,
-                }],
-            });
-        }
-
-        // Per-pixel modal-bucket vote.
-        let mut counts = vec![0u32; levels];
-        let mut sum_r = vec![0u32; levels];
-        let mut sum_g = vec![0u32; levels];
-        let mut sum_b = vec![0u32; levels];
-        for y in 0..h {
-            for x in 0..w {
-                counts.iter_mut().for_each(|c| *c = 0);
-                sum_r.iter_mut().for_each(|s| *s = 0);
-                sum_g.iter_mut().for_each(|s| *s = 0);
-                sum_b.iter_mut().for_each(|s| *s = 0);
-                for dy in -r..=r {
-                    let yy = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
-                    let row = &src.data[yy * src.stride..yy * src.stride + row_bytes];
-                    for dx in -r..=r {
-                        let xx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize;
-                        let base = xx * bpp;
-                        let (rv, gv, bv) = match bpp {
-                            1 => (row[base], row[base], row[base]),
-                            3 | 4 => (row[base], row[base + 1], row[base + 2]),
-                            _ => unreachable!(),
-                        };
-                        let l = luma(rv, gv, bv) as u32;
-                        let bucket = ((l * levels as u32) / 256).min(levels as u32 - 1) as usize;
-                        counts[bucket] += 1;
-                        sum_r[bucket] += rv as u32;
-                        sum_g[bucket] += gv as u32;
-                        sum_b[bucket] += bv as u32;
-                    }
-                }
-                // Pick the lowest-index bucket with the highest count.
-                let mut best = 0usize;
-                let mut best_count = counts[0];
-                for (i, &c) in counts.iter().enumerate().skip(1) {
-                    if c > best_count {
-                        best_count = c;
-                        best = i;
-                    }
-                }
-                let n = counts[best].max(1);
-                let or = (sum_r[best] / n) as u8;
-                let og = (sum_g[best] / n) as u8;
-                let ob = (sum_b[best] / n) as u8;
-                let dst_base = y * row_bytes + x * bpp;
-                if bpp == 1 {
-                    out[dst_base] = or; // mean of modal bucket
-                } else {
-                    out[dst_base] = or;
-                    out[dst_base + 1] = og;
-                    out[dst_base + 2] = ob;
-                    if has_alpha {
-                        // Alpha is taken straight from the source pixel
-                        // (we don't mode-vote alpha — that would
-                        // introduce artefacts at translucent edges).
-                        let src_base = y * src.stride + x * bpp;
-                        out[dst_base + 3] = src.data[src_base + 3];
-                    }
-                }
-            }
-        }
-
-        Ok(VideoFrame {
-            pts: input.pts,
-            planes: vec![VideoPlane {
-                stride: row_bytes,
-                data: out,
-            }],
-        })
+        // One kernel for every depth: an 8-bit picture is widened to it
+        // (`v / 255`) and rounded back, float and 16-bit pictures run on
+        // it directly.
+        let (radius, levels) = (self.radius as usize, self.levels.clamp(1, 256) as usize);
+        crate::deep::run_any(input, params, |img| Ok(paint(&img, radius, levels)))
     }
+}
+
+/// The oil-paint kernel on normalised samples.
+///
+/// Every pixel has an intensity bucket
+/// `min(⌊Y · levels⌋, levels − 1)` with `Y = (77 R + 150 G + 29 B) / 256`
+/// clamped to `[0, 1]` (grey: the sample). The output pixel is the mean
+/// colour of the most populated bucket of its `(2r + 1)²` replicate-edge
+/// window, the lowest such bucket on a tie; alpha is the pixel's own.
+///
+/// The window slides: moving one pixel right removes a column of
+/// `2r + 1` pixels from the per-bucket counts and colour sums and adds
+/// one, so the cost per pixel is `O(r + levels)`, not `O(r²)`. Sums are
+/// binary64, so adding and removing a sample cancel to well below the
+/// binary32 resolution of the result.
+fn paint(img: &FloatImage, radius: usize, levels: usize) -> FloatImage {
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let ch = img.channels();
+    let nc = img.color_channels();
+    if radius == 0 || w == 0 || h == 0 {
+        return img.clone();
+    }
+    let src = img.samples();
+    // The window holds `(2r + 1)²` samples; capping the radius at 2²⁴
+    // keeps that count exact in the binary64 sums (no picture is wide
+    // enough to tell the difference).
+    let r = radius.min(1 << 24);
+    let bucket_of = |px: &[f32]| -> u16 {
+        let y = if nc == 1 {
+            px[0]
+        } else {
+            (77.0 * px[0] + 150.0 * px[1] + 29.0 * px[2]) / 256.0
+        };
+        // NaN falls into bucket 0.
+        let y = if y.is_nan() { 0.0 } else { y.clamp(0.0, 1.0) };
+        ((y * levels as f32) as usize).min(levels - 1) as u16
+    };
+    let buckets: Vec<u16> = src.chunks_exact(ch).map(bucket_of).collect();
+    let mut out = src.to_vec();
+    let row = w * ch;
+    // How many of the window offsets `−r..=r` around `centre` land on
+    // position `at` of a line of `len` under replicate-edge addressing:
+    // one, plus the offsets that overhang an edge when `at` is that
+    // edge. A window larger than the picture therefore costs no more
+    // than the picture.
+    let copies = move |at: usize, centre: usize, len: usize| -> u64 {
+        let mut m = 1u64;
+        if at == 0 {
+            m += r.saturating_sub(centre) as u64;
+        }
+        if at == len - 1 {
+            m += centre.saturating_add(r).saturating_sub(len - 1) as u64;
+        }
+        m
+    };
+    crate::exec::par_bands(&mut out, row, |y0, band| {
+        let mut counts = vec![0u64; levels];
+        let mut sums = vec![0.0f64; levels * nc];
+        for (i, line) in band.chunks_exact_mut(row).enumerate() {
+            let y = y0 + i;
+            counts.fill(0);
+            sums.fill(0.0);
+            let (top, bottom) = (y.saturating_sub(r), y.saturating_add(r).min(h - 1));
+            // Add or remove `times` copies of the window column at `x`.
+            let column = |x: usize, times: u64, add: bool, counts: &mut [u64], sums: &mut [f64]| {
+                for sy in top..=bottom {
+                    let m = times * copies(sy, y, h);
+                    let p = sy * w + x;
+                    let b = buckets[p] as usize;
+                    let px = &src[p * ch..p * ch + nc];
+                    if add {
+                        counts[b] += m;
+                        for c in 0..nc {
+                            sums[b * nc + c] += m as f64 * px[c] as f64;
+                        }
+                    } else {
+                        counts[b] -= m;
+                        for c in 0..nc {
+                            sums[b * nc + c] -= m as f64 * px[c] as f64;
+                        }
+                        if counts[b] == 0 {
+                            // An empty bucket holds exactly nothing.
+                            sums[b * nc..(b + 1) * nc].fill(0.0);
+                        }
+                    }
+                }
+            };
+            for sx in 0..=r.min(w - 1) {
+                column(sx, copies(sx, 0, w), true, &mut counts, &mut sums);
+            }
+            for x in 0..w {
+                if x > 0 {
+                    // One copy of the clamped column `x − 1 − r` leaves,
+                    // one of the clamped column `x + r` enters.
+                    let gone = (x - 1).saturating_sub(r);
+                    let come = x.saturating_add(r).min(w - 1);
+                    if gone != come {
+                        column(gone, 1, false, &mut counts, &mut sums);
+                        column(come, 1, true, &mut counts, &mut sums);
+                    }
+                }
+                let mut best = 0usize;
+                for (b, &n) in counts.iter().enumerate().skip(1) {
+                    if n > counts[best] {
+                        best = b;
+                    }
+                }
+                let n = counts[best].max(1) as f64;
+                for c in 0..nc {
+                    line[x * ch + c] = (sums[best * nc + c] / n) as f32;
+                }
+            }
+        }
+    });
+    FloatImage::from_samples(img.width(), img.height(), ch, out).unwrap_or_else(|_| img.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ImageFilter;
+    use oxideav_core::{PixelFormat, VideoPlane};
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 3]) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);
@@ -286,37 +309,38 @@ mod tests {
     }
 
     #[test]
-    fn rejects_yuv() {
-        // Every 8-bit layout outside the native set is taken through
-        // the packed-RGB hop; a deep layout never is (no silent
-        // narrowing) and is refused with a typed error.
+    fn sixteen_bit_strokes_keep_sixteen_bit_means() {
+        // Two flat halves at codes no 8-bit value holds: every window
+        // has a clear majority, so each pixel is exactly its half's
+        // code — an 8-bit round trip would return multiples of 257.
+        let (w, h) = (8usize, 4usize);
+        let (lo, hi) = (10_001u16, 50_003u16);
+        let mut data = Vec::new();
+        for _ in 0..h {
+            for x in 0..w {
+                data.extend_from_slice(&(if x < w / 2 { lo } else { hi }).to_le_bytes());
+            }
+        }
         let input = VideoFrame {
             pts: None,
-            planes: vec![
-                VideoPlane {
-                    stride: 4,
-                    data: vec![128; 16],
-                },
-                VideoPlane {
-                    stride: 2,
-                    data: vec![128; 4],
-                },
-                VideoPlane {
-                    stride: 2,
-                    data: vec![128; 4],
-                },
-            ],
+            planes: vec![VideoPlane {
+                stride: w * 2,
+                data,
+            }],
         };
-        let err = Paint::default()
+        let out = Paint::new(1)
             .apply(
                 &input,
                 VideoStreamParams {
-                    format: PixelFormat::Yuv420P10Le,
-                    width: 4,
-                    height: 4,
+                    format: PixelFormat::Gray16Le,
+                    width: w as u32,
+                    height: h as u32,
                 },
             )
-            .unwrap_err();
-        assert!(format!("{err}").contains("Paint"));
+            .unwrap();
+        for (i, c) in out.planes[0].data.as_chunks::<2>().0.iter().enumerate() {
+            let want = if i % w < w / 2 { lo } else { hi };
+            assert_eq!(u16::from_le_bytes(*c), want, "sample {i}");
+        }
     }
 }

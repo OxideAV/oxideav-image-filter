@@ -7,7 +7,7 @@
 use oxideav_core::{ExecutionContext, PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{
     BayerMatrix, Blur, Despeckle, DiffusionKernel, Dither, EdgeOp, ImageFilter, Morphology,
-    MorphologyEdge, MorphologyOp, ScanOrder, Statistic, StatisticOp, StructuringElement,
+    MorphologyEdge, MorphologyOp, Paint, ScanOrder, Statistic, StatisticOp, StructuringElement,
     VideoStreamParams, with_execution_context,
 };
 
@@ -395,6 +395,12 @@ fn degenerate_pictures_and_windows_do_not_panic() {
                 let (f, p) = frame(depth, w, ch, &src);
                 assert!(Blur::new(40).with_sigma(0.0).apply(&f, p).is_ok());
                 assert!(Blur::new(1).with_sigma(f32::NAN).apply(&f, p).is_ok());
+                for radius in [0u32, 1, 1000, u32::MAX] {
+                    for levels in [0u32, 1, 256, u32::MAX] {
+                        let paint = Paint::new(radius).with_levels(levels);
+                        assert!(paint.apply(&f, p).is_ok());
+                    }
+                }
                 for op in [
                     StatisticOp::Median,
                     StatisticOp::Min,
@@ -424,6 +430,7 @@ fn outputs_are_identical_at_every_thread_budget() {
             Box::new(Morphology::dilate(StructuringElement::Disk(3), 2)),
             Box::new(Morphology::erode(StructuringElement::Square(2), 2)),
             Box::new(Dither::ordered(BayerMatrix::M8).with_levels(4)),
+            Box::new(Paint::new(3)),
         ];
         for (i, filter) in filters.iter().enumerate() {
             let serial = filter.apply(&f, p).unwrap();
@@ -901,6 +908,80 @@ fn morphology_survives_huge_elements_and_tiny_pictures() {
                         }
                     }
                     assert!((0..w * h).all(|i| got[i * 4 + 3] == src[i * 4 + 3]));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn paint_is_the_mean_of_the_modal_intensity_bucket_at_every_depth() {
+    let (w, h) = (12usize, 9usize);
+    for depth in DEPTHS {
+        let s = depth.scale();
+        for ch in [1usize, 3, 4] {
+            let nc = if ch == 4 { 3 } else { ch };
+            // Tones on a coarse grid so buckets are well populated.
+            let src: Vec<f64> = noise(w * h * ch, 61)
+                .into_iter()
+                .map(|v| {
+                    let t = (v * 6.0).floor() / 6.0 + 0.04;
+                    match depth {
+                        Depth::F32 => (t as f32) as f64,
+                        _ => (t * s).round(),
+                    }
+                })
+                .collect();
+            let (f, p) = frame(depth, w, ch, &src);
+            for (radius, levels) in [(1u32, 20u32), (2, 5), (3, 256), (40, 3)] {
+                let out = Paint::new(radius).with_levels(levels).apply(&f, p).unwrap();
+                let got = codes(depth, &out);
+                let bucket = |px: &[f64]| -> usize {
+                    let n: Vec<f32> = px.iter().map(|v| (*v as f32) / s as f32).collect();
+                    let y = if nc == 1 {
+                        n[0]
+                    } else {
+                        (77.0 * n[0] + 150.0 * n[1] + 29.0 * n[2]) / 256.0
+                    };
+                    ((y.clamp(0.0, 1.0) * levels as f32) as usize).min(levels as usize - 1)
+                };
+                let r = radius as isize;
+                for y in 0..h {
+                    for x in 0..w {
+                        let mut counts = vec![0usize; levels as usize];
+                        let mut sums = vec![[0.0f64; 3]; levels as usize];
+                        for dy in -r..=r {
+                            for dx in -r..=r {
+                                let i = (clamp_index(y, dy, h) * w + clamp_index(x, dx, w)) * ch;
+                                let b = bucket(&src[i..i + nc]);
+                                counts[b] += 1;
+                                for c in 0..nc {
+                                    sums[b][c] += src[i + c];
+                                }
+                            }
+                        }
+                        let best = (0..levels as usize)
+                            .max_by_key(|&b| (counts[b], std::cmp::Reverse(b)))
+                            .unwrap();
+                        let i = (y * w + x) * ch;
+                        for c in 0..ch {
+                            let want = if c >= nc {
+                                src[i + c]
+                            } else {
+                                sums[best][c] / counts[best] as f64
+                            };
+                            let tol = match depth {
+                                Depth::U8 => 0.501,
+                                Depth::U16 => 0.52,
+                                Depth::F32 => 1e-6,
+                            };
+                            assert!(
+                                (got[i + c] - want).abs() <= if c >= nc { 0.0 } else { tol },
+                                "{depth:?} ch{ch} r{radius} L{levels} at {x},{y},{c}: {} vs {want}",
+                                got[i + c]
+                            );
+                        }
+                    }
                 }
             }
         }
