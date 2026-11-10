@@ -124,6 +124,10 @@ fn main() {
             Box::new(Morphology::dilate(StructuringElement::Square3x3, 2)),
         ),
         (
+            "morphology erode disk r5",
+            Box::new(Morphology::erode(StructuringElement::Disk(5), 1)),
+        ),
+        (
             "statistic median 5x5",
             Box::new(Statistic::new(StatisticOp::Median, 5, 5)),
         ),

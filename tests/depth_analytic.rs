@@ -6,8 +6,9 @@
 
 use oxideav_core::{ExecutionContext, PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{
-    BayerMatrix, Blur, Despeckle, DiffusionKernel, Dither, ImageFilter, ScanOrder, Statistic,
-    StatisticOp, VideoStreamParams, with_execution_context,
+    BayerMatrix, Blur, Despeckle, DiffusionKernel, Dither, EdgeOp, ImageFilter, Morphology,
+    MorphologyEdge, MorphologyOp, ScanOrder, Statistic, StatisticOp, StructuringElement,
+    VideoStreamParams, with_execution_context,
 };
 
 /// Storage depth of a test picture.
@@ -420,6 +421,9 @@ fn outputs_are_identical_at_every_thread_budget() {
             Box::new(Statistic::new(StatisticOp::Max, 4, 7)),
             Box::new(Statistic::new(StatisticOp::Mean, 6, 6)),
             Box::new(Despeckle::new(2)),
+            Box::new(Morphology::dilate(StructuringElement::Disk(3), 2)),
+            Box::new(Morphology::erode(StructuringElement::Square(2), 2)),
+            Box::new(Dither::ordered(BayerMatrix::M8).with_levels(4)),
         ];
         for (i, filter) in filters.iter().enumerate() {
             let serial = filter.apply(&f, p).unwrap();
@@ -722,4 +726,183 @@ fn dither_survives_degenerate_pictures_and_non_finite_samples() {
     let got = codes(Depth::F32, &out);
     assert_eq!(&got[..3], &[0.0, 1.0, 0.0]);
     assert!(got.iter().all(|v| *v == 0.0 || *v == 1.0));
+}
+
+/// The offsets of a structuring element from its definition.
+fn element_offsets(element: StructuringElement) -> Vec<(isize, isize)> {
+    let (r, inside): (isize, Box<dyn Fn(isize, isize) -> bool>) = match element {
+        StructuringElement::Square3x3 => (1, Box::new(|_, _| true)),
+        StructuringElement::Cross3x3 => (1, Box::new(|dx, dy| dx.abs() + dy.abs() <= 1)),
+        StructuringElement::Square(r) => (r as isize, Box::new(|_, _| true)),
+        StructuringElement::Diamond(r) => {
+            let r = r as isize;
+            (r, Box::new(move |dx, dy| dx.abs() + dy.abs() <= r))
+        }
+        StructuringElement::Disk(r) => {
+            let r = r as isize;
+            (r, Box::new(move |dx, dy| dx * dx + dy * dy <= r * r))
+        }
+        _ => unreachable!(),
+    };
+    let mut out = Vec::new();
+    for dy in -r..=r {
+        for dx in -r..=r {
+            if inside(dx, dy) {
+                out.push((dx, dy));
+            }
+        }
+    }
+    out
+}
+
+/// One pass of flat dilation / erosion by definition: the extreme over
+/// the element's pixels that fall inside the picture.
+fn morph_reference(
+    src: &[f64],
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    offsets: &[(isize, isize)],
+    dilate: bool,
+) -> Vec<f64> {
+    let mut out = src.to_vec();
+    for y in 0..h {
+        for x in 0..w {
+            for c in 0..nc {
+                let mut acc = if dilate {
+                    f64::NEG_INFINITY
+                } else {
+                    f64::INFINITY
+                };
+                for &(dx, dy) in offsets {
+                    let (sx, sy) = (x as isize + dx, y as isize + dy);
+                    if sx < 0 || sy < 0 || sx >= w as isize || sy >= h as isize {
+                        continue;
+                    }
+                    let v = src[(sy as usize * w + sx as usize) * ch + c];
+                    acc = if dilate { acc.max(v) } else { acc.min(v) };
+                }
+                out[(y * w + x) * ch + c] = acc;
+            }
+        }
+    }
+    out
+}
+
+const ELEMENTS: [StructuringElement; 8] = [
+    StructuringElement::Square3x3,
+    StructuringElement::Cross3x3,
+    StructuringElement::Square(2),
+    StructuringElement::Diamond(3),
+    StructuringElement::Disk(1),
+    StructuringElement::Disk(2),
+    StructuringElement::Disk(4),
+    StructuringElement::Square(0),
+];
+
+#[test]
+fn morphology_is_the_extreme_over_the_element_at_every_depth() {
+    let (w, h) = (14usize, 11usize);
+    for depth in DEPTHS {
+        for ch in [1usize, 3, 4] {
+            let nc = if ch == 4 { 3 } else { ch };
+            let src = noise_codes(depth, w * h * ch, 31 + ch as u64);
+            let (f, p) = frame(depth, w, ch, &src);
+            for element in ELEMENTS {
+                let offsets = element_offsets(element);
+                assert_eq!(
+                    element
+                        .footprint()
+                        .iter()
+                        .map(|&(dx, dy)| (dx as isize, dy as isize))
+                        .collect::<Vec<_>>(),
+                    {
+                        let mut o = offsets.clone();
+                        o.sort_by_key(|&(dx, dy)| (dy, dx));
+                        o
+                    },
+                    "{element:?} footprint"
+                );
+                for (op, dilate) in [(MorphologyOp::Dilate, true), (MorphologyOp::Erode, false)] {
+                    for iterations in [1u32, 2, 3] {
+                        let out = Morphology::new(op, element, iterations)
+                            .apply(&f, p)
+                            .unwrap();
+                        let mut want = src.clone();
+                        for _ in 0..iterations {
+                            want = morph_reference(&want, w, h, ch, nc, &offsets, dilate);
+                        }
+                        assert_eq!(
+                            codes(depth, &out),
+                            want,
+                            "{depth:?} ch{ch} {element:?} {op:?} x{iterations}"
+                        );
+                    }
+                }
+                // Edge-in / edge-out / gradient are the differences of
+                // the picture and its one-pass erosion / dilation.
+                let dil = morph_reference(&src, w, h, ch, nc, &offsets, true);
+                let ero = morph_reference(&src, w, h, ch, nc, &offsets, false);
+                for (op, a, b) in [
+                    (EdgeOp::EdgeIn, &src, &ero),
+                    (EdgeOp::EdgeOut, &dil, &src),
+                    (EdgeOp::EdgeMagnitude, &dil, &ero),
+                ] {
+                    let out = MorphologyEdge::new(op, element).apply(&f, p).unwrap();
+                    let got = codes(depth, &out);
+                    for i in 0..src.len() {
+                        let want = if i % ch >= nc { src[i] } else { a[i] - b[i] };
+                        // Float pictures subtract in binary32 on the
+                        // normalised scale.
+                        let tol = match depth {
+                            Depth::F32 => 1e-6,
+                            Depth::U16 => 0.51,
+                            Depth::U8 => 0.0,
+                        };
+                        assert!(
+                            (got[i] - want).abs() <= tol,
+                            "{depth:?} ch{ch} {element:?} {op:?} sample {i}: {} vs {want}",
+                            got[i]
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn morphology_survives_huge_elements_and_tiny_pictures() {
+    for depth in DEPTHS {
+        for (w, h) in [(1usize, 1usize), (1, 6), (6, 1), (3, 3)] {
+            let src = noise_codes(depth, w * h * 4, 2);
+            let (f, p) = frame(depth, w, 4, &src);
+            for element in [
+                StructuringElement::Square(u32::MAX),
+                StructuringElement::Diamond(u32::MAX),
+                StructuringElement::Disk(u32::MAX),
+                StructuringElement::Disk(0),
+                StructuringElement::Cross3x3,
+            ] {
+                for iterations in [0u32, 1, u32::MAX] {
+                    let out = Morphology::dilate(element, iterations)
+                        .apply(&f, p)
+                        .unwrap();
+                    let got = codes(depth, &out);
+                    if iterations > 0 && element.radius() > 1 {
+                        // The element covers the picture: every pixel is
+                        // the global maximum, alpha untouched.
+                        for c in 0..3 {
+                            let max = (0..w * h)
+                                .map(|i| src[i * 4 + c])
+                                .fold(f64::NEG_INFINITY, f64::max);
+                            assert!((0..w * h).all(|i| got[i * 4 + c] == max), "{element:?}");
+                        }
+                    }
+                    assert!((0..w * h).all(|i| got[i * 4 + 3] == src[i * 4 + 3]));
+                }
+            }
+        }
+    }
 }

@@ -1932,15 +1932,28 @@ fn morph_element_from_json(
     p: Option<&serde_json::Map<String, Value>>,
 ) -> Result<crate::StructuringElement> {
     let s = p.and_then(|m| m.get("element")).and_then(|v| v.as_str());
-    match s {
-        None | Some("square") | Some("square3x3") | Some("Square3x3") => {
+    // `radius` selects the parametrised element of the named shape;
+    // without it the classic 3×3 elements.
+    let radius = p
+        .and_then(|m| m.get("radius"))
+        .and_then(|v| v.as_u64())
+        .map(|r| r.min(u32::MAX as u64) as u32);
+    match (s, radius) {
+        (None | Some("square") | Some("square3x3") | Some("Square3x3"), None) => {
             Ok(crate::StructuringElement::Square3x3)
         }
-        Some("cross") | Some("cross3x3") | Some("plus") | Some("Cross3x3") => {
+        (Some("cross") | Some("cross3x3") | Some("plus") | Some("Cross3x3"), None) => {
             Ok(crate::StructuringElement::Cross3x3)
         }
-        Some(other) => Err(Error::invalid(format!(
-            "job: filter 'morphology-*': unknown element '{other}' (expected 'square' or 'cross')"
+        (None | Some("square"), Some(r)) => Ok(crate::StructuringElement::Square(r)),
+        (Some("diamond") | Some("cross") | Some("plus"), r) => {
+            Ok(crate::StructuringElement::Diamond(r.unwrap_or(1)))
+        }
+        (Some("disk") | Some("disc") | Some("circle"), r) => {
+            Ok(crate::StructuringElement::Disk(r.unwrap_or(1)))
+        }
+        (Some(other), _) => Err(Error::invalid(format!(
+            "job: filter 'morphology-*': unknown element '{other}' (expected 'square', 'cross', 'diamond' or 'disk')"
         ))),
     }
 }
@@ -8905,8 +8918,42 @@ mod tests {
         let inputs = [gray_in_port(4, 4)];
         let bad = c
             .filters
-            .make("morphology-dilate", &json!({"element": "diamond"}), &inputs);
-        assert!(bad.is_err(), "diamond is not a recognised element");
+            .make("morphology-dilate", &json!({"element": "hexagon"}), &inputs);
+        assert!(bad.is_err(), "hexagon is not a recognised element");
+    }
+
+    #[test]
+    fn morphology_factory_builds_the_parametrised_elements() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        // One bright pixel at (1, 1) dilated by a radius-2 diamond:
+        // exactly the pixels within city-block distance 2 light up.
+        let f = c
+            .filters
+            .make(
+                "morphology-dilate",
+                &json!({"element": "diamond", "radius": 2}),
+                &inputs,
+            )
+            .expect("diamond element");
+        let out = run_one(f, gray_4x4(|x, y| if x == 1 && y == 1 { 200 } else { 10 }));
+        for y in 0..4i32 {
+            for x in 0..4i32 {
+                let lit = (x - 1).abs() + (y - 1).abs() <= 2;
+                assert_eq!(
+                    out.planes[0].data[(y * 4 + x) as usize],
+                    if lit { 200 } else { 10 },
+                    "{x},{y}"
+                );
+            }
+        }
+        for spec in [
+            json!({"element": "disk", "radius": 3}),
+            json!({"element": "square", "radius": 2}),
+            json!({"radius": 2}),
+        ] {
+            assert!(c.filters.make("morphology-erode", &spec, &inputs).is_ok());
+        }
     }
 
     #[test]

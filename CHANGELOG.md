@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their own precision (a 16-bit flat tone between two 8-bit codes keeps
   its mean; output levels are 16-bit codes), alpha untouched. It was an
   8-bit-only filter.
+- `StructuringElement::Square(r)`, `Diamond(r)` and `Disk(r)` with
+  `runs()`, `footprint()` and `radius()`; the morphology factories take
+  `{"element": "square" | "diamond" | "disk", "radius": r}`.
 - `benches/throughput.rs`: wall-clock throughput of the most used
   filters at 1 MP / 12 MP, 8- and 16-bit, any thread budget.
 
@@ -42,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compares against the exact centred thresholds `(m + ½)/n² − ½` scaled
   to the level spacing. 8-bit outputs differ from 0.1.5 in individual
   dots, not in tone; the ordered mode's rows run under the thread budget.
+- `Morphology` / `MorphologyChain` / `MorphologyEdge` run on the shared
+  kernels at every depth: `k` passes of a square are one separable
+  running extreme of radius `k` (cost independent of `k`), a diamond or
+  disk is whole-row runs. Same results.
 - `Statistic` and `Despeckle` cost no longer grows with the window
   area: sliding-histogram median (8- and 16-bit; a sorted sliding window
   for arbitrary floats), block-scan minimum / maximum, running-sum mean.

@@ -49,15 +49,24 @@ pub enum MorphologyOp {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StructuringElement {
-    /// 3×3 square (8-connected). 9 taps.
+    /// 3×3 square (8-connected). 9 taps. Same as `Square(1)`.
     #[default]
     Square3x3,
-    /// 3×3 cross / plus (4-connected). 5 taps.
+    /// 3×3 cross / plus (4-connected). 5 taps. Same as `Diamond(1)`.
     Cross3x3,
+    /// The `(2r + 1)²` square: every offset with `max(|dx|, |dy|) ≤ r`.
+    Square(u32),
+    /// The diamond of radius `r`: every offset with `|dx| + |dy| ≤ r`.
+    Diamond(u32),
+    /// The disk of radius `r`: every offset with `dx² + dy² ≤ r²`.
+    Disk(u32),
 }
 
 impl StructuringElement {
-    /// Yields the `(dx, dy)` offsets covered by this structuring element.
+    /// Yields the `(dx, dy)` offsets covered by the two fixed 3×3
+    /// elements. The parametrised elements (`Square(r)`, `Diamond(r)`,
+    /// `Disk(r)`) have no static table and return an empty slice here —
+    /// use [`footprint`](Self::footprint), which covers every element.
     pub fn offsets(&self) -> &'static [(i32, i32)] {
         match self {
             StructuringElement::Square3x3 => &[
@@ -72,6 +81,121 @@ impl StructuringElement {
                 (1, 1),
             ],
             StructuringElement::Cross3x3 => &[(0, -1), (-1, 0), (0, 0), (1, 0), (0, 1)],
+            _ => &[],
+        }
+    }
+
+    /// The element as horizontal runs: entry `i` is the half-width of
+    /// the run on row offset `i − r` (`r` the element's radius), so the
+    /// element is `{(dx, dy) : |dx| ≤ runs[dy + r]}`. Every element
+    /// here is convex, symmetric and contains the origin.
+    pub fn runs(&self) -> Vec<u32> {
+        let run = |r: u32, half: &dyn Fn(u64, u64) -> u64| -> Vec<u32> {
+            (0..=2 * r as u64)
+                .map(|i| half(r as u64, i.abs_diff(r as u64)) as u32)
+                .collect()
+        };
+        match *self {
+            StructuringElement::Square3x3 => vec![1, 1, 1],
+            StructuringElement::Cross3x3 => vec![0, 1, 0],
+            StructuringElement::Square(r) => run(r, &|r, _| r),
+            StructuringElement::Diamond(r) => run(r, &|r, dy| r - dy),
+            StructuringElement::Disk(r) => run(r, &|r, dy| (r * r - dy * dy).isqrt()),
+        }
+    }
+
+    /// Every `(dx, dy)` offset of the element, row by row.
+    pub fn footprint(&self) -> Vec<(i32, i32)> {
+        let runs = self.runs();
+        let r = (runs.len() / 2) as i32;
+        let mut out = Vec::new();
+        for (i, hw) in runs.iter().enumerate() {
+            let hw = *hw as i32;
+            for dx in -hw..=hw {
+                out.push((dx, i as i32 - r));
+            }
+        }
+        out
+    }
+
+    /// The element's radius (its reach along either axis).
+    pub fn radius(&self) -> u32 {
+        match *self {
+            StructuringElement::Square3x3 | StructuringElement::Cross3x3 => 1,
+            StructuringElement::Square(r)
+            | StructuringElement::Diamond(r)
+            | StructuringElement::Disk(r) => r,
+        }
+    }
+}
+
+/// `iterations` passes of a flat dilation / erosion by `element` over
+/// channels `< nc` of a picture of any sample type (channels `≥ nc`
+/// copied). Element pixels outside the picture are left out, which for
+/// these convex elements equals replicate-edge addressing.
+///
+/// `k` passes of a square (diamond) of radius `r` are one pass of the
+/// square (diamond) of radius `k·r`, so those run once: the square as a
+/// separable running extreme whose cost does not depend on the radius,
+/// the diamond as whole-row runs. A disk is not closed under
+/// composition and is iterated.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn morph_samples<T: crate::kernel::Sample>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    op: MorphologyOp,
+    element: StructuringElement,
+    iterations: u32,
+) -> Vec<T> {
+    use crate::kernel::{Window, extreme_filter, morph_runs};
+    let max = matches!(op, MorphologyOp::Dilate);
+    // Beyond the picture's own extent a larger element changes nothing.
+    let cap = w.max(h) as u64;
+    let grown = |r: u32| (r as u64 * iterations as u64).min(cap) as u32;
+    let tight = |src: &[T]| -> Vec<T> {
+        let mut out = Vec::with_capacity(w * ch * h);
+        for y in 0..h {
+            out.extend_from_slice(&src[y * stride..y * stride + w * ch]);
+        }
+        out
+    };
+    if iterations == 0 || element.radius() == 0 || w == 0 || h == 0 {
+        return tight(src);
+    }
+    let run_pass = |src: &[T], stride: usize, element: StructuringElement| -> Vec<T> {
+        let runs: Vec<Option<usize>> = element
+            .runs()
+            .into_iter()
+            .map(|hw| Some((hw as usize).min(w)))
+            .collect();
+        morph_runs(src, stride, w, h, ch, nc, &runs, max)
+    };
+    match element {
+        StructuringElement::Square3x3 | StructuringElement::Square(_) => {
+            let r = grown(element.radius()) as usize;
+            extreme_filter(src, stride, w, h, ch, nc, Window::radius(r), max)
+        }
+        StructuringElement::Cross3x3 | StructuringElement::Diamond(_) => run_pass(
+            src,
+            stride,
+            StructuringElement::Diamond(grown(element.radius())),
+        ),
+        StructuringElement::Disk(r) => {
+            let element = StructuringElement::Disk((r as u64).min(cap) as u32);
+            let mut cur = run_pass(src, stride, element);
+            for _ in 1..iterations {
+                let next = run_pass(&cur, w * ch, element);
+                if next == cur {
+                    // A fixed point: further passes change nothing.
+                    break;
+                }
+                cur = next;
+            }
+            cur
         }
     }
 }
@@ -139,33 +263,41 @@ impl PixelFilter for Morphology {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if crate::deep::is_float(params.format) {
-            if self.iterations == 0 {
-                return Ok(input.clone());
-            }
-            let (op, iterations, offsets) = (self.op, self.iterations, self.element.offsets());
-            return crate::deep::run(input, params, |mut img| {
-                for _ in 0..iterations {
-                    img = morph_float(&img, op, offsets);
-                }
-                Ok(img)
-            });
-        }
         if self.iterations == 0 {
             return Ok(input.clone());
+        }
+        if crate::deep::is_float(params.format) {
+            let (op, iterations, element) = (self.op, self.iterations, self.element);
+            return crate::deep::run(input, params, |img| {
+                Ok(morph_float(&img, op, element, iterations))
+            });
         }
 
         let (cx, cy) = chroma_subsampling(params.format);
         let mut out = input.clone();
-        let offsets = self.element.offsets();
-
         for (idx, plane) in out.planes.iter_mut().enumerate() {
             let (pw, ph) = plane_dims(params.width, params.height, params.format, idx, cx, cy);
             let bpp = bytes_per_plane_pixel(params.format, idx);
-            let alpha_passthrough = matches!(params.format, PixelFormat::Rgba) && idx == 0;
-            for _ in 0..self.iterations {
-                *plane = morph_plane(plane, pw, ph, bpp, self.op, offsets, alpha_passthrough);
-            }
+            // `Rgba` keeps its alpha.
+            let nc = if matches!(params.format, PixelFormat::Rgba) {
+                3
+            } else {
+                bpp
+            };
+            *plane = VideoPlane {
+                stride: pw as usize * bpp,
+                data: morph_samples(
+                    &plane.data,
+                    plane.stride,
+                    pw as usize,
+                    ph as usize,
+                    bpp,
+                    nc,
+                    self.op,
+                    self.element,
+                    self.iterations,
+                ),
+            };
         }
 
         Ok(out)
@@ -326,19 +458,20 @@ impl PixelFilter for MorphologyEdge {
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
         if crate::deep::is_float(params.format) {
-            let (op, offsets) = (self.op, self.element.offsets());
+            let (op, element) = (self.op, self.element);
             return crate::deep::run(input, params, |img| {
                 let (a, b) = match op {
-                    EdgeOp::EdgeIn => {
-                        (img.clone(), morph_float(&img, MorphologyOp::Erode, offsets))
-                    }
+                    EdgeOp::EdgeIn => (
+                        img.clone(),
+                        morph_float(&img, MorphologyOp::Erode, element, 1),
+                    ),
                     EdgeOp::EdgeOut => (
-                        morph_float(&img, MorphologyOp::Dilate, offsets),
+                        morph_float(&img, MorphologyOp::Dilate, element, 1),
                         img.clone(),
                     ),
                     EdgeOp::EdgeMagnitude => (
-                        morph_float(&img, MorphologyOp::Dilate, offsets),
-                        morph_float(&img, MorphologyOp::Erode, offsets),
+                        morph_float(&img, MorphologyOp::Dilate, element, 1),
+                        morph_float(&img, MorphologyOp::Erode, element, 1),
                     ),
                 };
                 let mut out = a;
@@ -477,76 +610,23 @@ fn sub_plane(
 pub(crate) fn morph_float(
     img: &crate::deep::FloatImage,
     op: MorphologyOp,
-    offsets: &[(i32, i32)],
+    element: StructuringElement,
+    iterations: u32,
 ) -> crate::deep::FloatImage {
-    let mut out = img.clone();
-    let cc = img.color_channels();
-    for y in 0..img.height() {
-        for x in 0..img.width() {
-            for c in 0..cc {
-                let mut acc = match op {
-                    MorphologyOp::Dilate => f32::NEG_INFINITY,
-                    MorphologyOp::Erode => f32::INFINITY,
-                };
-                for (dx, dy) in offsets {
-                    let v = img.sample_clamped(x as i64 + *dx as i64, y as i64 + *dy as i64, c);
-                    acc = match op {
-                        MorphologyOp::Dilate => acc.max(v),
-                        MorphologyOp::Erode => acc.min(v),
-                    };
-                }
-                out.pixel_mut(x, y)[c] = acc;
-            }
-        }
-    }
-    out
-}
-
-fn morph_plane(
-    plane: &VideoPlane,
-    w: u32,
-    h: u32,
-    bpp: usize,
-    op: MorphologyOp,
-    offsets: &[(i32, i32)],
-    alpha_passthrough: bool,
-) -> VideoPlane {
-    let w = w as usize;
-    let h = h as usize;
-    let stride = plane.stride;
-    let mut out = vec![0u8; w * bpp * h];
-    let last_x = (w as i32 - 1).max(0);
-    let last_y = (h as i32 - 1).max(0);
-
-    for y in 0..h {
-        for x in 0..w {
-            for ch in 0..bpp {
-                if alpha_passthrough && bpp == 4 && ch == 3 {
-                    out[y * w * bpp + x * bpp + ch] = plane.data[y * stride + x * bpp + ch];
-                    continue;
-                }
-                let mut acc: u8 = match op {
-                    MorphologyOp::Dilate => 0,
-                    MorphologyOp::Erode => 255,
-                };
-                for (dx, dy) in offsets {
-                    let sx = (x as i32 + dx).clamp(0, last_x) as usize;
-                    let sy = (y as i32 + dy).clamp(0, last_y) as usize;
-                    let v = plane.data[sy * stride + sx * bpp + ch];
-                    acc = match op {
-                        MorphologyOp::Dilate => acc.max(v),
-                        MorphologyOp::Erode => acc.min(v),
-                    };
-                }
-                out[y * w * bpp + x * bpp + ch] = acc;
-            }
-        }
-    }
-
-    VideoPlane {
-        stride: w * bpp,
-        data: out,
-    }
+    let (w, h, ch) = (img.width() as usize, img.height() as usize, img.channels());
+    let data = morph_samples(
+        img.samples(),
+        w * ch,
+        w,
+        h,
+        ch,
+        img.color_channels(),
+        op,
+        element,
+        iterations,
+    );
+    crate::deep::FloatImage::from_samples(img.width(), img.height(), ch, data)
+        .unwrap_or_else(|_| img.clone())
 }
 
 #[cfg(test)]

@@ -22,6 +22,10 @@ use crate::exec::{par_bands, par_rows};
 pub(crate) trait Sample: Copy + Send + Sync + PartialOrd + 'static {
     /// Nominal white (`255`, `65535`, `1.0`).
     const UNIT: f32;
+    /// The least and greatest values of the type (the identities of a
+    /// running maximum and minimum).
+    const LOWEST: Self;
+    const HIGHEST: Self;
     fn to_f32(self) -> f32;
     /// Round to nearest and saturate for the integer types; identity for
     /// float.
@@ -32,6 +36,8 @@ pub(crate) trait Sample: Copy + Send + Sync + PartialOrd + 'static {
 
 impl Sample for u8 {
     const UNIT: f32 = 255.0;
+    const LOWEST: Self = 0;
+    const HIGHEST: Self = 255;
     #[inline]
     fn to_f32(self) -> f32 {
         self as f32
@@ -53,6 +59,8 @@ impl Sample for u8 {
 
 impl Sample for u16 {
     const UNIT: f32 = 65535.0;
+    const LOWEST: Self = 0;
+    const HIGHEST: Self = 65535;
     #[inline]
     fn to_f32(self) -> f32 {
         self as f32
@@ -73,6 +81,8 @@ impl Sample for u16 {
 
 impl Sample for f32 {
     const UNIT: f32 = 1.0;
+    const LOWEST: Self = f32::NEG_INFINITY;
+    const HIGHEST: Self = f32::INFINITY;
     #[inline]
     fn to_f32(self) -> f32 {
         self
@@ -681,6 +691,91 @@ pub(crate) fn extreme_filter<T: Sample>(
     win: Window,
     max: bool,
 ) -> Vec<T> {
+    // Up to this many taps per axis the direct whole-row passes (which
+    // vectorise) beat the block scans (which do not).
+    const DIRECT_TAPS: usize = 32;
+    if win.columns() <= DIRECT_TAPS && win.rows() <= DIRECT_TAPS {
+        extreme_direct(src, stride, w, h, ch, nc, win, max)
+    } else {
+        extreme_scan(src, stride, w, h, ch, nc, win, max)
+    }
+}
+
+/// [`extreme_filter`] by direct separable passes: each output row is
+/// the running pick of the window's taps taken a whole row at a time.
+/// Taps outside the picture are left out — for a window that contains
+/// its pixel that is replicate-edge addressing.
+#[allow(clippy::too_many_arguments)]
+fn extreme_direct<T: Sample>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+    max: bool,
+) -> Vec<T> {
+    let row = w * ch;
+    if row == 0 || h == 0 {
+        return Vec::new();
+    }
+    let identity = if max { T::LOWEST } else { T::HIGHEST };
+    let fold = move |acc: &mut [T], taps: &[T]| {
+        if max {
+            for (a, t) in acc.iter_mut().zip(taps) {
+                *a = if *t > *a { *t } else { *a };
+            }
+        } else {
+            for (a, t) in acc.iter_mut().zip(taps) {
+                *a = if *t < *a { *t } else { *a };
+            }
+        }
+    };
+    let cols = win.columns();
+    let mut mid = vec![identity; row * h];
+    par_bands(&mut mid, row, |y0, band| {
+        let mut padded = vec![identity; (w + cols - 1) * ch];
+        for (i, line) in band.chunks_exact_mut(row).enumerate() {
+            let s = &src[(y0 + i) * stride..(y0 + i) * stride + row];
+            padded[win.left * ch..win.left * ch + row].copy_from_slice(s);
+            for k in 0..cols {
+                fold(line, &padded[k * ch..k * ch + row]);
+            }
+        }
+    });
+    let rows = win.rows();
+    let mut out = vec![identity; row * h];
+    let mid = &mid;
+    par_rows(&mut out, row, |y, line| {
+        for j in 0..rows {
+            if let Some(sy) = (y + j).checked_sub(win.up).filter(|sy| *sy < h) {
+                fold(line, &mid[sy * row..sy * row + row]);
+            }
+        }
+        if nc < ch {
+            let s = &src[y * stride..y * stride + row];
+            for (d, s) in line.chunks_exact_mut(ch).zip(s.chunks_exact(ch)) {
+                d[nc..].copy_from_slice(&s[nc..]);
+            }
+        }
+    });
+    out
+}
+
+/// [`extreme_filter`] by block prefix / suffix scans: `O(1)` per sample
+/// and axis whatever the window.
+#[allow(clippy::too_many_arguments)]
+fn extreme_scan<T: Sample>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+    max: bool,
+) -> Vec<T> {
     let row = w * ch;
     let mut mid = tight_copy(src, stride, row, h);
     if row == 0 || h == 0 {
@@ -758,6 +853,69 @@ pub(crate) fn extreme_filter<T: Sample>(
         for (x, px) in line.chunks_exact_mut(ch).enumerate() {
             for c in 0..nc {
                 px[c] = pick(a[x * ch + c], b[x * ch + c]);
+            }
+        }
+    });
+    out
+}
+
+/// Flat greyscale dilation (`max`) or erosion of channels `< nc` by a
+/// structuring element given as horizontal runs: `half_widths[i]` is
+/// the half-width of the run on row offset `i − half_widths.len() / 2`
+/// (`None`: the element has no pixel on that row). Pixels of the
+/// element that fall outside the picture are left out. Channels `≥ nc`
+/// are copied.
+///
+/// Each run is a row of whole-row compare-and-keep passes, so the cost
+/// per pixel is the number of element pixels divided by the vector
+/// width; a rectangular element is better served by [`extreme_filter`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn morph_runs<T: Sample>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    half_widths: &[Option<usize>],
+    max: bool,
+) -> Vec<T> {
+    let row = w * ch;
+    let mut out = tight_copy(src, stride, row, h);
+    if row == 0 || h == 0 {
+        return out;
+    }
+    let reach = half_widths.len() / 2;
+    let widest = half_widths.iter().flatten().copied().max().unwrap_or(0);
+    let identity = if max { T::LOWEST } else { T::HIGHEST };
+    par_bands(&mut out, row, |y0, band| {
+        let mut padded = vec![identity; (w + 2 * widest) * ch];
+        let mut acc = vec![identity; row];
+        for (i, line) in band.chunks_exact_mut(row).enumerate() {
+            let y = y0 + i;
+            acc.fill(identity);
+            for (j, hw) in half_widths.iter().enumerate() {
+                let Some(hw) = *hw else { continue };
+                let Some(sy) = (y + j).checked_sub(reach).filter(|sy| *sy < h) else {
+                    continue;
+                };
+                let s = &src[sy * stride..sy * stride + row];
+                padded[widest * ch..widest * ch + row].copy_from_slice(s);
+                for k in widest - hw..=widest + hw {
+                    let taps = &padded[k * ch..k * ch + row];
+                    if max {
+                        for (a, t) in acc.iter_mut().zip(taps) {
+                            *a = if *t > *a { *t } else { *a };
+                        }
+                    } else {
+                        for (a, t) in acc.iter_mut().zip(taps) {
+                            *a = if *t < *a { *t } else { *a };
+                        }
+                    }
+                }
+            }
+            for (d, a) in line.chunks_exact_mut(ch).zip(acc.chunks_exact(ch)) {
+                d[..nc].copy_from_slice(&a[..nc]);
             }
         }
     });
@@ -955,6 +1113,57 @@ mod tests {
             assert!(exact_codes(&g, w, w, h).is_none(), "{odd}");
             let out = median_filter(&g, w, w, h, 1, 1, win);
             assert_eq!(out.len(), g.len());
+        }
+    }
+
+    #[test]
+    fn run_morphology_is_the_extreme_over_the_element_inside_the_picture() {
+        let (w, h, ch, nc) = (9usize, 7usize, 4usize, 3usize);
+        let src: Vec<u16> = noise(w * h * ch, 21)
+            .iter()
+            .map(|v| (v >> 16) as u16)
+            .collect();
+        // A radius-2 diamond and a lopsided element with an empty row.
+        for runs in [
+            vec![Some(0usize), Some(1), Some(2), Some(1), Some(0)],
+            vec![Some(3), None, Some(0)],
+            vec![Some(0)],
+        ] {
+            let reach = runs.len() / 2;
+            for max in [true, false] {
+                let out = morph_runs(&src, w * ch, w, h, ch, nc, &runs, max);
+                for y in 0..h {
+                    for x in 0..w {
+                        for c in 0..ch {
+                            let i = (y * w + x) * ch + c;
+                            if c >= nc {
+                                assert_eq!(out[i], src[i]);
+                                continue;
+                            }
+                            let mut vals = Vec::new();
+                            for (j, hw) in runs.iter().enumerate() {
+                                let Some(hw) = *hw else { continue };
+                                let sy = y as isize + j as isize - reach as isize;
+                                for dx in -(hw as isize)..=hw as isize {
+                                    let sx = x as isize + dx;
+                                    if sx >= 0 && sx < w as isize && sy >= 0 && sy < h as isize {
+                                        vals.push(src[(sy as usize * w + sx as usize) * ch + c]);
+                                    }
+                                }
+                            }
+                            let want = if max {
+                                vals.iter().max().copied()
+                            } else {
+                                vals.iter().min().copied()
+                            };
+                            // An element with no pixel inside the picture
+                            // leaves the identity; every element here
+                            // covers at least one in-picture pixel.
+                            assert_eq!(Some(out[i]), want, "{runs:?} max={max} {x},{y},{c}");
+                        }
+                    }
+                }
+            }
         }
     }
 
