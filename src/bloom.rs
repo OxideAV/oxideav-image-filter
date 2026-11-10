@@ -19,7 +19,7 @@
 //! space, so YUV callers should explicitly transcode first.
 
 use crate::{PixelFilter, VideoStreamParams};
-use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
+use oxideav_core::{Error, VideoFrame};
 
 /// Bloom / glow filter.
 #[derive(Clone, Debug)]
@@ -80,7 +80,7 @@ impl Bloom {
 
 impl PixelFilter for Bloom {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -88,148 +88,65 @@ impl PixelFilter for Bloom {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        match params.format {
-            PixelFormat::Gray8 => apply_gray(self, input, params),
-            PixelFormat::Rgb24 => apply_rgb(self, input, params, false),
-            PixelFormat::Rgba => apply_rgb(self, input, params, true),
-            other => Err(Error::unsupported(format!(
-                "oxideav-image-filter: Bloom does not yet handle {other:?}"
-            ))),
-        }
+        // One kernel at every depth (8-bit pictures are widened to it
+        // and rounded back, saturating; float pictures keep the glow's
+        // headroom).
+        crate::deep::run_any(input, params, |img| Ok(self.bloom(&img)))
     }
 }
 
-fn apply_gray(
-    f: &Bloom,
-    input: &VideoFrame,
-    params: VideoStreamParams,
-) -> Result<VideoFrame, Error> {
-    let w = params.width as usize;
-    let h = params.height as usize;
-    let src = &input.planes[0];
-    let mut highlights = vec![0u8; w * h];
-    for y in 0..h {
-        let row = &src.data[y * src.stride..y * src.stride + w];
-        for x in 0..w {
-            let v = row[x];
-            highlights[y * w + x] = if v >= f.threshold { v } else { 0 };
-        }
-    }
-    let blurred = box_blur_gray(&highlights, w, h, f.radius);
-    let mut out = vec![0u8; w * h];
-    for y in 0..h {
-        let s_row = &src.data[y * src.stride..y * src.stride + w];
-        for x in 0..w {
-            let s = s_row[x] as f32;
-            let g = blurred[y * w + x] as f32;
-            out[y * w + x] = (s + f.intensity * g).clamp(0.0, 255.0).round() as u8;
-        }
-    }
-    Ok(VideoFrame {
-        pts: input.pts,
-        planes: vec![VideoPlane {
-            stride: w,
-            data: out,
-        }],
-    })
-}
-
-fn apply_rgb(
-    f: &Bloom,
-    input: &VideoFrame,
-    params: VideoStreamParams,
-    has_alpha: bool,
-) -> Result<VideoFrame, Error> {
-    let bpp = if has_alpha { 4 } else { 3 };
-    let w = params.width as usize;
-    let h = params.height as usize;
-    let src = &input.planes[0];
-
-    // Build per-channel highlights buffer (R / G / B independently). We
-    // gate on Rec. 601 luma `(R + 2G + B) / 4` for the threshold.
-    let mut hi_r = vec![0u8; w * h];
-    let mut hi_g = vec![0u8; w * h];
-    let mut hi_b = vec![0u8; w * h];
-    for y in 0..h {
-        let row = &src.data[y * src.stride..y * src.stride + w * bpp];
-        for x in 0..w {
-            let off = x * bpp;
-            let r = row[off];
-            let g = row[off + 1];
-            let b = row[off + 2];
-            let luma = (r as u16 + 2 * g as u16 + b as u16) / 4;
-            if luma >= f.threshold as u16 {
-                hi_r[y * w + x] = r;
-                hi_g[y * w + x] = g;
-                hi_b[y * w + x] = b;
+impl Bloom {
+    /// `out = pixel + intensity · glow`, the glow being the box mean
+    /// (`(2r + 1)²`, replicate edges) of the highlights: the pixels
+    /// whose brightness — the sample on grey, `(R + 2G + B) / 4` on
+    /// colour — reaches `threshold / 255`, black elsewhere. Alpha is
+    /// untouched.
+    fn bloom(&self, img: &crate::deep::FloatImage) -> crate::deep::FloatImage {
+        let (w, h) = (img.width() as usize, img.height() as usize);
+        let (ch, cc) = (img.channels(), img.color_channels());
+        let threshold = self.threshold as f32;
+        let mut highlights = img.samples().to_vec();
+        for px in highlights.chunks_exact_mut(ch) {
+            let level = if cc == 1 {
+                px[0]
+            } else {
+                (px[0] + 2.0 * px[1] + px[2]) / 4.0
+            };
+            // Compared on the 8-bit scale, an 8-bit code landing exactly
+            // on the threshold whatever the depth it is stored at.
+            if crate::deep::code8(level) < threshold || level.is_nan() {
+                px[..cc].fill(0.0);
             }
         }
-    }
-    let br = box_blur_gray(&hi_r, w, h, f.radius);
-    let bg = box_blur_gray(&hi_g, w, h, f.radius);
-    let bb = box_blur_gray(&hi_b, w, h, f.radius);
-
-    let mut out = vec![0u8; w * h * bpp];
-    for y in 0..h {
-        let s_row = &src.data[y * src.stride..y * src.stride + w * bpp];
-        let o_row = &mut out[y * w * bpp..(y + 1) * w * bpp];
-        for x in 0..w {
-            let off = x * bpp;
-            let r = s_row[off] as f32 + f.intensity * br[y * w + x] as f32;
-            let g = s_row[off + 1] as f32 + f.intensity * bg[y * w + x] as f32;
-            let b = s_row[off + 2] as f32 + f.intensity * bb[y * w + x] as f32;
-            o_row[off] = r.clamp(0.0, 255.0).round() as u8;
-            o_row[off + 1] = g.clamp(0.0, 255.0).round() as u8;
-            o_row[off + 2] = b.clamp(0.0, 255.0).round() as u8;
-            if has_alpha {
-                o_row[off + 3] = s_row[off + 3];
+        let glow = crate::kernel::box_mean(
+            &highlights,
+            w * ch,
+            w,
+            h,
+            ch,
+            cc,
+            crate::kernel::Window::radius(self.radius as usize),
+        );
+        let mut out = img.clone();
+        for (o, g) in out
+            .samples_mut()
+            .chunks_exact_mut(ch)
+            .zip(glow.chunks_exact(ch))
+        {
+            for c in 0..cc {
+                o[c] += self.intensity * g[c];
             }
         }
+        out
     }
-    Ok(VideoFrame {
-        pts: input.pts,
-        planes: vec![VideoPlane {
-            stride: w * bpp,
-            data: out,
-        }],
-    })
-}
-
-fn box_blur_gray(src: &[u8], w: usize, h: usize, radius: u32) -> Vec<u8> {
-    if radius == 0 || w == 0 || h == 0 {
-        return src.to_vec();
-    }
-    let r = radius as i32;
-    let denom = 2 * r as u32 + 1;
-    let mut tmp = vec![0u8; w * h];
-    for y in 0..h {
-        for x in 0..w {
-            let mut acc: u32 = 0;
-            for dx in -r..=r {
-                let sx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize;
-                acc += src[y * w + sx] as u32;
-            }
-            tmp[y * w + x] = (acc / denom) as u8;
-        }
-    }
-    let mut out = vec![0u8; w * h];
-    for y in 0..h {
-        for x in 0..w {
-            let mut acc: u32 = 0;
-            for dy in -r..=r {
-                let sy = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
-                acc += tmp[sy * w + x] as u32;
-            }
-            out[y * w + x] = (acc / denom) as u8;
-        }
-    }
-    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ImageFilter;
+    #[allow(unused_imports)]
+    use oxideav_core::{PixelFormat, VideoPlane};
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

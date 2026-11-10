@@ -232,7 +232,7 @@ impl TiltShift {
 
 impl PixelFilter for TiltShift {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(
@@ -240,7 +240,7 @@ impl PixelFilter for TiltShift {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
+        if !crate::deep::is_float(params.format) && !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: TiltShift does not yet handle {:?}",
                 params.format
@@ -262,6 +262,40 @@ impl PixelFilter for TiltShift {
         let blurred = Blur::new(self.blur_radius)
             .with_sigma(self.blur_sigma)
             .apply(input, params)?;
+
+        if crate::deep::is_float(params.format) {
+            // The same blend in binary32: `weight · sharp + (1 − weight)
+            // · blurred` on the colour channels, alpha the picture's own.
+            let sharp = crate::deep::FloatImage::from_frame(input, params)?;
+            let soft = crate::deep::FloatImage::from_frame(&blurred, params)?;
+            let (w, h) = (params.width as usize, params.height as usize);
+            let (ch, cc) = (sharp.channels(), sharp.color_channels());
+            let rotated = self.angle_degrees.abs() > f32::EPSILON;
+            let mut out = sharp.clone();
+            crate::exec::par_rows(out.samples_mut(), w * ch, |py, row| {
+                let row_weight = if rotated {
+                    0.0
+                } else {
+                    self.focus_weight(py, h)
+                };
+                let soft_row = &soft.samples()[py * w * ch..(py + 1) * w * ch];
+                for (px, (o, b)) in row
+                    .chunks_exact_mut(ch)
+                    .zip(soft_row.chunks_exact(ch))
+                    .enumerate()
+                {
+                    let weight = if rotated {
+                        self.focus_weight_xy(px, py, w, h)
+                    } else {
+                        row_weight
+                    };
+                    for c in 0..cc {
+                        o[c] = weight * o[c] + (1.0 - weight) * b[c];
+                    }
+                }
+            });
+            return Ok(out.into_frame(input.pts));
+        }
 
         // We don't need the kernel here; just keep the symbol available
         // for future per-plane work. (Some compilers would otherwise

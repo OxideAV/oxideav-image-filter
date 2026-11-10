@@ -89,7 +89,7 @@ impl Quantize {
 
 impl PixelFilter for Quantize {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -97,6 +97,23 @@ impl PixelFilter for Quantize {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // The same uniform palette at the picture's precision: a
+            // sample of 8-bit-scale code `c = 255 v` falls in bucket
+            // `min(⌊c k / 256⌋, k − 1)` and comes out as
+            // `bucket / (k − 1)` — the 8-bit rule's levels, not rounded
+            // to 8-bit codes.
+            let k = if params.format == PixelFormat::GrayF32Le {
+                self.colors.clamp(2, 256)
+            } else {
+                self.levels_per_axis()
+            }
+            .max(2) as f32;
+            return crate::deep::map_tone(input, params, move |v| {
+                let c = crate::deep::code8(if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) });
+                (c * k / 256.0).floor().min(k - 1.0) / (k - 1.0)
+            });
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Gray8 => (1usize, false),
             PixelFormat::Rgb24 => (3usize, false),

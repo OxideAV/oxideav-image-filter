@@ -32,7 +32,7 @@
 //! formats return [`Error::unsupported`].
 
 use crate::{PixelFilter, VideoStreamParams};
-use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
+use oxideav_core::{Error, VideoFrame};
 
 /// Perona-Malik anisotropic diffusion filter.
 #[derive(Clone, Copy, Debug)]
@@ -92,7 +92,7 @@ impl AnisotropicBlur {
 
 impl PixelFilter for AnisotropicBlur {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -100,99 +100,64 @@ impl PixelFilter for AnisotropicBlur {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        let bpp = match params.format {
-            PixelFormat::Gray8 => 1usize,
-            PixelFormat::Rgb24 => 3usize,
-            PixelFormat::Rgba => 4usize,
-            other => {
-                return Err(Error::unsupported(format!(
-                    "oxideav-image-filter: AnisotropicBlur requires Gray8/Rgb24/Rgba, got {other:?}"
-                )));
+        // One kernel at every depth: the diffusion runs in binary32 on
+        // the 8-bit scale (`κ` is a contrast in 8-bit codes), so a
+        // float or 16-bit picture is scaled by 255 on the way in and
+        // back on the way out without being rounded.
+        let me = *self;
+        crate::deep::run_any(input, params, move |mut img| {
+            let (w, h) = (img.width() as usize, img.height() as usize);
+            if w == 0 || h == 0 {
+                return Ok(img);
             }
-        };
-        let w = params.width as usize;
-        let h = params.height as usize;
-        if w == 0 || h == 0 {
-            return Ok(input.clone());
-        }
-
-        // Work in f32 for stability across iterations. Per-colour-channel
-        // independent diffusion. Alpha (channel 3 on RGBA) is held
-        // constant.
-        let tone_ch = match bpp {
-            1 => 1,
-            _ => 3,
-        };
-        let src = &input.planes[0];
-        let row_stride_in = src.stride;
-
-        // Build per-channel f32 buffers.
-        let mut buf: Vec<Vec<f32>> = (0..tone_ch).map(|_| vec![0.0; w * h]).collect();
-        for y in 0..h {
-            let row = &src.data[y * row_stride_in..y * row_stride_in + w * bpp];
-            for x in 0..w {
-                let p = x * bpp;
-                for c in 0..tone_ch {
-                    buf[c][y * w + x] = row[p + c] as f32;
+            let (ch, cc) = (img.channels(), img.color_channels());
+            let mut chan = vec![0.0f32; w * h];
+            let mut scratch = vec![0.0f32; w * h];
+            for c in 0..cc {
+                for (d, px) in chan.iter_mut().zip(img.samples().chunks_exact(ch)) {
+                    *d = px[c] * 255.0;
+                }
+                me.diffuse(&mut chan, &mut scratch, w, h);
+                for (px, v) in img.samples_mut().chunks_exact_mut(ch).zip(&chan) {
+                    px[c] = *v / 255.0;
                 }
             }
-        }
+            Ok(img)
+        })
+    }
+}
 
+impl AnisotropicBlur {
+    /// `iterations` explicit-Euler steps of Perona–Malik diffusion on
+    /// one channel (8-bit scale), edges replicated: each step adds
+    /// `λ · Σ g(∇) ∇` over the four neighbours with the Lorentzian
+    /// conductance `g(s) = 1 / (1 + (s / κ)²)`.
+    fn diffuse(&self, chan: &mut Vec<f32>, scratch: &mut Vec<f32>, w: usize, h: usize) {
         let kappa_sq = self.kappa * self.kappa;
         let lambda = self.lambda;
-        let mut scratch = vec![0.0f32; w * h];
-        for chan in buf.iter_mut().take(tone_ch) {
-            for _ in 0..self.iterations {
-                // North/South/East/West first differences + Lorentzian
-                // weights folded into one explicit-Euler step.
-                for y in 0..h {
-                    for x in 0..w {
-                        let i = y * w + x;
-                        let v = chan[i];
-                        let n = if y > 0 { chan[i - w] } else { v };
-                        let s = if y + 1 < h { chan[i + w] } else { v };
-                        let east = if x + 1 < w { chan[i + 1] } else { v };
-                        let west = if x > 0 { chan[i - 1] } else { v };
-                        let dn = n - v;
-                        let ds = s - v;
-                        let de = east - v;
-                        let dw = west - v;
-                        // g(s) = 1 / (1 + (s/κ)²)  ⇒ g(s) · s
-                        let gn = dn / (1.0 + dn * dn / kappa_sq);
-                        let gs = ds / (1.0 + ds * ds / kappa_sq);
-                        let ge = de / (1.0 + de * de / kappa_sq);
-                        let gw = dw / (1.0 + dw * dw / kappa_sq);
-                        scratch[i] = v + lambda * (gn + gs + ge + gw);
-                    }
+        for _ in 0..self.iterations {
+            let cur = &*chan;
+            // A step reads only the previous state: rows run under the
+            // thread budget.
+            crate::exec::par_rows(scratch, w, |y, out| {
+                for (x, o) in out.iter_mut().enumerate() {
+                    let i = y * w + x;
+                    let v = cur[i];
+                    let n = if y > 0 { cur[i - w] } else { v };
+                    let s = if y + 1 < h { cur[i + w] } else { v };
+                    let east = if x + 1 < w { cur[i + 1] } else { v };
+                    let west = if x > 0 { cur[i - 1] } else { v };
+                    let (dn, ds, de, dw) = (n - v, s - v, east - v, west - v);
+                    // g(s) = 1 / (1 + (s/κ)²)  ⇒ g(s) · s
+                    let gn = dn / (1.0 + dn * dn / kappa_sq);
+                    let gs = ds / (1.0 + ds * ds / kappa_sq);
+                    let ge = de / (1.0 + de * de / kappa_sq);
+                    let gw = dw / (1.0 + dw * dw / kappa_sq);
+                    *o = v + lambda * (gn + gs + ge + gw);
                 }
-                std::mem::swap(chan, &mut scratch);
-            }
+            });
+            std::mem::swap(chan, scratch);
         }
-
-        // Re-pack into bytes (alpha preserved from input).
-        let row_stride = w * bpp;
-        let mut data = vec![0u8; row_stride * h];
-        for y in 0..h {
-            let src_row = &src.data[y * row_stride_in..y * row_stride_in + w * bpp];
-            let dst_row = &mut data[y * row_stride..(y + 1) * row_stride];
-            for x in 0..w {
-                let p = x * bpp;
-                for c in 0..tone_ch {
-                    dst_row[p + c] = buf[c][y * w + x].round().clamp(0.0, 255.0) as u8;
-                }
-                if bpp == 4 {
-                    dst_row[p + 3] = src_row[p + 3];
-                }
-            }
-        }
-
-        Ok(VideoFrame {
-            pts: input.pts,
-            planes: vec![VideoPlane {
-                stride: row_stride,
-                data,
-            }],
-        })
     }
 }
 
@@ -200,6 +165,8 @@ impl PixelFilter for AnisotropicBlur {
 mod tests {
     use super::*;
     use crate::ImageFilter;
+    #[allow(unused_imports)]
+    use oxideav_core::{PixelFormat, VideoPlane};
 
     fn gray(w: u32, h: u32, f: impl Fn(u32, u32) -> u8) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h) as usize);

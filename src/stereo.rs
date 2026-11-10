@@ -36,7 +36,7 @@ impl Stereo {
 
 impl TwoInputPixelFilter for Stereo {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_RGB
+        crate::layout::PACKED_RGB_DEEP
     }
 
     fn apply_two_pixels(
@@ -45,6 +45,22 @@ impl TwoInputPixelFilter for Stereo {
         dst: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // Red (and alpha) from the left eye, green and blue from
+            // the right — samples move whole, at any precision.
+            let mut left = crate::deep::FloatImage::from_frame(src, params)?;
+            let right = crate::deep::FloatImage::from_frame(dst, params)?;
+            let ch = left.channels();
+            for (l, r) in left
+                .samples_mut()
+                .chunks_exact_mut(ch)
+                .zip(right.samples().chunks_exact(ch))
+            {
+                l[1] = r[1];
+                l[2] = r[2];
+            }
+            return Ok(left.into_frame(src.pts.or(dst.pts)));
+        }
         let (bpp, has_alpha) = match params.format {
             PixelFormat::Rgb24 => (3usize, false),
             PixelFormat::Rgba => (4usize, true),

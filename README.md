@@ -25,7 +25,10 @@ oxideav-image-filter = "0.1"
 ### Blur
 
 Separable Gaussian blur with configurable radius + sigma and an optional
-plane selector:
+plane selector. The two passes keep their intermediate in binary32 (the
+result is the 2-D Gaussian rounded once), a picture with alpha blurs its
+colour premultiplied (a transparent pixel's colour has no weight), and
+the kernel is cut at `8σ`:
 
 ```rust
 # use oxideav_core::{PixelFormat, VideoFrame, VideoPlane};
@@ -211,6 +214,11 @@ selects the kernel via `"interpolation"`: `nearest` / `bilinear` /
     texture; the `16×16` map (256 distinct thresholds) is the finest
     dispersed-dot variant and shows the least texture on smooth
     gradients.
+  - Both families run one binary32 kernel at every depth: 8-bit
+    pictures are widened to it, 16-bit and float pictures are dithered
+    at their own precision (a 16-bit tone between two 8-bit codes keeps
+    its mean, the output levels are 16-bit codes), and the diffused
+    error is never truncated to whole codes.
   - **Error diffusion** along a left-to-right raster scan: the seven
     canonical kernels Floyd–Steinberg (÷16, 1976 SID),
     Jarvis–Judice–Ninke (÷48, 1976 CGIP), Stucki (÷42, 1981 IBM
@@ -293,7 +301,14 @@ selects the kernel via `"interpolation"`: `nearest` / `bilinear` /
   analogue: `-cycle N`.
 - **`Statistic`** + **`StatisticOp`** — rolling-window per-pixel
   `Median` / `Min` / `Max` / `Mean` over a `WxH` neighbourhood
-  (border-clamped). 1×1 window is identity. documented CLI: `-statistic <op> WxH`.
+  (border-clamped). 1×1 window is identity. The cost per pixel does not
+  grow with the window area: sliding-histogram median (8- and 16-bit;
+  a sorted window or, past 1024 samples, a binary indexed tree over the
+  picture's distinct values for arbitrary floats), running extremes,
+  prefix-sum mean. A window larger than the picture — any size up to
+  `2³² − 1` a side — is exact (edge samples weighted as replication
+  weights them) and costs no more than the picture.
+  documented CLI: `-statistic <op> WxH`.
 - **`Clamp`** — clamp every tone sample into `[low, high]`. Alpha
   preserved on RGBA; YUV touches only luma. documented CLI: `-clamp` (extended
   with explicit endpoints).
@@ -850,7 +865,8 @@ physically-meaningful luminance.
   documented CLI: `-implode N`.
 - **`Swirl`** — radius-decaying rotational distortion. documented CLI: `-swirl N`.
 - **`Despeckle`** — median-window edge-preserving noise reduction
-  (alpha pass-through). documented CLI: `-despeckle`.
+  (alpha pass-through), on the same sliding median as `Statistic`.
+  documented CLI: `-despeckle`.
 - **`Wave`** — sinusoidal vertical pixel displacement (amplitude /
   wavelength in pixels). documented CLI: `-wave AxL`.
 - **`Spread`** — random pixel-position perturbation inside a
@@ -861,7 +877,10 @@ physically-meaningful luminance.
   sketch. Larger pre-blur radii thicken the strokes by suppressing
   fine texture before the edge pass. documented CLI: `-charcoal R`.
 - **`Paint`** — oil-paint stylise: per-pixel modal-bucket vote in a
-  `(2*radius+1)²` window then mean-of-mode RGB. documented CLI: `-paint radius`.
+  `(2*radius+1)²` window then mean-of-mode RGB. Every pixel falls in
+  intensity bucket `⌊Y · levels⌋` (`Y = (77 R + 150 G + 29 B) / 256`);
+  the window slides along the row, so the cost per pixel is
+  `O(radius + levels)`. documented CLI: `-paint radius`.
 - **`Pixelate`** — block-average spatial mosaic; each `N×N` tile
   collapses to its mean colour. Distinct from `Quantize` which
   coarsens the colour axis only. Gray8 / RGB / RGBA + planar YUV
@@ -989,8 +1008,14 @@ physically-meaningful luminance.
   `cx` / `cy` / `max_radius` overrides are available through both the
   builder API and the JSON schema.
 - **`Morphology`** + **`MorphologyChain`** — N-iteration greyscale
-  dilate / erode with a 3×3 square or cross structuring element; plus
-  `open` (erode → dilate) and `close` (dilate → erode) compositions.
+  dilate / erode; plus `open` (erode → dilate) and `close` (dilate →
+  erode) compositions. Structuring elements: the 3×3 `Square3x3` /
+  `Cross3x3`, and `Square` / `Diamond` / `Disk` at the filter's
+  `radius` (`with_radius`; `max(|dx|, |dy|) ≤ r`, `|dx| + |dy| ≤ r`,
+  `dx² + dy² ≤ r²`). `k` passes of a square or diamond run as one pass
+  of radius `k·r`; a square is a separable running extreme whose cost
+  does not depend on its size. JSON: `{"element": "square" | "cross" |
+  "diamond" | "disk", "radius": r, "iterations": k}`.
   documented CLI: `-morphology Dilate|Erode|Open|Close`.
 - **`MorphologyEdge`** — morphological edge / gradient operators
   built on the dilate / erode primitives:
@@ -1057,23 +1082,39 @@ physically-meaningful luminance.
   the source — clipped on negative or oversize placements. Straight-
   alpha on RGBA; opacity scales the per-pixel alpha. Gray8 / RGB /
   RGBA (the two ports must share `PixelFormat`).
-- **`Composite`** + **`CompositeOp`** — Porter–Duff and arithmetic
-  blends of a foreground (`src`) over a background (`dst`) frame.
-  Sixteen operators registered as `composite-<op>` factories:
-  - Porter–Duff coverage: `over`, `in`, `out`, `atop`, `xor`.
-  - Arithmetic / per-channel: `plus` (clamped sum), `multiply`,
-    `screen`, `overlay` (multiply-or-screen on `dst < 128`),
-    `darken` (per-channel min), `lighten` (per-channel max),
-    `difference` (`|src - dst|`).
-  - Overlay family: `hardlight` (overlay driven by `src` instead
-    of `dst`), `softlight` (Pegtop continuous formula),
-    `colordodge` (`dst / (1 - src/255)`), `colorburn`
-    (`255 - (255 - dst) / (src/255)`).
-  - Operates on `Gray8` / `Rgb24` / `Rgba` with **straight (non-
-    premultiplied)** alpha throughout. The new `TwoInputImageFilter`
-    trait formalises the two-port shape; the
-    `TwoInputImageFilterAdapter` shim buffers per-port frames and
-    emits whenever both ports have a frame in hand.
+- **`Composite`** + **`CompositeOp`** — a foreground (`src`) composed
+  onto a background (`dst`) with any of 70 operators
+  (`CompositeOp::ALL`), each registered as a `composite-<op>` factory:
+  - Porter–Duff coverage: `clear`, `src`, `dst`, `over`, `dst-over`,
+    `in`, `dst-in`, `out`, `dst-out`, `atop`, `dst-atop`, `xor`.
+  - Separable blends, `B(Cb, Cs)` weighted by coverage as in the
+    Porter–Duff source-over sum: `multiply`, `screen`, `overlay`,
+    `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`,
+    `soft-light`, `difference`, `exclusion`, plus `plus`, `minus`,
+    `divide`, the modulus pair, `linear-burn` / `linear-dodge` /
+    `linear-light`, `vivid-light`, `pin-light`, `hard-mix`,
+    `pegtop-light`, `soft-burn` / `soft-dodge`, `stamp`, `freeze`,
+    `reflect`, `negate`, `interpolate`.
+  - Non-separable (hue / saturation / luminosity) blends: `hue`,
+    `saturate`, `luminize`, `colorize`, and the intensity-selected
+    `darken-intensity` / `lighten-intensity`.
+  - Parametrised: `mathematics`, `blend`, `dissolve`, `modulate`,
+    `threshold`, `change-mask`, `rmse`; channel copies (`copy-red` …
+    `copy-black`); and the map operators `displace`, `distort`, `blur`,
+    `bumpmap`, `intensity`.
+  - **Placement** ([`Composite::compose`], pictures of different
+    extents): `with_offset(x, y)` (negative allowed, clipped),
+    `with_gravity` (nine anchors; the offset is added to it),
+    `with_tile(true)` (the overlay repeated across the whole destination
+    from the placement point), `with_outside_overlay(false)` (leave the
+    destination untouched outside the overlay), `with_channels`.
+  - Every depth: the operators are evaluated in binary32 on straight
+    alpha; 8-bit, 16-bit (`Gray16Le` / `Rgb48Le` / `Rgba64Le` come back
+    as words) and float destinations keep their layout.
+    `tests/depth_two_input.rs` holds `over` and eight blend functions
+    to their closed forms to the 16-bit code, and every placement mode
+    exactly; `tests/magick_composite.rs` compares all operators with
+    `magick` on partial-alpha pictures.
   - documented-CLI analogue: `-compose <op> -composite`.
 
 All single-input filters listed above share the `ImageFilter` trait — chain them
@@ -1125,6 +1166,285 @@ test compares all of it against `magick` on `rose:`. `Fuzz` and the
 perceptual hash follow the documented recipes but not `magick`'s figures
 to the digit (its colour-space conversions are not staged).
 
+## Depth support
+
+Every filter runs at the precision of the picture it is given. An 8-bit
+picture takes the filter's 8-bit path; a 16-bit picture (`Gray16Le`,
+`Rgb48Le`, `Rgba64Le`, `Ya16Le`, the 10/12/14/16-bit planar YUV(A) and
+GBR(A) families) and a float picture run the filter's binary32 kernel —
+16-bit words are normalised (`code / 65535`), filtered with no
+intermediate quantisation and rounded back once, so nothing passes
+through 8 bits. The output layout is the input layout (a filter that
+changes layout — an edge detector, a channel extractor — emits its grey
+counterpart at the same precision). Alpha is carried at depth and, where
+a kernel averages colour across pixels of different coverage (`Blur`,
+`Sharpen`, `Unsharp`, the resampler, the distortions' EWA), the colour
+is weighted by it.
+
+147 of 170 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
+`Unsupported` (never a silent narrowing). `tests/depth_support_table.rs`
+regenerates this table from the filters' own declarations and fails
+when a row here is out of date; `tests/depth_analytic.rs` and
+`tests/depth_two_input.rs` hold the 8-bit, 16-bit and float results of
+blur, statistic, despeckle, morphology, paint, both dither families and
+the two-input filters to their closed-form definitions, with and
+without alpha; `tests/deep_parity.rs` holds every other float path to
+its 8-bit result on widened pictures.
+
+| filter | 8-bit | 16-bit | float | why not |
+|---|---|---|---|---|
+| `AdaptiveThreshold` | yes | yes | yes |  |
+| `Affine` | yes | yes | yes |  |
+| `AnisotropicBlur` | yes | yes | yes |  |
+| `AutoGamma` | yes | yes | yes |  |
+| `AutoLevel` | yes | yes | yes |  |
+| `AutoTrim` | yes | yes | yes |  |
+| `BarrelInverse` | yes | yes | yes |  |
+| `BilateralBlur` | yes | yes | yes |  |
+| `BlackThreshold` | yes | yes | yes |  |
+| `Bloom` | yes | yes | yes |  |
+| `BlueShift` | yes | yes | yes |  |
+| `Blur` | yes | yes | yes |  |
+| `BorderedFrame` | yes | yes | yes |  |
+| `BrightnessContrast` | yes | yes | yes |  |
+| `BwMix` | yes | yes | yes |  |
+| `Canny` | yes | yes | yes |  |
+| `Canvas` | yes | yes | yes |  |
+| `ColorThreshold` | yes | yes | yes |  |
+| `ChannelExtract` | yes | yes | yes |  |
+| `ChannelExtract(U)` | yes | no | no | n/a: reads a chroma plane of 8-bit planar YUV; the deep layouts reach filters as packed RGB / grey |
+| `ChannelMixer` | yes | yes | yes |  |
+| `Charcoal` | yes | yes | yes |  |
+| `ChromaticAberration` | yes | yes | yes |  |
+| `Clamp` | yes | yes | yes |  |
+| `Cdl` | yes | yes | yes |  |
+| `Chop` | yes | yes | yes |  |
+| `Clarity` | yes | yes | yes |  |
+| `ColorBalance` | yes | yes | yes |  |
+| `ColorMatrix` | yes | yes | yes |  |
+| `Colorize` | yes | yes | yes |  |
+| `Comic` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Composite(self)` | yes | yes | yes |  |
+| `ConnectedComponents` | yes | yes | yes |  |
+| `ContrastStretch` | yes | yes | yes |  |
+| `Convolve` | yes | yes | yes |  |
+| `Crop` | yes | yes | yes |  |
+| `CrossProcess` | yes | yes | yes |  |
+| `Crystallize` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Curves` | yes | yes | yes |  |
+| `Cyanotype` | yes | yes | yes |  |
+| `Cycle` | yes | yes | yes |  |
+| `Deskew` | yes | no | no | 8-bit only: analysis on an 8-bit edge map; deep path not written yet |
+| `Despeckle` | yes | yes | yes |  |
+| `DistanceMorphology` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `DistanceOutline` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `DistanceTransform` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `Distort` | yes | yes | yes |  |
+| `DistortImage` | yes | yes | yes |  |
+| `Dither` | yes | yes | yes |  |
+| `Drago` | yes | yes | yes |  |
+| `DropShadow` | yes | yes | yes |  |
+| `Edge` | yes | yes | yes |  |
+| `EdgeDetect` | yes | yes | yes |  |
+| `Emboss` | yes | yes | yes |  |
+| `EmbossDirectional` | yes | yes | yes |  |
+| `Equalize` | yes | yes | yes |  |
+| `EuclideanDistanceTransform` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `Evaluate` | yes | yes | yes |  |
+| `Exposure` | yes | yes | yes |  |
+| `Extent` | yes | yes | yes |  |
+| `Feather` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `VoronoiTransform` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `ProximityFill` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `Flip` | yes | yes | yes |  |
+| `FloodFill` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Flop` | yes | yes | yes |  |
+| `Frame` | yes | yes | yes |  |
+| `FreiChen` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Function` | yes | yes | yes |  |
+| `Fx` | yes | yes | yes |  |
+| `Gabor` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Gamma` | yes | yes | yes |  |
+| `GradientConic` | yes | yes | yes |  |
+| `GradientMap` | yes | yes | yes |  |
+| `GradientRadial` | yes | yes | yes |  |
+| `GravityTranslate` | yes | yes | yes |  |
+| `Grayscale` | yes | yes | yes |  |
+| `Grayscale(gray8)` | yes | yes | yes |  |
+| `Hable` | yes | yes | yes |  |
+| `Halftone` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Heatmap` | yes | yes | yes |  |
+| `HoughCircles` | yes | no | no | 8-bit only: analysis on an 8-bit edge map; deep path not written yet |
+| `HoughLines` | yes | no | no | 8-bit only: analysis on an 8-bit edge map; deep path not written yet |
+| `HslRotate` | yes | yes | yes |  |
+| `HslShift` | yes | yes | yes |  |
+| `Implode` | yes | yes | yes |  |
+| `InnerShadow` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Kmeans` | yes | yes | yes |  |
+| `Kuwahara` | yes | yes | yes |  |
+| `Laplacian` | yes | yes | yes |  |
+| `LaplacianOfGaussian` | yes | yes | yes |  |
+| `Level` | yes | yes | yes |  |
+| `LinearStretch` | yes | yes | yes |  |
+| `MaxRgb` | yes | yes | yes |  |
+| `Modulate` | yes | yes | yes |  |
+| `Morphology` | yes | yes | yes |  |
+| `MorphologyChain` | yes | yes | yes |  |
+| `MorphologyEdge` | yes | yes | yes |  |
+| `MotionBlur` | yes | yes | yes |  |
+| `Negate` | yes | yes | yes |  |
+| `Niblack` | yes | yes | yes |  |
+| `AddNoise` | yes | yes | yes |  |
+| `Normalize` | yes | yes | yes |  |
+| `OrderedDither` | yes | yes | yes |  |
+| `OtsuThreshold` | yes | yes | yes |  |
+| `Paint` | yes | yes | yes |  |
+| `Perspective` | yes | yes | yes |  |
+| `Pixelate` | yes | yes | yes |  |
+| `Polar` | yes | yes | yes |  |
+| `Posterize` | yes | yes | yes |  |
+| `PosterizeChannels` | yes | yes | yes |  |
+| `Prewitt` | yes | yes | yes |  |
+| `Quantize` | yes | yes | yes |  |
+| `RadialBlur` | yes | yes | yes |  |
+| `Reinhard` | yes | yes | yes |  |
+| `ReinhardExtended` | yes | yes | yes |  |
+| `ReinhardLocal` | yes | yes | yes |  |
+| `Resize` | yes | yes | yes |  |
+| `Roberts` | yes | yes | yes |  |
+| `Roll` | yes | yes | yes |  |
+| `Rotate` | yes | yes | yes |  |
+| `Scharr` | yes | yes | yes |  |
+| `SelectiveColor` | yes | yes | yes |  |
+| `Sample` | yes | yes | yes |  |
+| `Scale` | yes | yes | yes |  |
+| `Sepia` | yes | yes | yes |  |
+| `Shade` | yes | yes | yes |  |
+| `Shade(color)` | yes | yes | yes |  |
+| `ShadowHighlight` | yes | yes | yes |  |
+| `Sharpen` | yes | yes | yes |  |
+| `Shave` | yes | yes | yes |  |
+| `Shear` | yes | yes | yes |  |
+| `SigmoidalContrast` | yes | yes | yes |  |
+| `SignedDistanceField` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `Sketch` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Solarize` | yes | yes | yes |  |
+| `SplitTone` | yes | yes | yes |  |
+| `SparseColor` | yes | yes | yes |  |
+| `Splice` | yes | yes | yes |  |
+| `Spread` | yes | yes | yes |  |
+| `SrgbTransform` | yes | yes | yes |  |
+| `Srt` | yes | yes | yes |  |
+| `Statistic` | yes | yes | yes |  |
+| `Swirl` | yes | yes | yes |  |
+| `Temperature` | yes | yes | yes |  |
+| `Threshold` | yes | yes | yes |  |
+| `RandomThreshold` | yes | yes | yes |  |
+| `RangeThreshold` | yes | yes | yes |  |
+| `TiltShift` | yes | yes | yes |  |
+| `Tint` | yes | yes | yes |  |
+| `Toon` | yes | no | no | 8-bit only: deep path not written yet (typed refusal, never narrowed) |
+| `Transpose` | yes | yes | yes |  |
+| `Transverse` | yes | yes | yes |  |
+| `Trim` | yes | yes | yes |  |
+| `Unsharp` | yes | yes | yes |  |
+| `Vibrance` | yes | yes | yes |  |
+| `Vignette` | yes | yes | yes |  |
+| `VignetteSoft` | yes | yes | yes |  |
+| `Wave` | yes | yes | yes |  |
+| `WhiteThreshold` | yes | yes | yes |  |
+| `WeightedDistanceTransform` | yes | no | no | 8-bit only: reads a binary mask and writes pixel distances as 8-bit codes; deep path not written yet |
+| `ZoomBlur` | yes | yes | yes |  |
+| `Clut (two-input)` | yes | yes | yes |  |
+| `Composite (two-input)` | yes | yes | yes |  |
+| `Difference (two-input)` | yes | yes | yes |  |
+| `DisplacementMap (two-input)` | yes | yes | yes |  |
+| `HaldClut (two-input)` | yes | yes | yes |  |
+| `Stegano (two-input)` | yes | no | no | n/a: hides a picture in the low bits of 8-bit codes; defined on that storage |
+| `Stereo (two-input)` | yes | yes | yes |  |
+| `Watermark (two-input)` | yes | yes | yes |  |
+
+## Thread budget
+
+Filters are serial unless the caller grants a budget:
+
+```rust
+# use oxideav_core::{ExecutionContext, PixelFormat, VideoFrame, VideoPlane};
+# let frame = VideoFrame { pts: None, planes: vec![VideoPlane { stride: 64, data: vec![9; 64 * 16] }] };
+use oxideav_image_filter::{Blur, ImageFilter, VideoStreamParams, with_execution_context};
+
+let params = VideoStreamParams { format: PixelFormat::Rgba, width: 16, height: 16 };
+let ctx = ExecutionContext::with_threads(8);
+let out = with_execution_context(&ctx, || Blur::new(3).apply(&frame, params))?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Inside the closure every filter call on this thread may fan out over at
+most `ctx.threads` scoped threads. The split is by whole output rows,
+each computed exactly as the serial loop computes it, so the output is
+identical at every budget (held by `tests/depth_analytic.rs`). Kernels
+that split: the separable convolution (`Blur`, `Sharpen`, `Unsharp`,
+`TiltShift`, `Charcoal`, `Canny`), the window filters (`Statistic`,
+`Despeckle`, `Morphology`, `Paint`, `Bloom`), `Resize`, `Rotate`,
+`Composite`, `ColorMatrix`, `AnisotropicBlur`, the ordered mode of
+`Dither`, the float path of the pointwise tonal filters, and the 16-bit
+/ float packing every deep path goes through. Error diffusion is serial
+by definition (each pixel depends on the ones before it).
+
+## Performance
+
+Wall-clock milliseconds per picture (`benches/throughput.rs`, `Rgba` and
+`Rgba64Le`, 1152 × 868 and 4000 × 3000, medians, one Apple-silicon
+laptop shared with other builds — read the ratios, not the digits).
+"Before" is release 0.1.5, serial; "after" is serial unless a thread
+count is given.
+
+| filter | depth | 1 MP before | 1 MP after | 1 MP, 8 threads | 12 MP before | 12 MP after | 12 MP, 8 threads |
+|---|---|---:|---:|---:|---:|---:|---:|
+| blur r3 s1.5 | 8-bit | 32.2 | 7.1 | 2.2 | 383 | 89.4 | 16.6 |
+| blur r12 s6 | 8-bit | 111 | 16.4 | 4.5 | 1268 | 203 | 37.2 |
+| resize half lanczos3 | 8-bit | 16.2 | 10.7 | 3.3 | 172 | 125 | 20.3 |
+| resize 1.5x bicubic | 8-bit | 53.0 | 53.6 | 10.9 | 538 | 577 | 90.4 |
+| sharpen r2 s1 | 8-bit | 27.6 | 7.6 | 3.4 | 264 | 82.6 | 31.9 |
+| unsharp r3 s1.5 | 8-bit | 35.0 | 8.1 | 3.4 | 343 | 93.2 | 33.8 |
+| morphology dilate sq x2 | 8-bit | 53.3 | 1.7 | 0.7 | 512 | 21.6 | 4.6 |
+| morphology erode disk r5 | 8-bit | — | 6.4 | 1.9 | — | 79.1 | 14.4 |
+| statistic median 5x5 | 8-bit | 256 | 69.7 | 10.4 | 2760 | 816 | 119 |
+| statistic max 9x9 | 8-bit | 363 | 2.6 | 0.8 | 3951 | 29.6 | 5.4 |
+| statistic mean 9x9 | 8-bit | 281 | 9.3 | 3.4 | 3230 | 110 | 30.1 |
+| rotate 17deg | 8-bit | 14.7 | 15.0 | 5.2 | 189 | 182 | 67.9 |
+| colour-matrix | 8-bit | 2.7 | 2.8 | 0.9 | 34.2 | 36.8 | 6.0 |
+| threshold | 8-bit | 0.6 | 0.6 | 0.6 | 6.5 | 7.1 | 7.0 |
+| dither floyd-steinberg | 8-bit | 34.2 | 29.1 | 30.5 | 408 | 495 | 354 |
+| ordered dither o8x8 | 8-bit | 6.5 | 6.5 | 7.0 | 77.0 | 85.8 | 80.7 |
+| composite over | 8-bit | 5.2 | 6.6 | 3.9 | 65.2 | 83.8 | 36.2 |
+| blur r3 s1.5 | 16-bit | 42.8 | 8.0 | 3.2 | 492 | 113 | 25.3 |
+| blur r12 s6 | 16-bit | 122 | 17.3 | 5.6 | 1317 | 239 | 44.5 |
+| resize half lanczos3 | 16-bit | 16.6 | 10.4 | 3.4 | 176 | 125 | 20.9 |
+| resize 1.5x bicubic | 16-bit | 57.8 | 50.6 | 11.4 | 628 | 604 | 102 |
+| sharpen r2 s1 | 16-bit | 40.7 | 9.0 | 4.8 | 419 | 112 | 46.2 |
+| unsharp r3 s1.5 | 16-bit | 46.7 | 10.1 | 5.0 | 642 | 127 | 48.3 |
+| morphology dilate sq x2 | 16-bit | 60.3 | 6.9 | 2.9 | 790 | 83.8 | 25.9 |
+| morphology erode disk r5 | 16-bit | — | 24.9 | 7.7 | — | 330 | 73.8 |
+| statistic median 5x5 | 16-bit | 537 | 148 | 26.0 | 6086 | 1691 | 304 |
+| statistic max 9x9 | 16-bit | 278 | 8.9 | 3.3 | 3252 | 100 | 29.0 |
+| statistic mean 9x9 | 16-bit | 364 | 11.8 | 3.7 | 4558 | 138 | 38.7 |
+| rotate 17deg | 16-bit | 37.6 | 22.4 | 22.3 | 415 | 265 | 258 |
+| colour-matrix | 16-bit | 12.4 | 3.2 | 1.3 | 148 | 36.5 | 17.9 |
+| threshold | 16-bit | 12.7 | 3.2 | 1.3 | 158 | 36.9 | 17.7 |
+| dither floyd-steinberg | 16-bit | refused | 29.7 | 30.0 | refused | 364 | 353 |
+| ordered dither o8x8 | 16-bit | 18.4 | 7.8 | 6.4 | 196 | 83.5 | 79.4 |
+| composite over | 16-bit | refused | 8.1 | 3.3 | refused | 88.9 | 36.5 |
+
+What changed: separable kernels keep a binary32 intermediate and run
+whole rows at a time (auto-vectorised); the median is a sliding
+histogram instead of a per-pixel sort; minimum / maximum are whole-row
+running extremes (block scans past 32 taps); the mean is a prefix-sum
+difference; morphology collapses iterations into one larger element; the
+oil-paint window slides; the 16-bit float hop is done in-crate; nothing
+allocates per pixel. `Composite` and `Dither` were refused at 16 bits
+before.
+
 ## Pixel layouts and the frame contract
 
 Every filter runs behind one wrapper (`PixelFilter` → blanket
@@ -1164,7 +1484,8 @@ body sees a sample:
 | native | the layout is in the filter's declared set | `output_format(input)` |
 | palette | `Pal8`, a pointwise filter (36 declare `is_pointwise()`): the palette is filtered as a one-row `Rgba` picture, alpha from the palette-alpha record, the index plane untouched | `Pal8` with the recoloured table |
 | packed-RGB hop | any other **8-bit** layout `oxideav-pixfmt` converts (planar / semi-planar YUV(A) at either range with the frame's colour signal honoured, `Bgr24` / `Bgra` / `Argb` / `Abgr`, `Ya8`, `Yuyv422` / `Uyvy422`, `Cmyk`, bit-packed mono, `Pal8` for a non-pointwise filter) into the first of `Rgba` / `Rgb24` / `Gray8` the filter takes, and back when the filter keeps that layout | the input layout; the hop layout (or the filter's own, e.g. `Gray8`) when it does not convert back or the source was `Pal8` |
-| refusal | 10/12/14/16-bit words and float through a filter without a native deep path (they are never narrowed); the macropixel / mono layouts through a filter with no packed target | typed `Unsupported` |
+| float hop | any 10/12/14/16-bit or float layout through a filter that takes the packed float layouts: converted to `RgbaF32Le` / `RgbF32Le` / `GrayF32Le` (the packed 16-bit words in-crate, `code / 65535`; everything else by `oxideav-pixfmt`), filtered in binary32, converted back | the input layout (the float layout when the filter changes layout) |
+| refusal | 10/12/14/16-bit words and float through a filter without a float path (they are never narrowed); the macropixel / mono layouts through a filter with no packed target | typed `Unsupported` |
 
 Packed 4:2:2 and 4:1:1 take the hop at the widths pixfmt accepts (even /
 multiple of 4) on both legs; otherwise a typed `InvalidData`.
@@ -1179,7 +1500,7 @@ multiple of 4) on both legs; otherwise a typed `InvalidData`.
 | the packed-RGB colour filters (`Sepia`, `Tint`, `Modulate`, the HSL / balance / curve / tone-mapping families, `Kuwahara`, `Swirl`, …) | `Rgb24` / `Rgba` (some `Gray8`) natively; every other 8-bit layout through the hop; `Pal8` through the palette route when pointwise |
 | the mask operators (`DistanceTransform`, `EuclideanDistanceTransform`, `SignedDistanceField`, `VoronoiTransform`, `ProximityFill`, `WeightedDistanceTransform`) | `Gray8` natively; every other 8-bit layout through the hop (luma) |
 | `ChannelExtract` | per channel: `Red` grey + packed RGB(A); `Green` / `Blue` packed RGB(A); `Alpha` `Rgba`; `Y` grey + planar YUV(J); `U` / `V` planar YUV(J) (no hop for `U` / `V`) |
-| two-input (`Composite`, `Clut`, `Stegano`, `Watermark`, `DisplacementMap`: `Gray8` / `Rgb24` / `Rgba`; `HaldClut`, `Stereo`: `Rgb24` / `Rgba`; `Difference`: the classic nine) | natively only (no routes) |
+| two-input (`Composite`, `Clut`, `Watermark`, `DisplacementMap`: `Gray8` / `Rgb24` / `Rgba` + float; `HaldClut`, `Stereo`: `Rgb24` / `Rgba` + float; `Difference`: the classic nine + float; `Stegano`: 8-bit packed) | natively, and through the same packed-RGB and float hops as single-input filters (both pictures converted, the result converted back) |
 
 The deep path: every filter whose native set includes the packed float
 layouts (`GrayF32Le` / `RgbF32Le` / `RgbaF32Le` — all but a handful of
@@ -1191,8 +1512,9 @@ saturating. `tests/deep_parity.rs` holds every such filter to its 8-bit
 result within one code on widened pictures, and a 16-bit level → gamma
 chain to thousands of distinct codes.
 
-In numbers: 145 catalogued filter instances × 70 layouts × 2 sizes =
-20 300 cells, 17 932 accepted, the rest typed refusals. The registry labels every output port from the
+In numbers: 162 catalogued filter instances × 70 layouts × 2 sizes =
+22 680 cells, 20 872 accepted, the rest typed refusals; the 8 two-input
+filters accept 519 of their 560 layout cells. The registry labels every output port from the
 filter's own declaration; filters whose extent depends on the picture
 (`trim`, `auto-trim`, `deskew`) mirror the input extent on the port.
 
@@ -1200,9 +1522,9 @@ filter's own declaration; filters whose extent depends on the picture
 
 `tests/layout_matrix.rs` runs every filter instance over all 70
 layouts at an even and an odd size on a picture carrying all six
-records (20 300 cells: 17 932 accepted, the rest typed refusals, zero
+records (22 680 cells: 20 872 accepted, the rest typed refusals, zero
 panics) and checks each pointwise flag pixel by pixel and palette entry
-by palette entry; `tests/registry_truth.rs` builds all 242 factory
+by palette entry; `tests/registry_truth.rs` builds all 300 factory
 names on seven layouts and checks the emitted planes against the
 declared port; `tests/geometry_layouts.rs` and `tests/resize_depth.rs`
 are pixel-exact on the widened paths; `fuzz/` drives the same two

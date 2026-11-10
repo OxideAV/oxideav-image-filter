@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns `Gray16Le` / `Rgb48Le` / `Rgba64Le` destinations as 16-bit
   words (they came back as `RgbaF32Le`). The compositing rows run under
   the thread budget.
+- `AnisotropicBlur`, `Bloom`, `Quantize`, `TiltShift` and `Stereo` at
+  every depth (they were 8-bit only).
+- README: a filter × {8-bit, 16-bit, float} support table generated
+  from the filters' declarations (`tests/depth_support_table.rs` fails
+  when it is out of date) — 147 of 170 catalogued filters take 16-bit
+  and float pictures — and a before → after throughput table.
 - `benches/throughput.rs`: wall-clock throughput of the most used
   filters at 1 MP / 12 MP, 8- and 16-bit, any thread budget.
 
@@ -74,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ColorMatrix`, the pointwise tonal filters' float path and the float
   packing every deep path goes through. The separable resampler's
   vertical pass sums whole rows.
+- `Bloom`'s glow is the exact box mean of the highlights (it was
+  truncated to whole codes after each of its two passes), and
+  `AnisotropicBlur` steps run under the thread budget.
 - `Statistic` and `Despeckle` cost no longer grows with the window
   area: sliding-histogram median (8- and 16-bit; a sorted sliding window
   for arbitrary floats), block-scan minimum / maximum, running-sum mean.
