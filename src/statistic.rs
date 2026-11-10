@@ -19,6 +19,7 @@
 //!   smear hue across edges in a way that's almost never what callers
 //!   want; convert to RGB first if needed).
 
+use crate::kernel::{self, Ranked, Window};
 use crate::{PixelFilter, VideoStreamParams};
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
@@ -107,45 +108,30 @@ impl PixelFilter for Statistic {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if crate::deep::is_float(params.format) {
-            if self.width == 0 || self.height == 0 {
-                return Err(Error::invalid(
-                    "oxideav-image-filter: Statistic window must have non-zero width and height",
-                ));
-            }
-            let (op, ww, wh) = (self.op, self.width as i64, self.height as i64);
-            return crate::deep::run(input, params, |img| {
-                let mut out = img.clone();
-                let cc = img.color_channels();
-                let mut scratch: Vec<f32> = Vec::with_capacity((ww * wh) as usize);
-                for y in 0..img.height() {
-                    for x in 0..img.width() {
-                        for c in 0..cc {
-                            scratch.clear();
-                            for dy in -((wh - 1) / 2)..=(wh / 2) {
-                                for dx in -((ww - 1) / 2)..=(ww / 2) {
-                                    scratch.push(img.sample_clamped(
-                                        x as i64 + dx,
-                                        y as i64 + dy,
-                                        c,
-                                    ));
-                                }
-                            }
-                            out.pixel_mut(x, y)[c] = combine_float(op, &mut scratch);
-                        }
-                    }
-                }
-                Ok(out)
-            });
-        }
         if self.width == 0 || self.height == 0 {
             return Err(Error::invalid(
                 "oxideav-image-filter: Statistic window must have non-zero width and height",
             ));
         }
-
-        let w = params.width as usize;
-        let h = params.height as usize;
+        let win = Window::sized(self.width as usize, self.height as usize);
+        let (w, h) = (params.width as usize, params.height as usize);
+        if crate::deep::is_float(params.format) {
+            let op = self.op;
+            return crate::deep::run(input, params, |img| {
+                let ch = img.channels();
+                let data = reduce(
+                    op,
+                    img.samples(),
+                    w * ch,
+                    w,
+                    h,
+                    ch,
+                    img.color_channels(),
+                    win,
+                );
+                crate::deep::FloatImage::from_samples(params.width, params.height, ch, data)
+            });
+        }
 
         let (bpp, channels): (usize, usize) = match params.format {
             PixelFormat::Gray8 => (1, 1),
@@ -159,83 +145,36 @@ impl PixelFilter for Statistic {
             | PixelFormat::YuvJ444P => (1, 1),
             _ => unreachable!(),
         };
-
         let mut out = input.clone();
-        let src_plane = input.planes[0].clone();
-        let row_bytes = w * bpp;
-        let dst = &mut out.planes[0];
-        let dst_data = &mut dst.data;
-        let dst_stride = dst.stride;
-
-        // 1×1 window ⇒ identity (each plane is copied through).
-        if self.width == 1 && self.height == 1 {
-            for y in 0..h {
-                let src_row =
-                    &src_plane.data[y * src_plane.stride..y * src_plane.stride + row_bytes];
-                let dst_row = &mut dst_data[y * dst_stride..y * dst_stride + row_bytes];
-                dst_row.copy_from_slice(src_row);
-            }
-            return Ok(out);
-        }
-
-        let half_x_left = ((self.width - 1) / 2) as i32;
-        let half_x_right = (self.width / 2) as i32;
-        let half_y_up = ((self.height - 1) / 2) as i32;
-        let half_y_down = (self.height / 2) as i32;
-        let window_n = (self.width * self.height) as usize;
-
-        let mut scratch: Vec<u8> = Vec::with_capacity(window_n);
-
-        for y in 0..h {
-            let dst_row = &mut dst_data[y * dst_stride..y * dst_stride + row_bytes];
-            for x in 0..w {
-                let base = x * bpp;
-                for ch in 0..channels {
-                    scratch.clear();
-                    for dy in -half_y_up..=half_y_down {
-                        let sy = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
-                        let sy_off = sy * src_plane.stride;
-                        for dx in -half_x_left..=half_x_right {
-                            let sx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize;
-                            scratch.push(src_plane.data[sy_off + sx * bpp + ch]);
-                        }
-                    }
-                    dst_row[base + ch] = combine(self.op, &mut scratch);
-                }
-            }
-        }
-
+        let src = &input.planes[0];
+        out.planes[0] = oxideav_core::VideoPlane {
+            stride: w * bpp,
+            data: reduce(self.op, &src.data, src.stride, w, h, bpp, channels, win),
+        };
         Ok(out)
     }
 }
 
-/// [`combine`] on float samples (median = upper middle of the sorted
-/// window, as the 8-bit path).
-fn combine_float(op: StatisticOp, samples: &mut [f32]) -> f32 {
+/// The window reduction on any sample type: a sliding-window median, a
+/// running extreme, or a running-sum mean (see [`crate::kernel`]) — the
+/// cost per pixel does not grow with the window area. The median is the
+/// upper middle of the window; the integer mean rounds to nearest.
+#[allow(clippy::too_many_arguments)]
+fn reduce<T: Ranked>(
+    op: StatisticOp,
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+) -> Vec<T> {
     match op {
-        StatisticOp::Median => {
-            samples.sort_by(f32::total_cmp);
-            samples[samples.len() / 2]
-        }
-        StatisticOp::Min => samples.iter().cloned().fold(f32::INFINITY, f32::min),
-        StatisticOp::Max => samples.iter().cloned().fold(f32::NEG_INFINITY, f32::max),
-        StatisticOp::Mean => samples.iter().sum::<f32>() / samples.len() as f32,
-    }
-}
-
-fn combine(op: StatisticOp, samples: &mut [u8]) -> u8 {
-    match op {
-        StatisticOp::Median => {
-            samples.sort_unstable();
-            samples[samples.len() / 2]
-        }
-        StatisticOp::Min => *samples.iter().min().expect("non-empty window"),
-        StatisticOp::Max => *samples.iter().max().expect("non-empty window"),
-        StatisticOp::Mean => {
-            let sum: u32 = samples.iter().map(|v| *v as u32).sum();
-            let n = samples.len() as u32;
-            ((sum + n / 2) / n).min(255) as u8
-        }
+        StatisticOp::Median => kernel::median_filter(src, stride, w, h, ch, nc, win),
+        StatisticOp::Min => kernel::extreme_filter(src, stride, w, h, ch, nc, win, false),
+        StatisticOp::Max => kernel::extreme_filter(src, stride, w, h, ch, nc, win, true),
+        StatisticOp::Mean => kernel::box_mean(src, stride, w, h, ch, nc, win),
     }
 }
 

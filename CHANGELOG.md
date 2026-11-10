@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `with_execution_context(&ExecutionContext, || …)`: a scoped thread
+  budget for every filter call made inside the closure. Kernels that
+  split by rows (the separable convolution behind `Blur` / `Sharpen` /
+  `Unsharp`, the window filters behind `Statistic` / `Despeckle`, the
+  16-bit word hop) fan out over scoped threads under it; serial by
+  default, output identical at every budget.
+- Two-input filters take the routes single-input filters take: any
+  8-bit layout through the packed-RGB hop and any 16-bit / float layout
+  through the float hop (`Composite`, `Clut`, `Watermark`, … on
+  `Rgba64Le`, `Bgra`, planar YUV, …), both pictures converted, the
+  result converted back. A 16-bit composite was a typed refusal before.
+- `Difference` on the float layouts (and through them every 16-bit
+  layout), exact at depth.
+- `benches/throughput.rs`: wall-clock throughput of the most used
+  filters at 1 MP / 12 MP, 8- and 16-bit, any thread budget.
+
+### Changed
+
+- `Blur` (and with it `Sharpen` / `Unsharp`) keeps the intermediate of
+  its two passes in binary32 — the result is the 2-D Gaussian rounded
+  once instead of twice — and on `Rgba` / `RgbaF32Le` (and the 16-bit
+  layouts with alpha) blurs colour premultiplied by alpha, so the colour
+  of a transparent pixel no longer bleeds into its neighbours.
+- `Statistic` and `Despeckle` cost no longer grows with the window
+  area: sliding-histogram median (8- and 16-bit; a sorted sliding window
+  for arbitrary floats), block-scan minimum / maximum, running-sum mean.
+  Same results (the 8-bit mean is now rounded from the exact sum).
+- The float hop of `Rgba64Le` / `Rgb48Le` / `Gray16Le` is done in-crate
+  (`code / 65535` and back, row-parallel), equal to `oxideav-pixfmt` on
+  every code.
+
 ## [0.1.5](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.4...v0.1.5) - 2026-11-07
 
 ### Other

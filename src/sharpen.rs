@@ -143,7 +143,7 @@ pub(crate) fn unsharp_mask_float(
         return img.clone();
     }
     let kernel = crate::blur::gaussian_kernel(radius, sigma);
-    let blurred = crate::deep::convolve_separable(img, &kernel, &kernel, true);
+    let blurred = crate::deep::convolve_separable_covered(img, &kernel, &kernel);
     let mut out = img.clone();
     for (o, b) in out.samples_mut().iter_mut().zip(blurred.samples()) {
         let diff = *o - *b;

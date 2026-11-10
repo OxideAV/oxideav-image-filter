@@ -1,0 +1,1071 @@
+//! Shared neighbourhood kernels: one implementation per algorithm,
+//! generic over the sample type (`u8`, `u16`, `f32`), row-parallel under
+//! the budget of [`crate::exec`], with no per-pixel allocation.
+//!
+//! - [`convolve_separable`]: two-pass separable convolution with
+//!   replicate edges, the intermediate kept in binary32 (no rounding
+//!   between the passes), optionally on alpha-premultiplied colour.
+//! - [`rank_filter`]: sliding-window median — a running histogram for
+//!   8-bit samples, a running sorted window for 16-bit and float.
+//! - [`extreme_filter`]: windowed minimum / maximum in `O(1)` per sample
+//!   and axis (block prefix / suffix scans).
+//! - [`box_mean`]: windowed mean by running sums.
+//!
+//! Every kernel computes each output row from the same operations in
+//! the same order whatever the band split, so results are identical at
+//! every thread budget.
+
+use crate::exec::{par_bands, par_rows};
+
+/// A sample the kernels can average: `u8`, `u16` (native endian words)
+/// or `f32`.
+pub(crate) trait Sample: Copy + Send + Sync + PartialOrd + 'static {
+    /// Nominal white (`255`, `65535`, `1.0`).
+    const UNIT: f32;
+    fn to_f32(self) -> f32;
+    /// Round to nearest and saturate for the integer types; identity for
+    /// float.
+    fn from_f32(v: f32) -> Self;
+    fn to_f64(self) -> f64;
+    fn from_f64(v: f64) -> Self;
+}
+
+impl Sample for u8 {
+    const UNIT: f32 = 255.0;
+    #[inline]
+    fn to_f32(self) -> f32 {
+        self as f32
+    }
+    #[inline]
+    fn from_f32(v: f32) -> Self {
+        // `as` saturates and maps NaN to 0.
+        (v + 0.5).floor() as u8
+    }
+    #[inline]
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+    #[inline]
+    fn from_f64(v: f64) -> Self {
+        (v + 0.5).floor() as u8
+    }
+}
+
+impl Sample for u16 {
+    const UNIT: f32 = 65535.0;
+    #[inline]
+    fn to_f32(self) -> f32 {
+        self as f32
+    }
+    #[inline]
+    fn from_f32(v: f32) -> Self {
+        (v + 0.5).floor() as u16
+    }
+    #[inline]
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+    #[inline]
+    fn from_f64(v: f64) -> Self {
+        (v + 0.5).floor() as u16
+    }
+}
+
+impl Sample for f32 {
+    const UNIT: f32 = 1.0;
+    #[inline]
+    fn to_f32(self) -> f32 {
+        self
+    }
+    #[inline]
+    fn from_f32(v: f32) -> Self {
+        v
+    }
+    #[inline]
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+    #[inline]
+    fn from_f64(v: f64) -> Self {
+        v as f32
+    }
+}
+
+/// How [`convolve_separable`] treats the last channel of a pixel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Alpha {
+    /// Every channel is convolved independently.
+    Independent,
+    /// The last channel is copied from the source, the others convolved.
+    Keep,
+    /// The last channel is alpha: colour is convolved premultiplied by
+    /// it and divided by the convolved alpha, so the colour of a
+    /// transparent pixel has no weight (a pixel whose convolved alpha is
+    /// zero keeps its source colour).
+    Premultiplied,
+}
+
+/// Separable convolution of a `w × h` picture of `ch` interleaved
+/// samples per pixel held at `stride` samples per row: `kx` along rows,
+/// then `ky` down columns, replicate-edge addressing, odd-length centred
+/// kernels. Returns a tight (`w · ch` per row) buffer.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn convolve_separable<T: Sample>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    kx: &[f32],
+    ky: &[f32],
+    alpha: Alpha,
+) -> Vec<T> {
+    let row = w * ch;
+    if row == 0 || h == 0 {
+        return Vec::new();
+    }
+    let alpha = if ch < 2 { Alpha::Independent } else { alpha };
+    let rx = kx.len() / 2;
+    let ry = ky.len() / 2;
+    let inv_unit = 1.0 / T::UNIT;
+
+    // Pass 1: rows. Each band keeps one edge-padded scratch row.
+    let mut mid = vec![0.0f32; row * h];
+    par_bands(&mut mid, row, |y0, band| {
+        let mut padded = vec![0.0f32; (w + 2 * rx) * ch];
+        for (i, out) in band.chunks_exact_mut(row).enumerate() {
+            let y = y0 + i;
+            let line = &src[y * stride..y * stride + row];
+            let body = &mut padded[rx * ch..rx * ch + row];
+            for (d, s) in body.iter_mut().zip(line) {
+                *d = s.to_f32();
+            }
+            if alpha == Alpha::Premultiplied {
+                for px in body.chunks_exact_mut(ch) {
+                    let a = px[ch - 1] * inv_unit;
+                    for v in &mut px[..ch - 1] {
+                        *v *= a;
+                    }
+                }
+            }
+            for k in 0..rx {
+                for c in 0..ch {
+                    padded[k * ch + c] = padded[rx * ch + c];
+                    padded[(rx + w + k) * ch + c] = padded[(rx + w - 1) * ch + c];
+                }
+            }
+            for (k, &kv) in kx.iter().enumerate() {
+                let taps = &padded[k * ch..k * ch + row];
+                for (o, t) in out.iter_mut().zip(taps) {
+                    *o += kv * *t;
+                }
+            }
+        }
+    });
+
+    // Pass 2: columns, whole rows at a time.
+    let mut out: Vec<T> = vec![T::from_f32(0.0); row * h];
+    par_bands(&mut out, row, |y0, band| {
+        let mut acc = vec![0.0f32; row];
+        for (i, dst) in band.chunks_exact_mut(row).enumerate() {
+            let y = y0 + i;
+            acc.fill(0.0);
+            for (k, &kv) in ky.iter().enumerate() {
+                let sy = (y + k).saturating_sub(ry).min(h - 1);
+                let taps = &mid[sy * row..sy * row + row];
+                for (o, t) in acc.iter_mut().zip(taps) {
+                    *o += kv * *t;
+                }
+            }
+            match alpha {
+                Alpha::Independent => {
+                    for (d, a) in dst.iter_mut().zip(&acc) {
+                        *d = T::from_f32(*a);
+                    }
+                }
+                Alpha::Keep => {
+                    let line = &src[y * stride..y * stride + row];
+                    for ((d, a), s) in dst
+                        .chunks_exact_mut(ch)
+                        .zip(acc.chunks_exact(ch))
+                        .zip(line.chunks_exact(ch))
+                    {
+                        for c in 0..ch - 1 {
+                            d[c] = T::from_f32(a[c]);
+                        }
+                        d[ch - 1] = s[ch - 1];
+                    }
+                }
+                Alpha::Premultiplied => {
+                    let line = &src[y * stride..y * stride + row];
+                    for ((d, a), s) in dst
+                        .chunks_exact_mut(ch)
+                        .zip(acc.chunks_exact(ch))
+                        .zip(line.chunks_exact(ch))
+                    {
+                        let cover = a[ch - 1] * inv_unit;
+                        if cover > 0.0 {
+                            for c in 0..ch - 1 {
+                                d[c] = T::from_f32(a[c] / cover);
+                            }
+                        } else {
+                            d[..ch - 1].copy_from_slice(&s[..ch - 1]);
+                        }
+                        d[ch - 1] = T::from_f32(a[ch - 1]);
+                    }
+                }
+            }
+        }
+    });
+    out
+}
+
+/// The window of a rank / extreme / mean filter: `left + 1 + right`
+/// columns by `up + 1 + down` rows around each pixel, replicate edges.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Window {
+    pub left: usize,
+    pub right: usize,
+    pub up: usize,
+    pub down: usize,
+}
+
+impl Window {
+    /// A `width × height` window anchored as the statistic filters
+    /// anchor it: `(n − 1) / 2` before the pixel, `n / 2` after.
+    pub(crate) fn sized(width: usize, height: usize) -> Self {
+        let width = width.max(1);
+        let height = height.max(1);
+        Self {
+            left: (width - 1) / 2,
+            right: width / 2,
+            up: (height - 1) / 2,
+            down: height / 2,
+        }
+    }
+
+    /// The square `(2r + 1)²` window.
+    pub(crate) fn radius(r: usize) -> Self {
+        Self {
+            left: r,
+            right: r,
+            up: r,
+            down: r,
+        }
+    }
+
+    fn columns(self) -> usize {
+        self.left + 1 + self.right
+    }
+
+    fn rows(self) -> usize {
+        self.up + 1 + self.down
+    }
+}
+
+/// The replicate-edge source index of window offset `i` (`0..n`) around
+/// position `p`: `clamp(p + i − before, 0, len − 1)`.
+#[inline]
+fn tap(p: usize, i: usize, before: usize, len: usize) -> usize {
+    (p + i).saturating_sub(before).min(len - 1)
+}
+
+/// The geometry a rank row needs.
+#[derive(Clone, Copy)]
+pub(crate) struct RankJob {
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+    rank: usize,
+}
+
+/// The rank filter's per-type sliding window. `rank` counts from the
+/// smallest (`0`) sample of the window. `Scratch` lives for a band of
+/// rows; a row leaves it as it found it (empty).
+pub(crate) trait Ranked: Sample {
+    type Scratch;
+    fn scratch(job: &RankJob) -> Self::Scratch;
+    fn rank_row(
+        src: &[Self],
+        job: &RankJob,
+        y: usize,
+        out: &mut [Self],
+        scratch: &mut Self::Scratch,
+    );
+    /// The whole picture; a type may pick a cheaper equivalent window.
+    #[allow(clippy::too_many_arguments)]
+    fn rank_picture(
+        src: &[Self],
+        stride: usize,
+        w: usize,
+        h: usize,
+        ch: usize,
+        nc: usize,
+        win: Window,
+        rank: usize,
+    ) -> Vec<Self> {
+        rank_banded(src, stride, w, h, ch, nc, win, rank)
+    }
+}
+
+/// A running histogram over `LEVELS` levels of 16-way fan-out
+/// (`16^LEVELS` bins at the finest): a sample costs `LEVELS` counter
+/// updates, a rank query at most `16 · LEVELS` additions. Level `l`
+/// starts at `offsets[l]` and holds `16^(l + 1)` counters.
+pub(crate) struct Histogram<const LEVELS: usize> {
+    counts: Vec<u32>,
+    offsets: [usize; LEVELS],
+}
+
+impl<const LEVELS: usize> Histogram<LEVELS> {
+    fn new() -> Self {
+        let mut offsets = [0usize; LEVELS];
+        let mut total = 0usize;
+        for (l, o) in offsets.iter_mut().enumerate() {
+            *o = total;
+            total += 16usize << (4 * l);
+        }
+        Self {
+            counts: vec![0; total],
+            offsets,
+        }
+    }
+
+    #[inline]
+    fn add(&mut self, v: usize) {
+        for l in 0..LEVELS {
+            self.counts[self.offsets[l] + (v >> (4 * (LEVELS - 1 - l)))] += 1;
+        }
+    }
+
+    #[inline]
+    fn remove(&mut self, v: usize) {
+        for l in 0..LEVELS {
+            self.counts[self.offsets[l] + (v >> (4 * (LEVELS - 1 - l)))] -= 1;
+        }
+    }
+
+    /// The value of rank `rank` (0 = smallest) among the samples held.
+    #[inline]
+    fn select(&self, rank: u32) -> usize {
+        let mut seen = 0u32;
+        let mut bin = 0usize;
+        for l in 0..LEVELS {
+            bin <<= 4;
+            let level = &self.counts[self.offsets[l]..];
+            while seen + level[bin] <= rank {
+                seen += level[bin];
+                bin += 1;
+            }
+        }
+        bin
+    }
+}
+
+/// One row of a histogram rank filter on integer samples.
+fn rank_row_histogram<T: Sample, const LEVELS: usize>(
+    src: &[T],
+    job: &RankJob,
+    y: usize,
+    out: &mut [T],
+    hist: &mut Histogram<LEVELS>,
+    index: impl Fn(T) -> usize,
+    value: impl Fn(usize) -> T,
+) {
+    let RankJob {
+        stride,
+        w,
+        h,
+        ch,
+        nc,
+        win,
+        rank,
+    } = *job;
+    let (cols, rows) = (win.columns(), win.rows());
+    for c in 0..nc {
+        let at = |x: usize, j: usize| index(src[tap(y, j, win.up, h) * stride + x * ch + c]);
+        for i in 0..cols {
+            let x = tap(0, i, win.left, w);
+            for j in 0..rows {
+                hist.add(at(x, j));
+            }
+        }
+        for x in 0..w {
+            if x > 0 {
+                let gone = tap(x - 1, 0, win.left, w);
+                let come = tap(x, cols - 1, win.left, w);
+                if gone != come {
+                    for j in 0..rows {
+                        hist.remove(at(gone, j));
+                        hist.add(at(come, j));
+                    }
+                }
+            }
+            out[x * ch + c] = value(hist.select(rank as u32));
+        }
+        // Leave the histogram empty for the next channel / row.
+        for i in 0..cols {
+            let x = tap(w - 1, i, win.left, w);
+            for j in 0..rows {
+                hist.remove(at(x, j));
+            }
+        }
+    }
+}
+
+impl Ranked for u8 {
+    type Scratch = Histogram<2>;
+    fn scratch(_: &RankJob) -> Self::Scratch {
+        Histogram::new()
+    }
+    fn rank_row(src: &[u8], job: &RankJob, y: usize, out: &mut [u8], hist: &mut Histogram<2>) {
+        rank_row_histogram(src, job, y, out, hist, |v| v as usize, |i| i as u8);
+    }
+}
+
+impl Ranked for u16 {
+    type Scratch = Histogram<4>;
+    fn scratch(_: &RankJob) -> Self::Scratch {
+        Histogram::new()
+    }
+    fn rank_row(src: &[u16], job: &RankJob, y: usize, out: &mut [u16], hist: &mut Histogram<4>) {
+        rank_row_histogram(src, job, y, out, hist, |v| v as usize, |i| i as u16);
+    }
+}
+
+/// A total order on binary32 as an unsigned key (the order of
+/// `f32::total_cmp`: negative NaN lowest, positive NaN highest).
+#[inline]
+fn float_key(v: f32) -> u32 {
+    let b = v.to_bits();
+    if b & 0x8000_0000 != 0 {
+        !b
+    } else {
+        b | 0x8000_0000
+    }
+}
+
+#[inline]
+fn float_unkey(k: u32) -> f32 {
+    f32::from_bits(if k & 0x8000_0000 != 0 {
+        k & 0x7fff_ffff
+    } else {
+        !k
+    })
+}
+
+impl Ranked for f32 {
+    /// The window's samples as ordered keys.
+    type Scratch = Vec<u32>;
+    fn scratch(job: &RankJob) -> Self::Scratch {
+        Vec::with_capacity(job.win.columns() * job.win.rows())
+    }
+    /// Sliding sorted window (arbitrary floats do not bin): each step
+    /// swaps the leaving column's samples for the entering column's, one
+    /// at a time, shifting only the keys between the two positions.
+    fn rank_row(src: &[f32], job: &RankJob, y: usize, out: &mut [f32], sorted: &mut Vec<u32>) {
+        let RankJob {
+            stride,
+            w,
+            h,
+            ch,
+            nc,
+            win,
+            rank,
+        } = *job;
+        let (cols, rows) = (win.columns(), win.rows());
+        for c in 0..nc {
+            sorted.clear();
+            let at =
+                |x: usize, j: usize| float_key(src[tap(y, j, win.up, h) * stride + x * ch + c]);
+            for i in 0..cols {
+                let x = tap(0, i, win.left, w);
+                sorted.extend((0..rows).map(|j| at(x, j)));
+            }
+            sorted.sort_unstable();
+            for x in 0..w {
+                if x > 0 {
+                    let gone = tap(x - 1, 0, win.left, w);
+                    let come = tap(x, cols - 1, win.left, w);
+                    if gone != come {
+                        for j in 0..rows {
+                            let old = at(gone, j);
+                            let new = at(come, j);
+                            if old == new {
+                                continue;
+                            }
+                            let p = sorted.partition_point(|&s| s < old);
+                            if new > old {
+                                // Slot of `new` among the keys after `p`.
+                                let q = p + 1 + sorted[p + 1..].partition_point(|&s| s < new);
+                                sorted.copy_within(p + 1..q, p);
+                                sorted[q - 1] = new;
+                            } else {
+                                let q = sorted[..p].partition_point(|&s| s < new);
+                                sorted.copy_within(q..p, q + 1);
+                                sorted[q] = new;
+                            }
+                        }
+                    }
+                }
+                out[x * ch + c] = float_unkey(sorted[rank]);
+            }
+        }
+        sorted.clear();
+    }
+
+    /// A picture whose samples are all exact 16-bit codes (the float
+    /// hop of a 16-bit picture) is ranked on the codes with the running
+    /// histogram and mapped back to the very same floats; any other
+    /// picture takes the sorted window.
+    fn rank_picture(
+        src: &[f32],
+        stride: usize,
+        w: usize,
+        h: usize,
+        ch: usize,
+        nc: usize,
+        win: Window,
+        rank: usize,
+    ) -> Vec<f32> {
+        let row = w * ch;
+        if let Some(codes) = exact_codes(src, stride, row, h) {
+            let ranked = rank_banded(&codes, row, w, h, ch, nc, win, rank);
+            return ranked.iter().map(|&c| c as f32 / 65535.0).collect();
+        }
+        rank_banded(src, stride, w, h, ch, nc, win, rank)
+    }
+}
+
+/// The 16-bit codes of a float picture whose every sample is exactly a
+/// code over 65535 (a picture widened from 16-bit words): `Some` when
+/// `code / 65535` reproduces each sample bit for bit, so a rank filter
+/// may run on the codes and return the very same floats.
+fn exact_codes(src: &[f32], stride: usize, row: usize, h: usize) -> Option<Vec<u16>> {
+    let mut codes = Vec::with_capacity(row * h);
+    for y in 0..h {
+        for &v in &src[y * stride..y * stride + row] {
+            let code = (v * 65535.0 + 0.5).floor();
+            if !(0.0..=65535.0).contains(&code) || (code / 65535.0).to_bits() != v.to_bits() {
+                return None;
+            }
+            codes.push(code as u16);
+        }
+    }
+    Some(codes)
+}
+
+/// Rank filter: channel `c < nc` of every output pixel is the sample of
+/// rank `rank` (0 = smallest) in the pixel's window; channels `≥ nc`
+/// are copied. `rank` is clamped into the window.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rank_filter<T: Ranked>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+    rank: usize,
+) -> Vec<T> {
+    T::rank_picture(src, stride, w, h, ch, nc, win, rank)
+}
+
+/// The banded sliding-window rank filter on `T`'s own window type.
+#[allow(clippy::too_many_arguments)]
+fn rank_banded<T: Ranked>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+    rank: usize,
+) -> Vec<T> {
+    let row = w * ch;
+    let mut out = tight_copy(src, stride, row, h);
+    if row == 0 || h == 0 {
+        return out;
+    }
+    let job = RankJob {
+        stride,
+        w,
+        h,
+        ch,
+        nc,
+        win,
+        rank: rank.min(win.columns() * win.rows() - 1),
+    };
+    par_bands(&mut out, row, |y0, band| {
+        let mut scratch = T::scratch(&job);
+        for (i, line) in band.chunks_exact_mut(row).enumerate() {
+            T::rank_row(src, &job, y0 + i, line, &mut scratch);
+        }
+    });
+    out
+}
+
+/// The window median as the statistic filters define it: the upper
+/// middle sample, rank `n / 2` of `n`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn median_filter<T: Ranked>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+) -> Vec<T> {
+    let n = win.columns() * win.rows();
+    rank_filter(src, stride, w, h, ch, nc, win, n / 2)
+}
+
+fn tight_copy<T: Copy>(src: &[T], stride: usize, row: usize, h: usize) -> Vec<T> {
+    let mut out = Vec::with_capacity(row * h);
+    for y in 0..h {
+        out.extend_from_slice(&src[y * stride..y * stride + row]);
+    }
+    out
+}
+
+/// Running extreme of `n = before + 1 + after` consecutive samples of a
+/// line with replicate edges, `O(1)` per sample: the line is cut in
+/// blocks of `n`, a suffix scan `g` and a prefix scan `f` of each block
+/// are kept, and the window `[i − before, i + after]` is
+/// `pick(g[i − before], f[i + after])`. `line(i)` reads the padded line
+/// (`len + n − 1` samples); the scratch vectors are reused by callers.
+fn running_extreme<T: Copy>(
+    padded: &[T],
+    n: usize,
+    f: &mut Vec<T>,
+    g: &mut Vec<T>,
+    out: &mut [T],
+    pick: impl Fn(T, T) -> T,
+) {
+    let len = padded.len();
+    f.clear();
+    f.extend_from_slice(padded);
+    g.clear();
+    g.extend_from_slice(padded);
+    for i in 0..len {
+        if i % n != 0 {
+            f[i] = pick(f[i - 1], padded[i]);
+        }
+    }
+    for i in (0..len).rev() {
+        if (i + 1) % n != 0 && i + 1 < len {
+            g[i] = pick(g[i + 1], padded[i]);
+        }
+    }
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = pick(g[i], f[i + n - 1]);
+    }
+}
+
+/// Windowed minimum (`max == false`) or maximum of channels `< nc`;
+/// channels `≥ nc` are copied. Separable: rows then columns.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn extreme_filter<T: Sample>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+    max: bool,
+) -> Vec<T> {
+    let row = w * ch;
+    let mut mid = tight_copy(src, stride, row, h);
+    if row == 0 || h == 0 {
+        return mid;
+    }
+    let pick = move |a: T, b: T| {
+        if max {
+            if b > a { b } else { a }
+        } else if b < a {
+            b
+        } else {
+            a
+        }
+    };
+    let cols = win.columns();
+    if cols > 1 {
+        par_bands(&mut mid, row, |y0, band| {
+            let mut padded: Vec<T> = Vec::with_capacity(w + cols - 1);
+            let (mut f, mut g) = (Vec::new(), Vec::new());
+            let mut line_out: Vec<T> = Vec::with_capacity(w);
+            for (i, line) in band.chunks_exact_mut(row).enumerate() {
+                let s = &src[(y0 + i) * stride..(y0 + i) * stride + row];
+                for c in 0..nc {
+                    padded.clear();
+                    padded.extend((0..w + cols - 1).map(|i| s[tap(0, i, win.left, w) * ch + c]));
+                    line_out.clear();
+                    line_out.resize(w, padded[0]);
+                    running_extreme(&padded, cols, &mut f, &mut g, &mut line_out, pick);
+                    for (x, v) in line_out.iter().enumerate() {
+                        line[x * ch + c] = *v;
+                    }
+                }
+            }
+        });
+    }
+    let rows = win.rows();
+    if rows == 1 {
+        return mid;
+    }
+    // Columns: the same scan run on whole rows at once — `f` and `g`
+    // hold a row per padded line position.
+    let mut out = mid.clone();
+    let padded_at = |i: usize| tap(0, i, win.up, h);
+    let len = h + rows - 1;
+    let mut f = vec![mid[0]; len * row];
+    let mut g = vec![mid[0]; len * row];
+    for i in 0..len {
+        let s = &mid[padded_at(i) * row..padded_at(i) * row + row];
+        if i % rows == 0 {
+            f[i * row..(i + 1) * row].copy_from_slice(s);
+        } else {
+            let (prev, cur) = f.split_at_mut(i * row);
+            let prev = &prev[(i - 1) * row..];
+            for ((d, p), v) in cur[..row].iter_mut().zip(prev).zip(s) {
+                *d = pick(*p, *v);
+            }
+        }
+    }
+    for i in (0..len).rev() {
+        let s = &mid[padded_at(i) * row..padded_at(i) * row + row];
+        if (i + 1) % rows == 0 || i + 1 == len {
+            g[i * row..(i + 1) * row].copy_from_slice(s);
+        } else {
+            let (cur, next) = g.split_at_mut((i + 1) * row);
+            let cur = &mut cur[i * row..];
+            for ((d, p), v) in cur.iter_mut().zip(&next[..row]).zip(s) {
+                *d = pick(*p, *v);
+            }
+        }
+    }
+    let (f, g) = (&f, &g);
+    par_rows(&mut out, row, |y, line| {
+        let a = &g[y * row..(y + 1) * row];
+        let b = &f[(y + rows - 1) * row..(y + rows) * row];
+        for (x, px) in line.chunks_exact_mut(ch).enumerate() {
+            for c in 0..nc {
+                px[c] = pick(a[x * ch + c], b[x * ch + c]);
+            }
+        }
+    });
+    out
+}
+
+/// Windowed mean of channels `< nc` by running sums (binary64
+/// accumulators, so a sum over any window is exact for the integer
+/// types and drift-free for float); channels `≥ nc` are copied. Integer
+/// outputs round to nearest.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn box_mean<T: Sample>(
+    src: &[T],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+) -> Vec<T> {
+    let row = w * ch;
+    let mut out = tight_copy(src, stride, row, h);
+    if row == 0 || h == 0 {
+        return out;
+    }
+    let (cols, rows) = (win.columns(), win.rows());
+    // Rows: horizontal window sums per row.
+    let mut sums = vec![0.0f64; w * nc * h];
+    par_rows(&mut sums, w * nc, |y, line| {
+        let s = &src[y * stride..y * stride + row];
+        for c in 0..nc {
+            // Prefix sums over the padded line give every window as a
+            // difference with no accumulated drift along the row.
+            let mut acc = 0.0f64;
+            let mut prefix: Vec<f64> = Vec::with_capacity(w + cols);
+            prefix.push(0.0);
+            for i in 0..w + cols - 1 {
+                acc += s[tap(0, i, win.left, w) * ch + c].to_f64();
+                prefix.push(acc);
+            }
+            for x in 0..w {
+                line[x * nc + c] = prefix[x + cols] - prefix[x];
+            }
+        }
+    });
+    // Columns: prefix sums of whole rows.
+    let len = h + rows - 1;
+    let wn = w * nc;
+    let mut prefix = vec![0.0f64; (len + 1) * wn];
+    for i in 0..len {
+        let sy = tap(0, i, win.up, h);
+        let (done, next) = prefix.split_at_mut((i + 1) * wn);
+        let prev = &done[i * wn..];
+        let s = &sums[sy * wn..(sy + 1) * wn];
+        for ((d, p), v) in next[..wn].iter_mut().zip(prev).zip(s) {
+            *d = *p + *v;
+        }
+    }
+    let inv = 1.0 / (cols * rows) as f64;
+    let prefix = &prefix;
+    par_rows(&mut out, row, |y, line| {
+        let lo = &prefix[y * wn..(y + 1) * wn];
+        let hi = &prefix[(y + rows) * wn..(y + rows + 1) * wn];
+        for (x, px) in line.chunks_exact_mut(ch).enumerate() {
+            for c in 0..nc {
+                px[c] = T::from_f64((hi[x * nc + c] - lo[x * nc + c]) * inv);
+            }
+        }
+    });
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::with_execution_context;
+    use oxideav_core::ExecutionContext;
+
+    fn noise(n: usize, seed: u64) -> Vec<u32> {
+        let mut s = seed | 1;
+        (0..n)
+            .map(|_| {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                (s >> 32) as u32
+            })
+            .collect()
+    }
+
+    /// The definition, directly: gather the replicate-edge window, sort.
+    #[allow(clippy::too_many_arguments)]
+    fn window_of<T: Copy>(
+        src: &[T],
+        w: usize,
+        h: usize,
+        ch: usize,
+        c: usize,
+        x: usize,
+        y: usize,
+        win: Window,
+    ) -> Vec<T> {
+        let mut out = Vec::new();
+        for j in 0..win.rows() {
+            for i in 0..win.columns() {
+                let sx = tap(x, i, win.left, w);
+                let sy = tap(y, j, win.up, h);
+                out.push(src[(sy * w + sx) * ch + c]);
+            }
+        }
+        out
+    }
+
+    fn check_all<T: Ranked + std::fmt::Debug>(src: &[T], w: usize, h: usize, ch: usize, nc: usize) {
+        for win in [
+            Window::sized(1, 1),
+            Window::sized(3, 3),
+            Window::sized(4, 2),
+            Window::sized(1, 5),
+            Window::sized(7, 1),
+            Window::radius(4),
+            Window::sized(40, 40),
+        ] {
+            let med = median_filter(src, w * ch, w, h, ch, nc, win);
+            let mn = extreme_filter(src, w * ch, w, h, ch, nc, win, false);
+            let mx = extreme_filter(src, w * ch, w, h, ch, nc, win, true);
+            let mean = box_mean(src, w * ch, w, h, ch, nc, win);
+            for y in 0..h {
+                for x in 0..w {
+                    for c in 0..ch {
+                        let i = (y * w + x) * ch + c;
+                        if c >= nc {
+                            assert_eq!(med[i], src[i]);
+                            assert_eq!(mn[i], src[i]);
+                            assert_eq!(mx[i], src[i]);
+                            assert_eq!(mean[i], src[i]);
+                            continue;
+                        }
+                        let mut win_s = window_of(src, w, h, ch, c, x, y, win);
+                        win_s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                        assert_eq!(med[i], win_s[win_s.len() / 2], "median {win:?} {x},{y}");
+                        assert_eq!(mn[i], win_s[0], "min {win:?} {x},{y}");
+                        assert_eq!(mx[i], win_s[win_s.len() - 1], "max {win:?} {x},{y}");
+                        let sum: f64 = win_s.iter().map(|v| v.to_f64()).sum();
+                        let want = sum / win_s.len() as f64;
+                        let got = mean[i].to_f64();
+                        let tol = if T::UNIT == 1.0 { 1e-6 } else { 0.5 + 1e-9 };
+                        assert!(
+                            (got - want).abs() <= tol,
+                            "mean {win:?} {x},{y}: {got} vs {want}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn windows_match_their_definition_at_every_depth() {
+        for (w, h, ch, nc) in [
+            (9, 7, 1, 1),
+            (5, 6, 4, 3),
+            (1, 1, 3, 3),
+            (13, 1, 1, 1),
+            (1, 9, 3, 3),
+        ] {
+            let raw = noise(w * h * ch, (w * 31 + h) as u64);
+            let b: Vec<u8> = raw.iter().map(|v| (v >> 24) as u8).collect();
+            let s: Vec<u16> = raw.iter().map(|v| (v >> 16) as u16).collect();
+            let f: Vec<f32> = raw
+                .iter()
+                .map(|v| *v as f32 / u32::MAX as f32 * 3.0 - 1.0)
+                .collect();
+            check_all(&b, w, h, ch, nc);
+            check_all(&s, w, h, ch, nc);
+            check_all(&f, w, h, ch, nc);
+        }
+    }
+
+    #[test]
+    fn floats_on_the_16_bit_grid_rank_through_their_codes_unchanged() {
+        let (w, h) = (11usize, 9usize);
+        let codes: Vec<u16> = noise(w * h, 5).iter().map(|v| (v >> 16) as u16).collect();
+        let f: Vec<f32> = codes.iter().map(|&c| c as f32 / 65535.0).collect();
+        assert_eq!(exact_codes(&f, w, w, h).as_deref(), Some(&codes[..]));
+        let win = Window::radius(2);
+        let via_codes = median_filter(&f, w, w, h, 1, 1, win);
+        let direct = rank_banded(&f, w, w, h, 1, 1, win, 12);
+        assert_eq!(via_codes, direct);
+        // Off-grid, out-of-range and non-finite samples take the sorted
+        // window.
+        for odd in [0.123_456_7f32, -0.25, 1.5, f32::NAN, f32::INFINITY] {
+            let mut g = f.clone();
+            g[7] = odd;
+            assert!(exact_codes(&g, w, w, h).is_none(), "{odd}");
+            let out = median_filter(&g, w, w, h, 1, 1, win);
+            assert_eq!(out.len(), g.len());
+        }
+    }
+
+    #[test]
+    fn rank_selects_any_order_statistic() {
+        let src: Vec<u8> = vec![9, 1, 8, 2, 7, 3, 6, 4, 5];
+        for rank in 0..9 {
+            let out = rank_filter(&src, 3, 3, 3, 1, 1, Window::radius(1), rank);
+            assert_eq!(out[4], rank as u8 + 1);
+        }
+        // Out-of-range rank clamps to the maximum.
+        assert_eq!(
+            rank_filter(&src, 3, 3, 3, 1, 1, Window::radius(1), 99)[4],
+            9
+        );
+    }
+
+    #[test]
+    fn separable_convolution_matches_the_direct_sum() {
+        let (w, h, ch) = (7usize, 5usize, 3usize);
+        let src: Vec<f32> = noise(w * h * ch, 7)
+            .iter()
+            .map(|v| *v as f32 / u32::MAX as f32)
+            .collect();
+        let kx = [0.25f32, 0.5, 0.25];
+        let ky = [0.1f32, 0.2, 0.4, 0.2, 0.1];
+        let out = convolve_separable(&src, w * ch, w, h, ch, &kx, &ky, Alpha::Independent);
+        for y in 0..h {
+            for x in 0..w {
+                for c in 0..ch {
+                    let mut want = 0.0f64;
+                    for (j, kyv) in ky.iter().enumerate() {
+                        for (i, kxv) in kx.iter().enumerate() {
+                            let sx = tap(x, i, 1, w);
+                            let sy = tap(y, j, 2, h);
+                            want += (*kyv * *kxv) as f64 * src[(sy * w + sx) * ch + c] as f64;
+                        }
+                    }
+                    let got = out[(y * w + x) * ch + c] as f64;
+                    assert!((got - want).abs() < 1e-5, "{x},{y},{c}: {got} vs {want}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn flat_pictures_are_fixed_points_of_a_unit_kernel() {
+        let k = [0.2f32, 0.6, 0.2];
+        let b = vec![77u8; 6 * 4 * 4];
+        assert_eq!(
+            convolve_separable(&b, 24, 6, 4, 4, &k, &k, Alpha::Premultiplied),
+            b
+        );
+        let s = vec![40_001u16; 6 * 4 * 3];
+        assert_eq!(
+            convolve_separable(&s, 18, 6, 4, 3, &k, &k, Alpha::Independent),
+            s
+        );
+    }
+
+    #[test]
+    fn premultiplied_convolution_gives_transparent_colour_no_weight() {
+        // An opaque red pixel beside a fully transparent green one: the
+        // blurred colour stays pure red wherever anything is covered,
+        // and the coverage itself is the blurred alpha.
+        let src: Vec<f32> = vec![1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0];
+        let k = [0.25f32, 0.5, 0.25];
+        let one = [1.0f32];
+        let out = convolve_separable(&src, 8, 2, 1, 4, &k, &one, Alpha::Premultiplied);
+        assert!((out[0] - 1.0).abs() < 1e-6 && out[1].abs() < 1e-6);
+        assert!((out[3] - 0.75).abs() < 1e-6);
+        assert!((out[4] - 1.0).abs() < 1e-6 && out[5].abs() < 1e-6);
+        assert!((out[7] - 0.25).abs() < 1e-6);
+        // Independent channels would have mixed green in.
+        let mixed = convolve_separable(&src, 8, 2, 1, 4, &k, &one, Alpha::Independent);
+        assert!((mixed[1] - 0.25).abs() < 1e-6);
+        // Keep leaves alpha as it was.
+        let kept = convolve_separable(&src, 8, 2, 1, 4, &k, &one, Alpha::Keep);
+        assert_eq!((kept[3], kept[7]), (1.0, 0.0));
+    }
+
+    #[test]
+    fn every_kernel_is_identical_at_every_thread_budget() {
+        let (w, h, ch) = (23usize, 17usize, 4usize);
+        let src: Vec<u16> = noise(w * h * ch, 99)
+            .iter()
+            .map(|v| (v >> 16) as u16)
+            .collect();
+        let k = [0.1f32, 0.2, 0.4, 0.2, 0.1];
+        let run = || {
+            (
+                convolve_separable(&src, w * ch, w, h, ch, &k, &k, Alpha::Premultiplied),
+                median_filter(&src, w * ch, w, h, ch, 3, Window::radius(2)),
+                extreme_filter(&src, w * ch, w, h, ch, 3, Window::sized(5, 4), true),
+                box_mean(&src, w * ch, w, h, ch, 3, Window::sized(6, 3)),
+            )
+        };
+        let serial = run();
+        for t in [2usize, 3, 8, 64] {
+            let par = with_execution_context(&ExecutionContext::with_threads(t), run);
+            assert_eq!(serial, par, "threads {t}");
+        }
+    }
+
+    #[test]
+    fn empty_pictures_do_not_panic() {
+        let e: Vec<u8> = Vec::new();
+        let k = [1.0f32];
+        assert!(convolve_separable(&e, 0, 0, 0, 3, &k, &k, Alpha::Keep).is_empty());
+        assert!(median_filter(&e, 0, 0, 5, 1, 1, Window::radius(1)).is_empty());
+        assert!(extreme_filter(&e, 0, 0, 0, 1, 1, Window::radius(1), true).is_empty());
+        assert!(box_mean(&e, 0, 0, 0, 1, 1, Window::radius(1)).is_empty());
+    }
+}

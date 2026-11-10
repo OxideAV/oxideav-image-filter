@@ -62,8 +62,8 @@ impl PixelFilter for Blur {
             }
             let kernel = gaussian_kernel(self.radius, self.sigma);
             return crate::deep::run(input, params, |img| {
-                Ok(crate::deep::convolve_separable(
-                    &img, &kernel, &kernel, true,
+                Ok(crate::deep::convolve_separable_covered(
+                    &img, &kernel, &kernel,
                 ))
             });
         }
@@ -78,7 +78,9 @@ impl PixelFilter for Blur {
             }
             let (pw, ph) = plane_dims(params.width, params.height, params.format, idx, cx, cy);
             let bpp = bytes_per_plane_pixel(params.format, idx);
-            *plane = blur_plane(plane, pw, ph, bpp, &kernel);
+            // `Rgba` blurs colour under its alpha (premultiplied).
+            let covered = params.format == PixelFormat::Rgba;
+            *plane = blur_plane(plane, pw, ph, bpp, &kernel, covered);
         }
 
         Ok(out)
@@ -102,47 +104,34 @@ pub(crate) fn gaussian_kernel(radius: u32, sigma: f32) -> Vec<f32> {
     k
 }
 
-fn blur_plane(plane: &VideoPlane, w: u32, h: u32, bpp: usize, kernel: &[f32]) -> VideoPlane {
-    let w = w as usize;
-    let h = h as usize;
-    let radius = (kernel.len() - 1) / 2;
-    let stride = plane.stride;
-
-    // Pass 1: horizontal blur into a scratch buffer (stride = w * bpp).
-    let mut horiz = vec![0u8; w * bpp * h];
-    for y in 0..h {
-        let row = &plane.data[y * stride..y * stride + w * bpp];
-        let out_row = &mut horiz[y * w * bpp..(y + 1) * w * bpp];
-        for x in 0..w {
-            for ch in 0..bpp {
-                let mut acc = 0.0f32;
-                for (ki, kv) in kernel.iter().enumerate() {
-                    let sx = (x as i32 + ki as i32 - radius as i32).clamp(0, w as i32 - 1) as usize;
-                    acc += *kv * row[sx * bpp + ch] as f32;
-                }
-                out_row[x * bpp + ch] = acc.round().clamp(0.0, 255.0) as u8;
-            }
-        }
-    }
-
-    // Pass 2: vertical blur back into an output plane with tight stride.
-    let mut out_data = vec![0u8; w * bpp * h];
-    for y in 0..h {
-        for x in 0..w {
-            for ch in 0..bpp {
-                let mut acc = 0.0f32;
-                for (ki, kv) in kernel.iter().enumerate() {
-                    let sy = (y as i32 + ki as i32 - radius as i32).clamp(0, h as i32 - 1) as usize;
-                    acc += *kv * horiz[sy * w * bpp + x * bpp + ch] as f32;
-                }
-                out_data[y * w * bpp + x * bpp + ch] = acc.round().clamp(0.0, 255.0) as u8;
-            }
-        }
-    }
-
+fn blur_plane(
+    plane: &VideoPlane,
+    w: u32,
+    h: u32,
+    bpp: usize,
+    kernel: &[f32],
+    covered: bool,
+) -> VideoPlane {
+    let alpha = if covered {
+        crate::kernel::Alpha::Premultiplied
+    } else {
+        crate::kernel::Alpha::Independent
+    };
+    // Rows then columns; the intermediate stays in binary32, so the
+    // result is the 2-D Gaussian rounded once.
+    let data = crate::kernel::convolve_separable(
+        &plane.data,
+        plane.stride,
+        w as usize,
+        h as usize,
+        bpp,
+        kernel,
+        kernel,
+        alpha,
+    );
     VideoPlane {
-        stride: w * bpp,
-        data: out_data,
+        stride: w as usize * bpp,
+        data,
     }
 }
 

@@ -54,17 +54,22 @@ impl PixelFilter for Despeckle {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        let win = crate::kernel::Window::radius(self.radius as usize);
+        let w = params.width as usize;
+        let h = params.height as usize;
         if crate::deep::is_float(params.format) {
-            let r = self.radius as usize;
             return crate::deep::run(input, params, |img| {
-                if r == 0 {
-                    return Ok(img);
-                }
-                Ok(crate::deep::neighbourhood(&img, r, r, |w| {
-                    let mut v = w.to_vec();
-                    v.sort_by(f32::total_cmp);
-                    v[v.len() / 2]
-                }))
+                let ch = img.channels();
+                let data = crate::kernel::median_filter(
+                    img.samples(),
+                    w * ch,
+                    w,
+                    h,
+                    ch,
+                    img.color_channels(),
+                    win,
+                );
+                crate::deep::FloatImage::from_samples(params.width, params.height, ch, data)
             });
         }
         let (bpp, denoise_channels) = match params.format {
@@ -77,70 +82,15 @@ impl PixelFilter for Despeckle {
                 )));
             }
         };
-
-        let w = params.width as usize;
-        let h = params.height as usize;
+        // Sliding-histogram median (radius 0 is the identity window).
         let src = &input.planes[0];
-        let row_bytes = w * bpp;
-        let r = self.radius as i32;
-
-        let mut out = vec![0u8; row_bytes * h];
-        // r == 0 ⇒ identity (window is 1×1, median is the pixel itself).
-        if r == 0 {
-            for y in 0..h {
-                let src_row = &src.data[y * src.stride..y * src.stride + row_bytes];
-                let dst_row = &mut out[y * row_bytes..(y + 1) * row_bytes];
-                dst_row.copy_from_slice(src_row);
-            }
-            return Ok(VideoFrame {
-                pts: input.pts,
-                planes: vec![VideoPlane {
-                    stride: row_bytes,
-                    data: out,
-                }],
-            });
-        }
-
-        let window_side = (2 * r + 1) as usize;
-        let window_n = window_side * window_side;
-        // Fixed-capacity scratch (reused across pixels) to avoid an
-        // allocation per output sample.
-        let mut scratch: Vec<u8> = Vec::with_capacity(window_n);
-
-        for y in 0..h {
-            let dst_row = &mut out[y * row_bytes..(y + 1) * row_bytes];
-            for x in 0..w {
-                let base = x * bpp;
-                for ch in 0..denoise_channels {
-                    scratch.clear();
-                    for dy in -r..=r {
-                        let sy = (y as i32 + dy).clamp(0, h as i32 - 1) as usize;
-                        let sy_off = sy * src.stride;
-                        for dx in -r..=r {
-                            let sx = (x as i32 + dx).clamp(0, w as i32 - 1) as usize;
-                            scratch.push(src.data[sy_off + sx * bpp + ch]);
-                        }
-                    }
-                    // Quickselect via sort (window sizes are small —
-                    // 9 / 25 / 49 — sort is fine).
-                    scratch.sort_unstable();
-                    dst_row[base + ch] = scratch[scratch.len() / 2];
-                }
-                if denoise_channels < bpp {
-                    // Alpha pass-through (RGBA).
-                    let src_off = y * src.stride + base + denoise_channels;
-                    for ch in denoise_channels..bpp {
-                        dst_row[base + ch] = src.data[src_off + ch - denoise_channels];
-                    }
-                }
-            }
-        }
-
+        let data =
+            crate::kernel::median_filter(&src.data, src.stride, w, h, bpp, denoise_channels, win);
         Ok(VideoFrame {
             pts: input.pts,
             planes: vec![VideoPlane {
-                stride: row_bytes,
-                data: out,
+                stride: w * bpp,
+                data,
             }],
         })
     }

@@ -37,7 +37,7 @@ impl Difference {
 
 impl TwoInputPixelFilter for Difference {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_two_pixels(
@@ -47,6 +47,24 @@ impl TwoInputPixelFilter for Difference {
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
         match params.format {
+            PixelFormat::GrayF32Le | PixelFormat::RgbF32Le | PixelFormat::RgbaF32Le => {
+                // Every channel (alpha included, as the 8-bit path).
+                let a = crate::deep::FloatImage::from_frame(src, params)?;
+                let b = crate::deep::FloatImage::from_frame(dst, params)?;
+                let data = a
+                    .samples()
+                    .iter()
+                    .zip(b.samples())
+                    .map(|(x, y)| (x - y).abs())
+                    .collect();
+                let out = crate::deep::FloatImage::from_samples(
+                    params.width,
+                    params.height,
+                    a.channels(),
+                    data,
+                )?;
+                Ok(out.into_frame(src.pts.or(dst.pts)))
+            }
             PixelFormat::Gray8 | PixelFormat::Rgb24 | PixelFormat::Rgba => {
                 diff_packed(src, dst, params)
             }
@@ -208,14 +226,39 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported() {
-        let f = rgb(2, 2, [0, 0, 0]);
+    fn bgr_takes_the_packed_hop_and_keeps_its_order() {
+        let a = rgb(2, 2, [10, 100, 250]);
+        let b = rgb(2, 2, [30, 60, 50]);
         let p = VideoStreamParams {
             format: PixelFormat::Bgr24,
             width: 2,
             height: 2,
         };
-        let err = Difference::new().apply_two(&f, &f, p).unwrap_err();
-        assert!(format!("{err}").contains("Difference"));
+        let out = Difference::new().apply_two(&a, &b, p).unwrap();
+        assert_eq!(&out.planes[0].data[..3], &[20, 40, 200]);
+    }
+
+    #[test]
+    fn sixteen_bit_difference_is_exact_at_depth() {
+        // Codes that differ by less than one 8-bit step: an 8-bit
+        // round-trip would report zero.
+        let mk = |v: u16| VideoFrame {
+            pts: None,
+            planes: vec![VideoPlane {
+                stride: 4,
+                data: [v, v].iter().flat_map(|c| c.to_le_bytes()).collect(),
+            }],
+        };
+        let p = VideoStreamParams {
+            format: PixelFormat::Gray16Le,
+            width: 2,
+            height: 1,
+        };
+        let out = Difference::new()
+            .apply_two(&mk(40_000), &mk(39_900), p)
+            .unwrap();
+        let d = &out.planes[0].data;
+        assert_eq!(u16::from_le_bytes([d[0], d[1]]), 100);
+        assert_eq!(u16::from_le_bytes([d[2], d[3]]), 100);
     }
 }

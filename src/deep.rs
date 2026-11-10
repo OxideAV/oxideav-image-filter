@@ -149,9 +149,9 @@ impl FloatImage {
     /// Pack into a tight single-plane frame in [`Self::format`].
     pub fn into_frame(self, pts: Option<i64>) -> VideoFrame {
         let stride = self.width as usize * self.channels * 4;
-        let mut data = Vec::with_capacity(self.data.len() * 4);
-        for v in &self.data {
-            data.extend_from_slice(&v.to_le_bytes());
+        let mut data = vec![0u8; self.data.len() * 4];
+        for (d, v) in data.as_chunks_mut::<4>().0.iter_mut().zip(&self.data) {
+            *d = v.to_le_bytes();
         }
         VideoFrame {
             pts,
@@ -535,43 +535,57 @@ pub fn convolve_separable(
     ky: &[f32],
     with_alpha: bool,
 ) -> FloatImage {
-    let w = img.width as usize;
-    let h = img.height as usize;
     let ch = img.channels;
-    let nc = if with_alpha { ch } else { img.color_channels() };
-    let rx = (kx.len() / 2) as i64;
-    let ry = (ky.len() / 2) as i64;
-    let mut mid = img.data.clone();
-    for y in 0..h {
-        for x in 0..w {
-            for c in 0..nc {
-                let mut acc = 0.0f32;
-                for (k, &kv) in kx.iter().enumerate() {
-                    let sx = (x as i64 + k as i64 - rx).clamp(0, w as i64 - 1) as usize;
-                    acc += kv * img.data[(y * w + sx) * ch + c];
-                }
-                mid[(y * w + x) * ch + c] = acc;
-            }
-        }
-    }
-    let mut out = mid.clone();
-    for y in 0..h {
-        for x in 0..w {
-            for c in 0..nc {
-                let mut acc = 0.0f32;
-                for (k, &kv) in ky.iter().enumerate() {
-                    let sy = (y as i64 + k as i64 - ry).clamp(0, h as i64 - 1) as usize;
-                    acc += kv * mid[(sy * w + x) * ch + c];
-                }
-                out[(y * w + x) * ch + c] = acc;
-            }
-        }
-    }
+    let alpha = if with_alpha || !img.has_alpha() {
+        crate::kernel::Alpha::Independent
+    } else {
+        crate::kernel::Alpha::Keep
+    };
+    let data = crate::kernel::convolve_separable(
+        &img.data,
+        img.width as usize * ch,
+        img.width as usize,
+        img.height as usize,
+        ch,
+        kx,
+        ky,
+        alpha,
+    );
     FloatImage {
         width: img.width,
         height: img.height,
         channels: ch,
-        data: out,
+        data,
+    }
+}
+
+/// Separable convolution with the picture's alpha as coverage: on a
+/// picture with alpha the colour is convolved premultiplied and divided
+/// by the convolved alpha (a transparent pixel's colour has no weight);
+/// without alpha this is [`convolve_separable`].
+#[doc(hidden)]
+pub fn convolve_separable_covered(img: &FloatImage, kx: &[f32], ky: &[f32]) -> FloatImage {
+    let ch = img.channels;
+    let alpha = if img.has_alpha() {
+        crate::kernel::Alpha::Premultiplied
+    } else {
+        crate::kernel::Alpha::Independent
+    };
+    let data = crate::kernel::convolve_separable(
+        &img.data,
+        img.width as usize * ch,
+        img.width as usize,
+        img.height as usize,
+        ch,
+        kx,
+        ky,
+        alpha,
+    );
+    FloatImage {
+        width: img.width,
+        height: img.height,
+        channels: ch,
+        data,
     }
 }
 

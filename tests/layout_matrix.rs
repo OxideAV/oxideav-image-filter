@@ -462,6 +462,16 @@ fn every_two_input_filter_over_every_layout() {
                     check_records(entry.name, &src, fmt, &out, out_fmt, false);
                     accepted_cells += 1;
                 }
+                // The hop's width rule for packed 4:2:2 / 4:1:1 (see
+                // `cell_single`): a 2-wide overlay is a typed refusal.
+                (true, Err(Error::InvalidData(msg)))
+                    if matches!(
+                        fmt,
+                        PixelFormat::Yuyv422 | PixelFormat::Uyvy422 | PixelFormat::Yuv411P
+                    ) =>
+                {
+                    assert!(msg.contains("pixfmt"), "{} on {fmt:?}: {msg}", entry.name);
+                }
                 (true, Err(e)) => panic!("{} declares {fmt:?} but failed: {e}", entry.name),
                 (false, Ok(_)) => panic!("{} does not declare {fmt:?} but accepted it", entry.name),
                 (false, Err(Error::Unsupported(msg))) => {
