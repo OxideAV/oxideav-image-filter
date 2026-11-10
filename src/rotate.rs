@@ -375,7 +375,9 @@ fn rotate_plane(
     // swap sign of sin.
     let inv_sin = -sin_t;
 
-    for y in 0..dh {
+    // Every output row reads only the source: rows run under the
+    // thread budget.
+    crate::exec::par_rows(&mut out, row_bytes, |y, out| {
         let dy = y as f32 - dcy;
         for x in 0..dw {
             let dx = x as f32 - dcx;
@@ -393,7 +395,7 @@ fn rotate_plane(
             let fx = sx - x0 as f32;
             let fy = sy - y0 as f32;
 
-            let dst_off = y * row_bytes + x * bpp;
+            let dst_off = x * bpp;
             for ch in 0..bpp {
                 let p00 = src.data[y0 * src.stride + x0 * bpp + ch] as f32;
                 let p10 = src.data[y0 * src.stride + x1 * bpp + ch] as f32;
@@ -406,7 +408,7 @@ fn rotate_plane(
                 out[dst_off + ch] = v.round().clamp(0.0, 255.0) as u8;
             }
         }
-    }
+    });
 
     VideoPlane {
         stride: row_bytes,

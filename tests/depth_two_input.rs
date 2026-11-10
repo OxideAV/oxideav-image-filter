@@ -4,8 +4,8 @@
 
 use oxideav_core::{PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{
-    Clut, Composite, CompositeOp, Difference, DisplacementMap, HaldClut, TwoInputImageFilter,
-    VideoStreamParams, Watermark,
+    Clut, Composite, CompositeOp, Difference, DisplacementMap, Gravity, HaldClut,
+    TwoInputImageFilter, VideoStreamParams, Watermark,
 };
 
 fn frame16(w: usize, ch: usize, codes: &[u16]) -> VideoFrame {
@@ -315,5 +315,78 @@ fn a_neutral_displacement_map_is_the_identity_and_a_shift_is_a_shift() {
             let want = pic[(y + 1).min(h - 1) * w + (x + 1).min(w - 1)];
             assert_eq!(got[y * w + x], want, "{x},{y}");
         }
+    }
+}
+
+#[test]
+fn placement_by_offset_gravity_and_tile_at_16_bits() {
+    // A 2×2 overlay on a 5×5 destination with the copy operator: the
+    // output is the overlay wherever it lands and the destination
+    // elsewhere (outside the overlay untouched), to the 16-bit code.
+    let (dw, dh, sw, sh) = (5usize, 5usize, 2usize, 2usize);
+    let dst = noise16(dw * dh * 3, 51);
+    let src = noise16(sw * sh * 3, 52);
+    let dp = VideoStreamParams::new(PixelFormat::Rgb48Le, dw as u32, dh as u32);
+    let sp = VideoStreamParams::new(PixelFormat::Rgb48Le, sw as u32, sh as u32);
+    let base = Composite::new(CompositeOp::Src).with_outside_overlay(false);
+    let run = |c: &Composite| {
+        let out = c
+            .compose(&frame16(dw, 3, &dst), dp, &frame16(sw, 3, &src), sp)
+            .unwrap();
+        assert_eq!(
+            out.planes[0].stride,
+            dw * 6,
+            "16-bit words come back as words"
+        );
+        codes16(&out)
+    };
+    let expect = |origin: (i64, i64), tile: bool| -> Vec<u16> {
+        let mut want = dst.clone();
+        for y in 0..dh as i64 {
+            for x in 0..dw as i64 {
+                let (mut sx, mut sy) = (x - origin.0, y - origin.1);
+                if tile {
+                    sx = sx.rem_euclid(sw as i64);
+                    sy = sy.rem_euclid(sh as i64);
+                }
+                if (0..sw as i64).contains(&sx) && (0..sh as i64).contains(&sy) {
+                    let (d, s) = (
+                        (y * dw as i64 + x) as usize * 3,
+                        (sy * sw as i64 + sx) as usize * 3,
+                    );
+                    want[d..d + 3].copy_from_slice(&src[s..s + 3]);
+                }
+            }
+        }
+        want
+    };
+    // Offset alone, partly off the picture, and negative.
+    for origin in [(0i64, 0i64), (3, 1), (4, 4), (-1, -1), (9, 9)] {
+        let c = base.clone().with_offset(origin.0, origin.1);
+        assert_eq!(run(&c), expect(origin, false), "offset {origin:?}");
+        let c = c.with_tile(true);
+        assert_eq!(run(&c), expect(origin, true), "tiled from {origin:?}");
+    }
+    // Gravity: the overlay's own extent is centred / flushed, then the
+    // offset is added.
+    for (gravity, origin) in [
+        (Gravity::NorthWest, (0i64, 0i64)),
+        (Gravity::North, (1, 0)),
+        (Gravity::NorthEast, (3, 0)),
+        (Gravity::West, (0, 1)),
+        (Gravity::Centre, (1, 1)),
+        (Gravity::East, (3, 1)),
+        (Gravity::SouthWest, (0, 3)),
+        (Gravity::South, (1, 3)),
+        (Gravity::SouthEast, (3, 3)),
+    ] {
+        let c = base.clone().with_gravity(gravity);
+        assert_eq!(run(&c), expect(origin, false), "{gravity:?}");
+        let c = c.with_offset(1, -1);
+        assert_eq!(
+            run(&c),
+            expect((origin.0 + 1, origin.1 - 1), false),
+            "{gravity:?} + offset"
+        );
     }
 }

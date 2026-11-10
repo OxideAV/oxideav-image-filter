@@ -128,16 +128,13 @@ impl FloatImage {
                 h
             )));
         }
-        let mut data = Vec::with_capacity(w * h * channels);
-        for y in 0..h {
+        let mut data = vec![0.0f32; w * h * channels];
+        crate::exec::par_rows(&mut data, w * channels, |y, out| {
             let row = &plane.data[y * plane.stride..y * plane.stride + row_bytes];
-            data.extend(
-                row.as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|c| f32::from_le_bytes(*c)),
-            );
-        }
+            for (d, c) in out.iter_mut().zip(row.as_chunks::<4>().0) {
+                *d = f32::from_le_bytes(*c);
+            }
+        });
         Ok(Self {
             width: params.width,
             height: params.height,
@@ -150,9 +147,13 @@ impl FloatImage {
     pub fn into_frame(self, pts: Option<i64>) -> VideoFrame {
         let stride = self.width as usize * self.channels * 4;
         let mut data = vec![0u8; self.data.len() * 4];
-        for (d, v) in data.as_chunks_mut::<4>().0.iter_mut().zip(&self.data) {
-            *d = v.to_le_bytes();
-        }
+        let samples = &self.data;
+        crate::exec::par_rows(&mut data, stride.max(4), |y, row| {
+            let src = &samples[y * (stride / 4)..];
+            for (d, v) in row.as_chunks_mut::<4>().0.iter_mut().zip(src) {
+                *d = v.to_le_bytes();
+            }
+        });
         VideoFrame {
             pts,
             planes: vec![VideoPlane { stride, data }],
@@ -520,9 +521,42 @@ pub fn run_any(
 pub fn map_tone(
     input: &VideoFrame,
     params: VideoStreamParams,
-    tone: impl Fn(f32) -> f32,
+    tone: impl Fn(f32) -> f32 + Sync,
 ) -> Result<VideoFrame, Error> {
-    run(input, params, |img| Ok(img.map_tone(tone)))
+    run(input, params, |mut img| {
+        // Pointwise: rows run under the thread budget.
+        let (ch, cc) = (img.channels, img.color_channels());
+        let row = img.width as usize * ch;
+        crate::exec::par_rows(&mut img.data, row, |_, line| {
+            for px in line.chunks_exact_mut(ch) {
+                for v in &mut px[..cc] {
+                    *v = tone(*v);
+                }
+            }
+        });
+        Ok(img)
+    })
+}
+
+/// Run `pixel` on the colour channels of every pixel of a packed-float
+/// frame (alpha untouched), rows under the thread budget — the
+/// pointwise filters that mix channels.
+#[doc(hidden)]
+pub fn map_pixels(
+    input: &VideoFrame,
+    params: VideoStreamParams,
+    pixel: impl Fn(&mut [f32]) + Sync,
+) -> Result<VideoFrame, Error> {
+    run(input, params, |mut img| {
+        let (ch, cc) = (img.channels, img.color_channels());
+        let row = img.width as usize * ch;
+        crate::exec::par_rows(&mut img.data, row, |_, line| {
+            for px in line.chunks_exact_mut(ch) {
+                pixel(&mut px[..cc]);
+            }
+        });
+        Ok(img)
+    })
 }
 
 /// Separable convolution with replicate-edge addressing: `kx` along

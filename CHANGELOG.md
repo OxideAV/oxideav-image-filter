@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in binary32, nothing rounded to 8 bits. `ChannelExtract` emits
   `GrayF32Le` for a float or 16-bit input (a deep channel is never
   narrowed) and `Gray8` for an 8-bit one, as before.
+- `Composite::with_tile`: the overlay repeated across the destination
+  from the placement point (gravity + offset); the `composite-*`
+  factories take `offset_x` / `offset_y` / `tile`. `Composite::compose`
+  returns `Gray16Le` / `Rgb48Le` / `Rgba64Le` destinations as 16-bit
+  words (they came back as `RgbaF32Le`). The compositing rows run under
+  the thread budget.
 - `benches/throughput.rs`: wall-clock throughput of the most used
   filters at 1 MP / 12 MP, 8- and 16-bit, any thread budget.
 
@@ -63,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `O(radius²)`) and runs under the thread budget. The intensity bucket
   is now `⌊Y · levels⌋` on the normalised luma at every depth, and the
   bucket mean is rounded to nearest (was truncated).
+- Row parallelism under the thread budget also for `Resize` (both
+  resampler passes, the bilinear / bicubic path, packing), `Rotate`,
+  `ColorMatrix`, the pointwise tonal filters' float path and the float
+  packing every deep path goes through. The separable resampler's
+  vertical pass sums whole rows.
 - `Statistic` and `Despeckle` cost no longer grows with the window
   area: sliding-histogram median (8- and 16-bit; a sorted sliding window
   for arbitrary floats), block-scan minimum / maximum, running-sum mean.

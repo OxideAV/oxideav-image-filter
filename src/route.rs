@@ -265,7 +265,7 @@ fn word_of(v: f32) -> u16 {
 
 /// [`word_of`] on every sample of a packed float plane, into a tight
 /// packed 16-bit frame.
-fn narrow_words(frame: &VideoFrame, w: usize, h: usize, ch: usize) -> VideoFrame {
+pub(crate) fn narrow_words(frame: &VideoFrame, w: usize, h: usize, ch: usize) -> VideoFrame {
     let plane = &frame.planes[0];
     let n = w * ch;
     let mut data = vec![0u8; n * 2 * h];

@@ -458,6 +458,11 @@ pub struct Composite {
     /// Whether the operator also runs where the destination lies outside
     /// the overlay (with a transparent source), ImageMagick's default.
     pub outside_overlay: bool,
+    /// Whether the overlay repeats across the whole destination
+    /// (`true`) instead of being placed once. The tiling is anchored at
+    /// the placement point (gravity + offset) and extends in every
+    /// direction.
+    pub tile: bool,
 }
 
 impl Composite {
@@ -471,7 +476,15 @@ impl Composite {
             args: Vec::new(),
             channels: ChannelMask::ALL,
             outside_overlay: true,
+            tile: false,
         }
+    }
+
+    /// Repeat the overlay across the destination (anchored at the
+    /// placement point) instead of placing it once.
+    pub fn with_tile(mut self, tile: bool) -> Self {
+        self.tile = tile;
+        self
     }
 
     /// Place the overlay at `(x, y)` (negative offsets allowed).
@@ -538,8 +551,10 @@ impl Composite {
 
     /// `compositeImage`: the overlay `src` (its own layout and extent)
     /// placed on the destination `dst`; the output has the destination's
-    /// extent and layout (the packed 8-bit and float layouts; any other
-    /// destination layout comes back as `RgbaF32Le`).
+    /// extent and layout (the packed 8-bit, 16-bit and float layouts;
+    /// any other destination layout comes back as `RgbaF32Le`). With
+    /// [`with_tile`](Self::with_tile) the overlay repeats across the
+    /// destination from the placement point.
     pub fn compose(
         &self,
         dst: &VideoFrame,
@@ -555,6 +570,21 @@ impl Composite {
                 deep::narrow_u8(&out.to_channels(d.channels()))
             }
             f if deep::is_float(f) => out.to_channels(d.channels()).into_frame(dst.pts),
+            // The packed 16-bit words come back as words.
+            PixelFormat::Gray16Le | PixelFormat::Rgb48Le | PixelFormat::Rgba64Le => {
+                let ch = match dst_params.format {
+                    PixelFormat::Gray16Le => 1,
+                    PixelFormat::Rgb48Le => 3,
+                    _ => 4,
+                };
+                let float = out.to_channels(ch).into_frame(dst.pts);
+                crate::route::narrow_words(
+                    &float,
+                    dst_params.width as usize,
+                    dst_params.height as usize,
+                    ch,
+                )
+            }
             _ => out.into_frame(dst.pts),
         })
     }
@@ -569,11 +599,20 @@ impl Composite {
         let mut out = d.clone();
         // Map operators read the whole destination through the map.
         let map_ctx = MapContext::new(self, &d, &s, ox, oy);
-        for y in 0..dh {
-            for x in 0..dw {
-                let sx = x as i64 - ox;
-                let sy = y as i64 - oy;
-                let inside = sx >= 0 && sy >= 0 && sx < s.width() as i64 && sy < s.height() as i64;
+        let (sw, sh) = (s.width() as i64, s.height() as i64);
+        let tile = self.tile && sw > 0 && sh > 0;
+        // Rows are independent: each output pixel reads only the two
+        // input pictures.
+        crate::exec::par_rows(out.samples_mut(), dw as usize * 4, |y, row| {
+            let y = y as u32;
+            for (x, o) in row.chunks_exact_mut(4).enumerate() {
+                let x = x as u32;
+                let (mut sx, mut sy) = (x as i64 - ox, y as i64 - oy);
+                if tile {
+                    sx = sx.rem_euclid(sw);
+                    sy = sy.rem_euclid(sh);
+                }
+                let inside = sx >= 0 && sy >= 0 && sx < sw && sy < sh;
                 if !inside && !self.outside_overlay {
                     continue;
                 }
@@ -590,7 +629,6 @@ impl Composite {
                 } else {
                     self.pixel(sp, dp)
                 };
-                let o = out.pixel_mut(x, y);
                 if self.channels.red {
                     o[0] = r[0];
                 }
@@ -604,7 +642,7 @@ impl Composite {
                     o[3] = r[3];
                 }
             }
-        }
+        });
         out
     }
 

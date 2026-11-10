@@ -783,6 +783,15 @@ fn make_composite(
         ..src_port.clone()
     };
     let mut composite = Composite::new(op);
+    // Placement: `{"offset_x": x, "offset_y": y, "tile": true}`.
+    let int = |k: &str| _params.get(k).and_then(|v| v.as_i64());
+    if int("offset_x").is_some() || int("offset_y").is_some() {
+        composite =
+            composite.with_offset(int("offset_x").unwrap_or(0), int("offset_y").unwrap_or(0));
+    }
+    if let Some(tile) = _params.get("tile").and_then(|v| v.as_bool()) {
+        composite = composite.with_tile(tile);
+    }
     if let Some(args) = _params.get("args").and_then(|v| v.as_array()) {
         composite = composite.with_args(
             args.iter()

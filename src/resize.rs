@@ -241,25 +241,27 @@ fn unpack(plane: &VideoPlane, g: PlaneGeometry, kind: SampleKind) -> Samples {
     let w = g.width as usize;
     let h = g.height as usize;
     let ch = (g.position_bytes / kind.bytes()).max(1);
-    let mut data = Vec::with_capacity(w * h * ch);
-    for y in 0..h {
+    let mut data = vec![0.0f32; w * h * ch];
+    crate::exec::par_rows(&mut data, w * ch, |y, out| {
         let row = &plane.data[y * plane.stride..y * plane.stride + g.row_bytes];
         match kind {
-            SampleKind::U8 => data.extend(row.iter().map(|&b| b as f32)),
-            SampleKind::U16 { .. } => data.extend(
-                row.as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]) as f32),
-            ),
-            SampleKind::F32 => data.extend(
-                row.as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])),
-            ),
+            SampleKind::U8 => {
+                for (d, &b) in out.iter_mut().zip(row) {
+                    *d = b as f32;
+                }
+            }
+            SampleKind::U16 { .. } => {
+                for (d, c) in out.iter_mut().zip(row.as_chunks::<2>().0) {
+                    *d = u16::from_le_bytes(*c) as f32;
+                }
+            }
+            SampleKind::F32 => {
+                for (d, c) in out.iter_mut().zip(row.as_chunks::<4>().0) {
+                    *d = f32::from_le_bytes(*c);
+                }
+            }
         }
-    }
+    });
     Samples { w, h, ch, data }
 }
 
@@ -270,21 +272,31 @@ fn unpack(plane: &VideoPlane, g: PlaneGeometry, kind: SampleKind) -> Samples {
 fn pack(s: &Samples, kind: SampleKind) -> VideoPlane {
     let positions = s.w * s.ch;
     let stride = positions * kind.bytes();
-    let mut out = Vec::with_capacity(stride * s.h);
-    match kind {
-        SampleKind::U8 => out.extend(s.data.iter().map(|&v| v.round().clamp(0.0, 255.0) as u8)),
-        SampleKind::U16 { bits } => {
-            let max = ((1u32 << bits) - 1) as f32;
-            for &v in &s.data {
-                out.extend_from_slice(&(v.round().clamp(0.0, max) as u16).to_le_bytes());
-            }
-        }
-        SampleKind::F32 => {
-            for &v in &s.data {
-                out.extend_from_slice(&v.to_le_bytes());
-            }
-        }
+    let mut out = vec![0u8; stride * s.h];
+    if stride == 0 {
+        return VideoPlane { stride, data: out };
     }
+    crate::exec::par_rows(&mut out, stride, |y, row| {
+        let src = &s.data[y * positions..(y + 1) * positions];
+        match kind {
+            SampleKind::U8 => {
+                for (d, &v) in row.iter_mut().zip(src) {
+                    *d = v.round().clamp(0.0, 255.0) as u8;
+                }
+            }
+            SampleKind::U16 { bits } => {
+                let max = ((1u32 << bits) - 1) as f32;
+                for (d, &v) in row.as_chunks_mut::<2>().0.iter_mut().zip(src) {
+                    *d = (v.round().clamp(0.0, max) as u16).to_le_bytes();
+                }
+            }
+            SampleKind::F32 => {
+                for (d, &v) in row.as_chunks_mut::<4>().0.iter_mut().zip(src) {
+                    *d = v.to_le_bytes();
+                }
+            }
+        }
+    });
     VideoPlane { stride, data: out }
 }
 
@@ -328,11 +340,13 @@ fn resample(
     let scale_y = sh as f32 / dh as f32;
     let at = |x: usize, y: usize, c: usize| src.data[(y * sw + x) * ch + c];
 
-    for y in 0..dh {
+    // Every output row reads only the source: rows run under the
+    // thread budget.
+    crate::exec::par_rows(&mut out, dw * ch, |y, out| {
         let sy = (y as f32 + 0.5) * scale_y - 0.5;
         for x in 0..dw {
             let sx = (x as f32 + 0.5) * scale_x - 0.5;
-            let dst = (y * dw + x) * ch;
+            let dst = x * ch;
             match interp {
                 Interpolation::Nearest => {
                     let nx = sx.round().clamp(0.0, (sw - 1) as f32) as usize;
@@ -390,7 +404,7 @@ fn resample(
                 }
             }
         }
-    }
+    });
 
     Samples {
         w: dw,
@@ -1307,33 +1321,31 @@ fn resample_kernel(src: &Samples, dw: usize, dh: usize, kernel: Kernel) -> Sampl
     let cx = axis_contributions(dw, sw, scale_x, &kernel);
     let cy = axis_contributions(dh, sh, scale_y, &kernel);
 
-    // Pass 1: horizontal — (sw × sh) → (dw × sh).
+    // Pass 1: horizontal — (sw × sh) → (dw × sh). Rows are independent.
     let mut mid = vec![0.0f32; dw * sh * ch];
-    for sy in 0..sh {
-        for (x, taps) in cx.per_out.iter().enumerate() {
-            for c in 0..ch {
-                let mut acc = 0.0f32;
-                for &(sx, w) in taps {
-                    acc += w * src.data[(sy * sw + sx) * ch + c];
+    crate::exec::par_rows(&mut mid, dw * ch, |sy, line| {
+        let row = &src.data[sy * sw * ch..(sy + 1) * sw * ch];
+        for (px, taps) in line.chunks_exact_mut(ch).zip(&cx.per_out) {
+            for &(sx, w) in taps {
+                for (o, v) in px.iter_mut().zip(&row[sx * ch..sx * ch + ch]) {
+                    *o += w * *v;
                 }
-                mid[(sy * dw + x) * ch + c] = acc;
             }
         }
-    }
+    });
 
-    // Pass 2: vertical — (dw × sh) → (dw × dh).
+    // Pass 2: vertical — (dw × sh) → (dw × dh): each output row is a
+    // weighted sum of whole intermediate rows.
     let mut out = vec![0.0f32; dw * dh * ch];
-    for (y, taps) in cy.per_out.iter().enumerate() {
-        for x in 0..dw {
-            for c in 0..ch {
-                let mut acc = 0.0f32;
-                for &(sy, w) in taps {
-                    acc += w * mid[(sy * dw + x) * ch + c];
-                }
-                out[(y * dw + x) * ch + c] = acc;
+    let mid = &mid;
+    crate::exec::par_rows(&mut out, dw * ch, |y, line| {
+        for &(sy, w) in &cy.per_out[y] {
+            let row = &mid[sy * dw * ch..(sy + 1) * dw * ch];
+            for (o, v) in line.iter_mut().zip(row) {
+                *o += w * *v;
             }
         }
-    }
+    });
 
     Samples {
         w: dw,

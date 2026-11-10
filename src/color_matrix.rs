@@ -105,15 +105,12 @@ impl PixelFilter for ColorMatrix {
                 self.offset[1] / 255.0,
                 self.offset[2] / 255.0,
             ];
-            return crate::deep::run(input, params, |mut img| {
-                img.map_pixels_in_place(|px| {
-                    let (r, g, b) = (px[0], px[1], px[2]);
-                    let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
-                    px[0] = finite(m[0] * r + m[1] * g + m[2] * b + o[0]);
-                    px[1] = finite(m[3] * r + m[4] * g + m[5] * b + o[1]);
-                    px[2] = finite(m[6] * r + m[7] * g + m[8] * b + o[2]);
-                });
-                Ok(img)
+            return crate::deep::map_pixels(input, params, |px| {
+                let (r, g, b) = (px[0], px[1], px[2]);
+                let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+                px[0] = finite(m[0] * r + m[1] * g + m[2] * b + o[0]);
+                px[1] = finite(m[3] * r + m[4] * g + m[5] * b + o[1]);
+                px[2] = finite(m[6] * r + m[7] * g + m[8] * b + o[2]);
             });
         }
         let bpp = match params.format {
@@ -132,8 +129,11 @@ impl PixelFilter for ColorMatrix {
         let stride = p.stride;
         let m = &self.matrix;
         let o = &self.offset;
-        for y in 0..h {
-            let row = &mut p.data[y * stride..y * stride + bpp * w];
+        if stride == 0 {
+            return Ok(out);
+        }
+        crate::exec::par_rows(&mut p.data[..stride * h], stride, |_, line| {
+            let row = &mut line[..bpp * w];
             for x in 0..w {
                 let r = row[bpp * x] as f32;
                 let g = row[bpp * x + 1] as f32;
@@ -146,7 +146,7 @@ impl PixelFilter for ColorMatrix {
                 row[bpp * x + 2] = clamp_u8(b2);
                 // alpha untouched (Rgba) / no extra channel (Rgb24)
             }
-        }
+        });
         Ok(out)
     }
 }
