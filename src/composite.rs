@@ -605,7 +605,7 @@ impl Composite {
         // input pictures.
         crate::exec::par_rows(out.samples_mut(), dw as usize * 4, |y, row| {
             let y = y as u32;
-            for (x, o) in row.chunks_exact_mut(4).enumerate() {
+            for (x, o) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let x = x as u32;
                 let (mut sx, mut sy) = (x as i64 - ox, y as i64 - oy);
                 if tile {
