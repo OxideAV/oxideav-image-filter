@@ -394,6 +394,10 @@ fn degenerate_pictures_and_windows_do_not_panic() {
                 let src = noise_codes(depth, w * h * ch, 5);
                 let (f, p) = frame(depth, w, ch, &src);
                 assert!(Blur::new(40).with_sigma(0.0).apply(&f, p).is_ok());
+                assert!(Blur::new(u32::MAX).with_sigma(2.0).apply(&f, p).is_ok());
+                if ch == 4 {
+                    assert!(Despeckle::new(u32::MAX).apply(&f, p).is_ok());
+                }
                 assert!(Blur::new(1).with_sigma(f32::NAN).apply(&f, p).is_ok());
                 for radius in [0u32, 1, 1000, u32::MAX] {
                     for levels in [0u32, 1, 256, u32::MAX] {
@@ -408,6 +412,8 @@ fn degenerate_pictures_and_windows_do_not_panic() {
                     StatisticOp::Mean,
                 ] {
                     assert!(Statistic::new(op, 64, 64).apply(&f, p).is_ok());
+                    assert!(Statistic::new(op, u32::MAX, u32::MAX).apply(&f, p).is_ok());
+                    assert!(Statistic::new(op, 1, u32::MAX).apply(&f, p).is_ok());
                     assert!(Statistic::new(op, 0, 3).apply(&f, p).is_err());
                 }
             }
@@ -985,5 +991,51 @@ fn paint_is_the_mean_of_the_modal_intensity_bucket_at_every_depth() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn windows_larger_than_the_picture_weigh_the_edges_as_replication_does() {
+    // A 3×1 picture under a 9-wide window: positions −4..=4 around x
+    // replicate the ends, so around x = 0 the window holds the left
+    // sample five times and the others twice each… every statistic
+    // follows from that multiset.
+    for depth in DEPTHS {
+        let s = depth.scale();
+        let vals = [0.2 * s, 0.9 * s, 0.5 * s].map(|v| match depth {
+            Depth::F32 => (v as f32) as f64,
+            _ => v.round(),
+        });
+        let (f, p) = frame(depth, 3, 1, &vals);
+        for x in 0..3usize {
+            let mut win: Vec<f64> = (-4isize..=4).map(|d| vals[clamp_index(x, d, 3)]).collect();
+            win.sort_by(f64::total_cmp);
+            let get = |op| codes(depth, &Statistic::new(op, 9, 1).apply(&f, p).unwrap())[x];
+            assert_eq!(get(StatisticOp::Median), win[4], "{depth:?} median at {x}");
+            assert_eq!(get(StatisticOp::Min), win[0]);
+            assert_eq!(get(StatisticOp::Max), win[8]);
+            let mean = win.iter().sum::<f64>() / 9.0;
+            let tol = if depth == Depth::F32 { 1e-6 } else { 0.51 };
+            assert!(
+                (get(StatisticOp::Mean) - mean).abs() <= tol,
+                "{depth:?} mean at {x}"
+            );
+        }
+        // A window of 2³² − 1 columns (2³¹ − 1 either side): around
+        // x the left sample is held 2³¹ − x times, the middle one once,
+        // the right one 2³¹ − 2 + x times. The upper median (rank
+        // 2³¹ − 1) is therefore the left (smaller) sample at x = 0 and
+        // the right one at x = 1, 2; the mean is the edges' average to
+        // within 2⁻³¹.
+        let out = Statistic::new(StatisticOp::Median, u32::MAX, 1)
+            .apply(&f, p)
+            .unwrap();
+        assert_eq!(codes(depth, &out), [vals[0], vals[2], vals[2]], "{depth:?}");
+        let out = Statistic::new(StatisticOp::Mean, u32::MAX, 1)
+            .apply(&f, p)
+            .unwrap();
+        let want = (vals[0] + vals[2]) / 2.0;
+        let tol = if depth == Depth::F32 { 1e-6 } else { 0.51 };
+        assert!(codes(depth, &out).iter().all(|v| (*v - want).abs() <= tol));
     }
 }

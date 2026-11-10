@@ -254,8 +254,11 @@ impl Window {
         }
     }
 
-    /// The square `(2r + 1)²` window.
+    /// The square `(2r + 1)²` window. The radius is capped at 2³⁰ so
+    /// the window's sample count stays within 64 bits (no picture is
+    /// large enough to tell).
     pub(crate) fn radius(r: usize) -> Self {
+        let r = r.min(1 << 30);
         Self {
             left: r,
             right: r,
@@ -270,6 +273,23 @@ impl Window {
 
     fn rows(self) -> usize {
         self.up + 1 + self.down
+    }
+
+    /// Samples in the window.
+    pub(crate) fn count(self) -> u64 {
+        self.columns() as u64 * self.rows() as u64
+    }
+
+    /// The window with its reach cut to the picture: the same set of
+    /// distinct replicate-edge positions (but not their multiplicities
+    /// — for the extreme filters, which ignore them).
+    fn within(self, w: usize, h: usize) -> Self {
+        Self {
+            left: self.left.min(w.saturating_sub(1)),
+            right: self.right.min(w.saturating_sub(1)),
+            up: self.up.min(h.saturating_sub(1)),
+            down: self.down.min(h.saturating_sub(1)),
+        }
     }
 }
 
@@ -289,7 +309,7 @@ pub(crate) struct RankJob {
     ch: usize,
     nc: usize,
     win: Window,
-    rank: usize,
+    rank: u64,
 }
 
 /// The rank filter's per-type sliding window. `rank` counts from the
@@ -315,10 +335,36 @@ pub(crate) trait Ranked: Sample {
         ch: usize,
         nc: usize,
         win: Window,
-        rank: usize,
+        rank: u64,
     ) -> Vec<Self> {
         rank_banded(src, stride, w, h, ch, nc, win, rank)
     }
+}
+
+/// How many of a window's offsets `−before..=after` around `centre`
+/// land on position `at` of a line of `len` samples under
+/// replicate-edge addressing: one, plus the offsets overhanging an edge
+/// when `at` is that edge. With it a window is tallied over the
+/// distinct positions it covers, so a window larger than the picture
+/// costs no more than the picture.
+#[inline]
+fn copies(at: usize, centre: usize, before: usize, after: usize, len: usize) -> u64 {
+    let mut m = 1u64;
+    if at == 0 {
+        m += before.saturating_sub(centre) as u64;
+    }
+    if at == len - 1 {
+        m += centre.saturating_add(after).saturating_sub(len - 1) as u64;
+    }
+    m
+}
+
+/// A multiset of bin indices with order-statistic queries.
+pub(crate) trait Counter {
+    fn add(&mut self, bin: usize, n: u64);
+    fn remove(&mut self, bin: usize, n: u64);
+    /// The bin holding the sample of rank `rank` (0 = smallest).
+    fn select(&self, rank: u64) -> usize;
 }
 
 /// A running histogram over `LEVELS` levels of 16-way fan-out
@@ -326,7 +372,7 @@ pub(crate) trait Ranked: Sample {
 /// updates, a rank query at most `16 · LEVELS` additions. Level `l`
 /// starts at `offsets[l]` and holds `16^(l + 1)` counters.
 pub(crate) struct Histogram<const LEVELS: usize> {
-    counts: Vec<u32>,
+    counts: Vec<u64>,
     offsets: [usize; LEVELS],
 }
 
@@ -343,25 +389,26 @@ impl<const LEVELS: usize> Histogram<LEVELS> {
             offsets,
         }
     }
+}
 
+impl<const LEVELS: usize> Counter for Histogram<LEVELS> {
     #[inline]
-    fn add(&mut self, v: usize) {
+    fn add(&mut self, v: usize, n: u64) {
         for l in 0..LEVELS {
-            self.counts[self.offsets[l] + (v >> (4 * (LEVELS - 1 - l)))] += 1;
+            self.counts[self.offsets[l] + (v >> (4 * (LEVELS - 1 - l)))] += n;
         }
     }
 
     #[inline]
-    fn remove(&mut self, v: usize) {
+    fn remove(&mut self, v: usize, n: u64) {
         for l in 0..LEVELS {
-            self.counts[self.offsets[l] + (v >> (4 * (LEVELS - 1 - l)))] -= 1;
+            self.counts[self.offsets[l] + (v >> (4 * (LEVELS - 1 - l)))] -= n;
         }
     }
 
-    /// The value of rank `rank` (0 = smallest) among the samples held.
     #[inline]
-    fn select(&self, rank: u32) -> usize {
-        let mut seen = 0u32;
+    fn select(&self, rank: u64) -> usize {
+        let mut seen = 0u64;
         let mut bin = 0usize;
         for l in 0..LEVELS {
             bin <<= 4;
@@ -375,53 +422,118 @@ impl<const LEVELS: usize> Histogram<LEVELS> {
     }
 }
 
-/// One row of a histogram rank filter on integer samples.
-fn rank_row_histogram<T: Sample, const LEVELS: usize>(
-    src: &[T],
+/// A binary indexed tree over `len` bins: updates and rank queries in
+/// `O(log len)` for an alphabet too large (or too sparse) to scan.
+pub(crate) struct Fenwick {
+    tree: Vec<u64>,
+}
+
+impl Fenwick {
+    fn new(len: usize) -> Self {
+        Self {
+            tree: vec![0; len + 1],
+        }
+    }
+}
+
+impl Counter for Fenwick {
+    fn add(&mut self, bin: usize, n: u64) {
+        let mut i = bin + 1;
+        while i < self.tree.len() {
+            self.tree[i] += n;
+            i += i & i.wrapping_neg();
+        }
+    }
+
+    fn remove(&mut self, bin: usize, n: u64) {
+        let mut i = bin + 1;
+        while i < self.tree.len() {
+            self.tree[i] -= n;
+            i += i & i.wrapping_neg();
+        }
+    }
+
+    fn select(&self, rank: u64) -> usize {
+        // Descend by halving steps: the largest prefix whose count is
+        // still `≤ rank` ends just before the wanted bin.
+        let n = self.tree.len() - 1;
+        let mut pos = 0usize;
+        let mut left = rank;
+        let mut step = n
+            .checked_next_power_of_two()
+            .unwrap_or(1 << (usize::BITS - 1));
+        while step > 0 {
+            let next = pos + step;
+            if next <= n && self.tree[next] <= left {
+                left -= self.tree[next];
+                pos = next;
+            }
+            step >>= 1;
+        }
+        pos.min(n.saturating_sub(1))
+    }
+}
+
+/// One row of a counting rank filter: `bin(x, sy)` is the bin of
+/// channel `c`'s sample at column `x`, row `sy`; `value(bin)` the
+/// sample a bin stands for. The window is tallied over its distinct
+/// in-picture positions with their replicate-edge multiplicities, and
+/// slides by swapping one copy of the leaving column for one of the
+/// entering column.
+fn rank_row_counted<T: Copy, C: Counter>(
     job: &RankJob,
     y: usize,
     out: &mut [T],
-    hist: &mut Histogram<LEVELS>,
-    index: impl Fn(T) -> usize,
-    value: impl Fn(usize) -> T,
+    counter: &mut C,
+    bin: impl Fn(usize, usize, usize) -> usize,
+    value: impl Fn(usize, usize) -> T,
 ) {
     let RankJob {
-        stride,
         w,
         h,
         ch,
         nc,
         win,
         rank,
+        ..
     } = *job;
-    let (cols, rows) = (win.columns(), win.rows());
+    let (top, bottom) = (
+        y.saturating_sub(win.up),
+        y.saturating_add(win.down).min(h - 1),
+    );
     for c in 0..nc {
-        let at = |x: usize, j: usize| index(src[tap(y, j, win.up, h) * stride + x * ch + c]);
-        for i in 0..cols {
-            let x = tap(0, i, win.left, w);
-            for j in 0..rows {
-                hist.add(at(x, j));
+        let column = |counter: &mut C, x: usize, times: u64, add: bool| {
+            for sy in top..=bottom {
+                let n = times * copies(sy, y, win.up, win.down, h);
+                if add {
+                    counter.add(bin(x, sy, c), n);
+                } else {
+                    counter.remove(bin(x, sy, c), n);
+                }
             }
+        };
+        for sx in 0..=win.right.min(w - 1) {
+            column(counter, sx, copies(sx, 0, win.left, win.right, w), true);
         }
         for x in 0..w {
             if x > 0 {
-                let gone = tap(x - 1, 0, win.left, w);
-                let come = tap(x, cols - 1, win.left, w);
+                let gone = (x - 1).saturating_sub(win.left);
+                let come = x.saturating_add(win.right).min(w - 1);
                 if gone != come {
-                    for j in 0..rows {
-                        hist.remove(at(gone, j));
-                        hist.add(at(come, j));
-                    }
+                    column(counter, gone, 1, false);
+                    column(counter, come, 1, true);
                 }
             }
-            out[x * ch + c] = value(hist.select(rank as u32));
+            out[x * ch + c] = value(counter.select(rank), c);
         }
-        // Leave the histogram empty for the next channel / row.
-        for i in 0..cols {
-            let x = tap(w - 1, i, win.left, w);
-            for j in 0..rows {
-                hist.remove(at(x, j));
-            }
+        // Leave the counter empty for the next channel / row.
+        for sx in (w - 1).saturating_sub(win.left)..w {
+            column(
+                counter,
+                sx,
+                copies(sx, w - 1, win.left, win.right, w),
+                false,
+            );
         }
     }
 }
@@ -432,7 +544,15 @@ impl Ranked for u8 {
         Histogram::new()
     }
     fn rank_row(src: &[u8], job: &RankJob, y: usize, out: &mut [u8], hist: &mut Histogram<2>) {
-        rank_row_histogram(src, job, y, out, hist, |v| v as usize, |i| i as u8);
+        let (stride, ch) = (job.stride, job.ch);
+        rank_row_counted(
+            job,
+            y,
+            out,
+            hist,
+            |x, sy, c| src[sy * stride + x * ch + c] as usize,
+            |bin, _| bin as u8,
+        );
     }
 }
 
@@ -442,7 +562,15 @@ impl Ranked for u16 {
         Histogram::new()
     }
     fn rank_row(src: &[u16], job: &RankJob, y: usize, out: &mut [u16], hist: &mut Histogram<4>) {
-        rank_row_histogram(src, job, y, out, hist, |v| v as usize, |i| i as u16);
+        let (stride, ch) = (job.stride, job.ch);
+        rank_row_counted(
+            job,
+            y,
+            out,
+            hist,
+            |x, sy, c| src[sy * stride + x * ch + c] as usize,
+            |bin, _| bin as u16,
+        );
     }
 }
 
@@ -471,7 +599,7 @@ impl Ranked for f32 {
     /// The window's samples as ordered keys.
     type Scratch = Vec<u32>;
     fn scratch(job: &RankJob) -> Self::Scratch {
-        Vec::with_capacity(job.win.columns() * job.win.rows())
+        Vec::with_capacity(job.win.count().min(1 << 16) as usize)
     }
     /// Sliding sorted window (arbitrary floats do not bin): each step
     /// swaps the leaving column's samples for the entering column's, one
@@ -521,7 +649,7 @@ impl Ranked for f32 {
                         }
                     }
                 }
-                out[x * ch + c] = float_unkey(sorted[rank]);
+                out[x * ch + c] = float_unkey(sorted[rank as usize]);
             }
         }
         sorted.clear();
@@ -529,8 +657,10 @@ impl Ranked for f32 {
 
     /// A picture whose samples are all exact 16-bit codes (the float
     /// hop of a 16-bit picture) is ranked on the codes with the running
-    /// histogram and mapped back to the very same floats; any other
-    /// picture takes the sorted window.
+    /// histogram and mapped back to the very same floats. Any other
+    /// picture takes the sorted window while the window is small, and
+    /// beyond that a binary indexed tree over the picture's distinct
+    /// values.
     fn rank_picture(
         src: &[f32],
         stride: usize,
@@ -539,15 +669,81 @@ impl Ranked for f32 {
         ch: usize,
         nc: usize,
         win: Window,
-        rank: usize,
+        rank: u64,
     ) -> Vec<f32> {
+        /// Largest window the sorted path materialises.
+        const SORTED_MAX: u64 = 1024;
         let row = w * ch;
         if let Some(codes) = exact_codes(src, stride, row, h) {
             let ranked = rank_banded(&codes, row, w, h, ch, nc, win, rank);
             return ranked.iter().map(|&c| c as f32 / 65535.0).collect();
         }
-        rank_banded(src, stride, w, h, ch, nc, win, rank)
+        if win.count() <= SORTED_MAX {
+            return rank_banded(src, stride, w, h, ch, nc, win, rank);
+        }
+        rank_dense(src, stride, w, h, ch, nc, win, rank)
     }
+}
+
+/// Rank filter on arbitrary floats through dense ranks: every channel's
+/// samples are replaced by their index among the channel's distinct
+/// values, the window is tallied in a binary indexed tree over those
+/// indices, and the selected index is mapped back to its value.
+#[allow(clippy::too_many_arguments)]
+fn rank_dense(
+    src: &[f32],
+    stride: usize,
+    w: usize,
+    h: usize,
+    ch: usize,
+    nc: usize,
+    win: Window,
+    rank: u64,
+) -> Vec<f32> {
+    let row = w * ch;
+    let mut out = tight_copy(src, stride, row, h);
+    if row == 0 || h == 0 {
+        return out;
+    }
+    let mut tables: Vec<Vec<u32>> = Vec::with_capacity(nc);
+    let mut bins = vec![0u32; w * h * nc];
+    for c in 0..nc {
+        let keys: Vec<u32> = (0..w * h)
+            .map(|p| float_key(src[(p / w) * stride + (p % w) * ch + c]))
+            .collect();
+        let mut table = keys.clone();
+        table.sort_unstable();
+        table.dedup();
+        for (p, k) in keys.iter().enumerate() {
+            bins[p * nc + c] = table.partition_point(|t| t < k) as u32;
+        }
+        tables.push(table);
+    }
+    let widest = tables.iter().map(Vec::len).max().unwrap_or(0);
+    let job = RankJob {
+        stride,
+        w,
+        h,
+        ch,
+        nc,
+        win,
+        rank: rank.min(win.count() - 1),
+    };
+    let (bins, tables) = (&bins, &tables);
+    par_bands(&mut out, row, |y0, band| {
+        let mut tree = Fenwick::new(widest);
+        for (i, line) in band.chunks_exact_mut(row).enumerate() {
+            rank_row_counted(
+                &job,
+                y0 + i,
+                line,
+                &mut tree,
+                |x, sy, c| bins[(sy * w + x) * nc + c] as usize,
+                |bin, c| float_unkey(tables[c][bin]),
+            );
+        }
+    });
+    out
 }
 
 /// The 16-bit codes of a float picture whose every sample is exactly a
@@ -580,7 +776,7 @@ pub(crate) fn rank_filter<T: Ranked>(
     ch: usize,
     nc: usize,
     win: Window,
-    rank: usize,
+    rank: u64,
 ) -> Vec<T> {
     T::rank_picture(src, stride, w, h, ch, nc, win, rank)
 }
@@ -595,7 +791,7 @@ fn rank_banded<T: Ranked>(
     ch: usize,
     nc: usize,
     win: Window,
-    rank: usize,
+    rank: u64,
 ) -> Vec<T> {
     let row = w * ch;
     let mut out = tight_copy(src, stride, row, h);
@@ -609,7 +805,7 @@ fn rank_banded<T: Ranked>(
         ch,
         nc,
         win,
-        rank: rank.min(win.columns() * win.rows() - 1),
+        rank: rank.min(win.count() - 1),
     };
     par_bands(&mut out, row, |y0, band| {
         let mut scratch = T::scratch(&job);
@@ -632,8 +828,7 @@ pub(crate) fn median_filter<T: Ranked>(
     nc: usize,
     win: Window,
 ) -> Vec<T> {
-    let n = win.columns() * win.rows();
-    rank_filter(src, stride, w, h, ch, nc, win, n / 2)
+    rank_filter(src, stride, w, h, ch, nc, win, win.count() / 2)
 }
 
 fn tight_copy<T: Copy>(src: &[T], stride: usize, row: usize, h: usize) -> Vec<T> {
@@ -694,6 +889,7 @@ pub(crate) fn extreme_filter<T: Sample>(
     // Up to this many taps per axis the direct whole-row passes (which
     // vectorise) beat the block scans (which do not).
     const DIRECT_TAPS: usize = 32;
+    let win = win.within(w, h);
     if win.columns() <= DIRECT_TAPS && win.rows() <= DIRECT_TAPS {
         extreme_direct(src, stride, w, h, ch, nc, win, max)
     } else {
@@ -941,47 +1137,64 @@ pub(crate) fn box_mean<T: Sample>(
     if row == 0 || h == 0 {
         return out;
     }
-    let (cols, rows) = (win.columns(), win.rows());
+    // A window sum under replicate-edge addressing is the sum over the
+    // distinct positions the window covers plus the edge sample times
+    // the window's overhang past that edge — prefix sums give the first
+    // part as a difference, so no window is ever walked and a window
+    // larger than the picture costs nothing extra.
+    let span = |p: usize, before: usize, after: usize, len: usize| {
+        (
+            p.saturating_sub(before),
+            p.saturating_add(after).min(len - 1),
+            before.saturating_sub(p) as f64,
+            p.saturating_add(after).saturating_sub(len - 1) as f64,
+        )
+    };
     // Rows: horizontal window sums per row.
     let mut sums = vec![0.0f64; w * nc * h];
-    par_rows(&mut sums, w * nc, |y, line| {
-        let s = &src[y * stride..y * stride + row];
-        for c in 0..nc {
-            // Prefix sums over the padded line give every window as a
-            // difference with no accumulated drift along the row.
-            let mut acc = 0.0f64;
-            let mut prefix: Vec<f64> = Vec::with_capacity(w + cols);
-            prefix.push(0.0);
-            for i in 0..w + cols - 1 {
-                acc += s[tap(0, i, win.left, w) * ch + c].to_f64();
-                prefix.push(acc);
-            }
-            for x in 0..w {
-                line[x * nc + c] = prefix[x + cols] - prefix[x];
+    par_bands(&mut sums, w * nc, |y0, band| {
+        let mut prefix: Vec<f64> = vec![0.0; w + 1];
+        for (i, line) in band.chunks_exact_mut(w * nc).enumerate() {
+            let s = &src[(y0 + i) * stride..(y0 + i) * stride + row];
+            for c in 0..nc {
+                let mut acc = 0.0f64;
+                for x in 0..w {
+                    acc += s[x * ch + c].to_f64();
+                    prefix[x + 1] = acc;
+                }
+                let (first, last) = (s[c].to_f64(), s[(w - 1) * ch + c].to_f64());
+                for x in 0..w {
+                    let (lo, hi, over_lo, over_hi) = span(x, win.left, win.right, w);
+                    line[x * nc + c] =
+                        prefix[hi + 1] - prefix[lo] + over_lo * first + over_hi * last;
+                }
             }
         }
     });
     // Columns: prefix sums of whole rows.
-    let len = h + rows - 1;
     let wn = w * nc;
-    let mut prefix = vec![0.0f64; (len + 1) * wn];
-    for i in 0..len {
-        let sy = tap(0, i, win.up, h);
-        let (done, next) = prefix.split_at_mut((i + 1) * wn);
-        let prev = &done[i * wn..];
-        let s = &sums[sy * wn..(sy + 1) * wn];
+    let mut prefix = vec![0.0f64; (h + 1) * wn];
+    for y in 0..h {
+        let (done, next) = prefix.split_at_mut((y + 1) * wn);
+        let prev = &done[y * wn..];
+        let s = &sums[y * wn..(y + 1) * wn];
         for ((d, p), v) in next[..wn].iter_mut().zip(prev).zip(s) {
             *d = *p + *v;
         }
     }
-    let inv = 1.0 / (cols * rows) as f64;
-    let prefix = &prefix;
+    let inv = 1.0 / win.count() as f64;
+    let (prefix, sums) = (&prefix, &sums);
     par_rows(&mut out, row, |y, line| {
-        let lo = &prefix[y * wn..(y + 1) * wn];
-        let hi = &prefix[(y + rows) * wn..(y + rows + 1) * wn];
+        let (lo, hi, over_lo, over_hi) = span(y, win.up, win.down, h);
+        let lo = &prefix[lo * wn..(lo + 1) * wn];
+        let hi = &prefix[(hi + 1) * wn..(hi + 2) * wn];
+        let first = &sums[..wn];
+        let last = &sums[(h - 1) * wn..];
         for (x, px) in line.chunks_exact_mut(ch).enumerate() {
-            for c in 0..nc {
-                px[c] = T::from_f64((hi[x * nc + c] - lo[x * nc + c]) * inv);
+            for (c, v) in px.iter_mut().enumerate().take(nc) {
+                let i = x * nc + c;
+                let total = hi[i] - lo[i] + over_lo * first[i] + over_hi * last[i];
+                *v = T::from_f64(total * inv);
             }
         }
     });
@@ -1038,6 +1251,8 @@ mod tests {
             Window::sized(7, 1),
             Window::radius(4),
             Window::sized(40, 40),
+            Window::sized(3, 70),
+            Window::radius(33),
         ] {
             let med = median_filter(src, w * ch, w, h, ch, nc, win);
             let mn = extreme_filter(src, w * ch, w, h, ch, nc, win, false);
@@ -1104,6 +1319,8 @@ mod tests {
         let win = Window::radius(2);
         let via_codes = median_filter(&f, w, w, h, 1, 1, win);
         let direct = rank_banded(&f, w, w, h, 1, 1, win, 12);
+        let dense = rank_dense(&f, w, w, h, 1, 1, win, 12);
+        assert_eq!(dense, direct);
         assert_eq!(via_codes, direct);
         // Off-grid, out-of-range and non-finite samples take the sorted
         // window.
@@ -1170,7 +1387,7 @@ mod tests {
     #[test]
     fn rank_selects_any_order_statistic() {
         let src: Vec<u8> = vec![9, 1, 8, 2, 7, 3, 6, 4, 5];
-        for rank in 0..9 {
+        for rank in 0..9u64 {
             let out = rank_filter(&src, 3, 3, 3, 1, 1, Window::radius(1), rank);
             assert_eq!(out[4], rank as u8 + 1);
         }

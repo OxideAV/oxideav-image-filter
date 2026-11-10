@@ -88,8 +88,14 @@ impl PixelFilter for Blur {
 }
 
 /// Produce a normalised 1D Gaussian kernel of length `2*radius + 1`.
+///
+/// Taps further than `8σ` from the centre weigh less than `e⁻³²` of the
+/// centre tap — nothing at binary32 precision — so the kernel is cut
+/// there; a radius far beyond the Gaussian's reach therefore costs
+/// nothing. The kernel never exceeds 2²⁰ taps a side.
 pub(crate) fn gaussian_kernel(radius: u32, sigma: f32) -> Vec<f32> {
-    let r = radius as i32;
+    let reach = (8.0 * sigma as f64).ceil().clamp(1.0, (1u32 << 20) as f64) as u32;
+    let r = radius.min(reach) as i32;
     let two_sigma_sq = 2.0 * sigma * sigma;
     let mut k = Vec::with_capacity((2 * r + 1) as usize);
     let mut sum = 0.0f32;
