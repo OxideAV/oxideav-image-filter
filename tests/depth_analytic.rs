@@ -6,7 +6,8 @@
 
 use oxideav_core::{ExecutionContext, PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{
-    Blur, Despeckle, ImageFilter, Statistic, StatisticOp, VideoStreamParams, with_execution_context,
+    BayerMatrix, Blur, Despeckle, DiffusionKernel, Dither, ImageFilter, ScanOrder, Statistic,
+    StatisticOp, VideoStreamParams, with_execution_context,
 };
 
 /// Storage depth of a test picture.
@@ -434,4 +435,291 @@ fn outputs_are_identical_at_every_thread_budget() {
             }
         }
     }
+}
+
+/// The error-diffusion stencils of `docs/image/filter/dithering-kernels.md`
+/// §3–§7, as drawn: rows of weights with the column of `*`, and the
+/// divisor.
+fn stencil(kernel: DiffusionKernel) -> (Vec<Vec<i32>>, usize, f32) {
+    match kernel {
+        DiffusionKernel::FloydSteinberg => (vec![vec![0, 0, 7], vec![3, 5, 1]], 1, 16.0),
+        DiffusionKernel::Jjn => (
+            vec![
+                vec![0, 0, 0, 7, 5],
+                vec![3, 5, 7, 5, 3],
+                vec![1, 3, 5, 3, 1],
+            ],
+            2,
+            48.0,
+        ),
+        DiffusionKernel::Stucki => (
+            vec![
+                vec![0, 0, 0, 8, 4],
+                vec![2, 4, 8, 4, 2],
+                vec![1, 2, 4, 2, 1],
+            ],
+            2,
+            42.0,
+        ),
+        DiffusionKernel::Sierra3 => (
+            vec![
+                vec![0, 0, 0, 5, 3],
+                vec![2, 4, 5, 4, 2],
+                vec![0, 2, 3, 2, 0],
+            ],
+            2,
+            32.0,
+        ),
+        DiffusionKernel::Sierra2 => (vec![vec![0, 0, 0, 4, 3], vec![1, 2, 3, 2, 1]], 2, 16.0),
+        DiffusionKernel::SierraLite => (vec![vec![0, 0, 2], vec![1, 1, 0]], 1, 4.0),
+        DiffusionKernel::Atkinson => (
+            vec![vec![0, 0, 1, 1], vec![1, 1, 1, 0], vec![0, 1, 0, 0]],
+            1,
+            8.0,
+        ),
+        _ => unreachable!(),
+    }
+}
+
+const KERNELS: [DiffusionKernel; 7] = [
+    DiffusionKernel::FloydSteinberg,
+    DiffusionKernel::Jjn,
+    DiffusionKernel::Stucki,
+    DiffusionKernel::Sierra3,
+    DiffusionKernel::Sierra2,
+    DiffusionKernel::SierraLite,
+    DiffusionKernel::Atkinson,
+];
+
+/// Error diffusion by its definition, on one channel of normalised
+/// samples with a whole-picture error image: quantise `v + e` to the
+/// nearest of `levels` values, push the residue through the stencil
+/// (mirrored on the right→left rows of a serpentine scan).
+fn diffuse_reference(
+    src: &[f32],
+    w: usize,
+    h: usize,
+    kernel: DiffusionKernel,
+    levels: u32,
+    serpentine: bool,
+) -> Vec<f32> {
+    let (rows, star, divisor) = stencil(kernel);
+    let span = (levels - 1) as f32;
+    let mut err = vec![0.0f32; w * h];
+    let mut out = vec![0.0f32; w * h];
+    for y in 0..h {
+        let reverse = serpentine && y % 2 == 1;
+        for col in 0..w {
+            let x = if reverse { w - 1 - col } else { col };
+            let v = src[y * w + x] + err[y * w + x];
+            let q = (v.clamp(0.0, 1.0) * span + 0.5).floor() / span;
+            out[y * w + x] = q;
+            let e = v - q;
+            for (dy, row) in rows.iter().enumerate() {
+                for (i, &weight) in row.iter().enumerate() {
+                    if weight == 0 {
+                        continue;
+                    }
+                    let dx = i as isize - star as isize;
+                    let nx = x as isize + if reverse { -dx } else { dx };
+                    let ny = y + dy;
+                    if nx < 0 || nx >= w as isize || ny >= h {
+                        continue;
+                    }
+                    err[ny * w + nx as usize] += e * (weight as f32 * (1.0 / divisor));
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn error_diffusion_follows_the_published_stencils_at_every_depth() {
+    let (w, h) = (23usize, 14usize);
+    for depth in DEPTHS {
+        let s = depth.scale();
+        for ch in [1usize, 4] {
+            let nc = if ch == 4 { 3 } else { 1 };
+            // In-range tones (float included) so the reference's clamp
+            // is the only clamp.
+            let src: Vec<f64> = noise(w * h * ch, 77)
+                .into_iter()
+                .map(|v| match depth {
+                    Depth::F32 => (v as f32) as f64,
+                    _ => (v * (s + 1.0)).floor().min(s),
+                })
+                .collect();
+            let (f, p) = frame(depth, w, ch, &src);
+            for kernel in KERNELS {
+                for scan in [ScanOrder::Raster, ScanOrder::Serpentine] {
+                    for levels in [2u32, 3, 6, 17] {
+                        let out = Dither::error_diffusion(kernel)
+                            .with_levels(levels)
+                            .with_scan(scan)
+                            .apply(&f, p)
+                            .unwrap();
+                        let got = codes(depth, &out);
+                        for c in 0..ch {
+                            let plane: Vec<f32> = (0..w * h)
+                                .map(|i| (src[i * ch + c] as f32) / s as f32)
+                                .collect();
+                            if c >= nc {
+                                for i in 0..w * h {
+                                    assert_eq!(got[i * ch + c], src[i * ch + c], "alpha carried");
+                                }
+                                continue;
+                            }
+                            let want = diffuse_reference(
+                                &plane,
+                                w,
+                                h,
+                                kernel,
+                                levels,
+                                scan == ScanOrder::Serpentine,
+                            );
+                            for i in 0..w * h {
+                                // The level at the picture's depth.
+                                let level = match depth {
+                                    Depth::F32 => want[i] as f64,
+                                    _ => (want[i] as f64 * s + 0.5).floor(),
+                                };
+                                assert!(
+                                    (got[i * ch + c] - level).abs() <= 1e-6,
+                                    "{depth:?} {kernel:?} {scan:?} L{levels} ch{c} sample {i}: {} vs {level}",
+                                    got[i * ch + c]
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn conserving_kernels_keep_the_mean_of_a_16_bit_tone_no_8_bit_code_holds() {
+    // A flat field at code 20 000 of 65 535 (between the 8-bit codes 77
+    // and 78). Every conserving kernel reproduces that tone as the
+    // density of its two output levels, to within the error that left
+    // through the picture's edge.
+    let (w, h) = (96usize, 96usize);
+    let tone = 20_000.0f64;
+    let src = vec![tone; w * h];
+    let (f, p) = frame(Depth::U16, w, 1, &src);
+    for kernel in KERNELS {
+        for scan in [ScanOrder::Raster, ScanOrder::Serpentine] {
+            let out = Dither::error_diffusion(kernel)
+                .with_scan(scan)
+                .apply(&f, p)
+                .unwrap();
+            let got = codes(Depth::U16, &out);
+            assert!(got.iter().all(|&v| v == 0.0 || v == 65535.0));
+            let mean = got.iter().sum::<f64>() / got.len() as f64;
+            if kernel == DiffusionKernel::Atkinson {
+                // A quarter of every residue is dropped: on a tone below
+                // mid-grey the picture comes out darker than the tone.
+                assert!(mean < tone - 300.0, "{scan:?}: {mean}");
+            } else {
+                assert!(
+                    (mean - tone).abs() < 0.012 * 65535.0,
+                    "{kernel:?} {scan:?}: mean {mean} vs {tone}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn ordered_dither_compares_against_the_bayer_thresholds_at_every_depth() {
+    // Two levels: the output is white exactly where the tone plus the
+    // cell's centred threshold reaches one half, `v + (m + ½)/n² − ½ ≥ ½`
+    // — on a flat tone `v` the white density is therefore the number of
+    // cells with `(m + ½)/n² ≥ 1 − v`.
+    for depth in DEPTHS {
+        let s = depth.scale();
+        for (matrix, n) in [
+            (BayerMatrix::M2, 2usize),
+            (BayerMatrix::M4, 4),
+            (BayerMatrix::M8, 8),
+            (BayerMatrix::M16, 16),
+        ] {
+            let cells = (n * n) as f64;
+            for tone in [0.0f64, 0.1, 0.337, 0.5, 0.81, 1.0] {
+                let code = match depth {
+                    Depth::F32 => (tone as f32) as f64,
+                    _ => (tone * s).round(),
+                };
+                let v = code / s;
+                let src = vec![code; n * n * 4];
+                let (f, p) = frame(depth, 2 * n, 1, &src);
+                let out = Dither::ordered(matrix).apply(&f, p).unwrap();
+                let got = codes(depth, &out);
+                assert!(got.iter().all(|&g| g == 0.0 || g == s), "{depth:?}");
+                let white = got.iter().filter(|&&g| g == s).count() as f64 / got.len() as f64;
+                let want = (0..n * n)
+                    .filter(|&m| (m as f64 + 0.5) / cells >= 1.0 - v - 1e-9)
+                    .count() as f64
+                    / cells;
+                // A cell exactly on the decision edge may fall either
+                // way in binary32.
+                assert!(
+                    (white - want).abs() <= 1.0 / cells + 1e-9,
+                    "{depth:?} {matrix:?} tone {tone}: {white} vs {want}"
+                );
+            }
+        }
+        // Multi-level: every output is one of the L levels at depth and
+        // within one level spacing of the input.
+        let (w, h) = (16usize, 16usize);
+        let src = noise_codes(depth, w * h * 3, 13);
+        let (f, p) = frame(depth, w, 3, &src);
+        for levels in [3u32, 5, 16] {
+            let out = Dither::ordered(BayerMatrix::M8)
+                .with_levels(levels)
+                .apply(&f, p)
+                .unwrap();
+            let span = (levels - 1) as f64;
+            for (g, v) in codes(depth, &out).iter().zip(&src) {
+                // A level `k / (L − 1)`, stored at the picture's depth
+                // (rounded to the nearest code on the integer depths).
+                let k = (g / s * span).round();
+                let level = match depth {
+                    Depth::F32 => ((k as f32) / (span as f32)) as f64,
+                    _ => (k / span * s + 0.5).floor(),
+                };
+                assert_eq!(*g, level, "{depth:?} L{levels}");
+                let v = (v / s).clamp(0.0, 1.0);
+                assert!((g / s - v).abs() <= 1.0 / span + depth.step());
+            }
+        }
+    }
+}
+
+#[test]
+fn dither_survives_degenerate_pictures_and_non_finite_samples() {
+    for depth in DEPTHS {
+        for (w, h) in [(1usize, 1usize), (1, 7), (7, 1), (2, 2)] {
+            let src = noise_codes(depth, w * h * 4, 9);
+            let (f, p) = frame(depth, w, 4, &src);
+            for kernel in KERNELS {
+                for scan in [ScanOrder::Raster, ScanOrder::Serpentine] {
+                    for levels in [0u32, 1, 2, 255, u32::MAX] {
+                        let d = Dither::error_diffusion(kernel)
+                            .with_levels(levels)
+                            .with_scan(scan);
+                        assert!(d.apply(&f, p).is_ok());
+                    }
+                }
+            }
+            assert!(Dither::ordered(BayerMatrix::M16).apply(&f, p).is_ok());
+        }
+    }
+    let odd = [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1e30, -1e30, 0.4];
+    let (f, p) = frame(Depth::F32, 3, 1, &odd);
+    let out = Dither::new().apply(&f, p).unwrap();
+    let got = codes(Depth::F32, &out);
+    assert_eq!(&got[..3], &[0.0, 1.0, 0.0]);
+    assert!(got.iter().all(|v| *v == 0.0 || *v == 1.0));
 }

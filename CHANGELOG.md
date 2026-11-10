@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result converted back. A 16-bit composite was a typed refusal before.
 - `Difference` on the float layouts (and through them every 16-bit
   layout), exact at depth.
+- `Dither` at every depth: 16-bit and float pictures are dithered at
+  their own precision (a 16-bit flat tone between two 8-bit codes keeps
+  its mean; output levels are 16-bit codes), alpha untouched. It was an
+  8-bit-only filter.
 - `benches/throughput.rs`: wall-clock throughput of the most used
   filters at 1 MP / 12 MP, 8- and 16-bit, any thread budget.
 
@@ -32,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once instead of twice — and on `Rgba` / `RgbaF32Le` (and the 16-bit
   layouts with alpha) blurs colour premultiplied by alpha, so the colour
   of a transparent pixel no longer bleeds into its neighbours.
+- `Dither` runs one binary32 kernel for every depth. Error diffusion
+  no longer truncates the diffused error to whole 8-bit codes (the
+  integer division dropped up to a code per tap), and the ordered mode
+  compares against the exact centred thresholds `(m + ½)/n² − ½` scaled
+  to the level spacing. 8-bit outputs differ from 0.1.5 in individual
+  dots, not in tone; the ordered mode's rows run under the thread budget.
 - `Statistic` and `Despeckle` cost no longer grows with the window
   area: sliding-histogram median (8- and 16-bit; a sorted sliding window
   for arbitrary floats), block-scan minimum / maximum, running-sum mean.
