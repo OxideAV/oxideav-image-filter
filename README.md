@@ -1095,22 +1095,22 @@ physically-meaningful luminance.
 - **`Composite`** + **`CompositeOp`** — a foreground (`src`) composed
   onto a background (`dst`) with any of 70 operators
   (`CompositeOp::ALL`), each registered as a `composite-<op>` factory:
-  - Porter–Duff coverage: `clear`, `src`, `dst`, `over`, `dst-over`,
-    `in`, `dst-in`, `out`, `dst-out`, `atop`, `dst-atop`, `xor`.
+  - Porter–Duff coverage: `clear`, `src`, `dst`, `over`, `dstover`,
+    `in`, `dstin`, `out`, `dstout`, `atop`, `dstatop`, `xor`.
   - Separable blends, `B(Cb, Cs)` weighted by coverage as in the
     Porter–Duff source-over sum: `multiply`, `screen`, `overlay`,
-    `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`,
-    `soft-light`, `difference`, `exclusion`, plus `plus`, `minus`,
-    `divide`, the modulus pair, `linear-burn` / `linear-dodge` /
-    `linear-light`, `vivid-light`, `pin-light`, `hard-mix`,
-    `pegtop-light`, `soft-burn` / `soft-dodge`, `stamp`, `freeze`,
-    `reflect`, `negate`, `interpolate`.
+    `darken`, `lighten`, `colordodge`, `colorburn`, `hardlight`,
+    `softlight`, `difference`, `exclusion`, plus `plus`, `minusdst` /
+    `minussrc`, `dividedst` / `dividesrc`, `modulusadd` /
+    `modulussubtract`, `linearburn` / `lineardodge` / `linearlight`,
+    `vividlight`, `pinlight`, `hardmix`, `pegtoplight`, `softburn` /
+    `softdodge`, `stamp`, `freeze`, `reflect`, `negate`, `interpolate`.
   - Non-separable (hue / saturation / luminosity) blends: `hue`,
     `saturate`, `luminize`, `colorize`, and the intensity-selected
-    `darken-intensity` / `lighten-intensity`.
+    `darkenintensity` / `lightenintensity`.
   - Parametrised: `mathematics`, `blend`, `dissolve`, `modulate`,
-    `threshold`, `change-mask`, `rmse`; channel copies (`copy-red` …
-    `copy-black`); and the map operators `displace`, `distort`, `blur`,
+    `threshold`, `changemask`, `rmse`; channel copies (`copyred` …
+    `copyblack`); and the map operators `displace`, `distort`, `blur`,
     `bumpmap`, `intensity`.
   - **Placement** ([`Composite::compose`], pictures of different
     extents): `with_offset(x, y)` (negative allowed, clipped),
@@ -1424,8 +1424,8 @@ count is given.
 |---|---|---:|---:|---:|---:|---:|---:|
 | blur r3 s1.5 | 8-bit | 32.2 | 7.1 | 2.2 | 383 | 89.4 | 16.6 |
 | blur r12 s6 | 8-bit | 111 | 16.4 | 4.5 | 1268 | 203 | 37.2 |
-| resize half lanczos3 | 8-bit | 16.2 | 10.7 | 3.3 | 172 | 125 | 20.3 |
-| resize 1.5x bicubic | 8-bit | 53.0 | 53.6 | 10.9 | 538 | 577 | 90.4 |
+| resize half lanczos3 | 8-bit | 16.2 | 11.5 | 2.9 | 172 | 148 | 27.9 |
+| resize 1.5x bicubic | 8-bit | 53.0 | 56.7 | 9.7 | 538 | 662 | 102 |
 | sharpen r2 s1 | 8-bit | 27.6 | 7.6 | 3.4 | 264 | 82.6 | 31.9 |
 | unsharp r3 s1.5 | 8-bit | 35.0 | 8.1 | 3.4 | 343 | 93.2 | 33.8 |
 | morphology dilate sq x2 | 8-bit | 53.3 | 1.7 | 0.7 | 512 | 21.6 | 4.6 |
@@ -1441,8 +1441,8 @@ count is given.
 | composite over | 8-bit | 5.2 | 6.6 | 3.9 | 65.2 | 83.8 | 36.2 |
 | blur r3 s1.5 | 16-bit | 42.8 | 8.0 | 3.2 | 492 | 113 | 25.3 |
 | blur r12 s6 | 16-bit | 122 | 17.3 | 5.6 | 1317 | 239 | 44.5 |
-| resize half lanczos3 | 16-bit | 16.6 | 10.4 | 3.4 | 176 | 125 | 20.9 |
-| resize 1.5x bicubic | 16-bit | 57.8 | 50.6 | 11.4 | 628 | 604 | 102 |
+| resize half lanczos3 | 16-bit | 16.6 | 11.9 | 3.1 | 176 | 135 | 25.9 |
+| resize 1.5x bicubic | 16-bit | 57.8 | 55.6 | 9.4 | 628 | 630 | 101 |
 | sharpen r2 s1 | 16-bit | 40.7 | 9.0 | 4.8 | 419 | 112 | 46.2 |
 | unsharp r3 s1.5 | 16-bit | 46.7 | 10.1 | 5.0 | 642 | 127 | 48.3 |
 | morphology dilate sq x2 | 16-bit | 60.3 | 6.9 | 2.9 | 790 | 83.8 | 25.9 |
@@ -1464,7 +1464,10 @@ running extremes (block scans past 32 taps); the mean is a prefix-sum
 difference; morphology collapses iterations into one larger element; the
 oil-paint window slides; the 16-bit float hop is done in-crate; nothing
 allocates per pixel. `Composite` and `Dither` were refused at 16 bits
-before.
+before. The benchmark picture has partial alpha, so the "after" figures
+of `blur`, `sharpen`, `unsharp` and `resize` include the coverage
+weighting the earlier release did not do (the serial bicubic enlargement
+pays for it; the others gain more than it costs).
 
 ## Pixel layouts and the frame contract
 

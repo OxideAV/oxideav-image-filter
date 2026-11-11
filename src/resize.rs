@@ -237,25 +237,40 @@ impl PixelFilter for Resize {
                         .chunks_exact(ch)
                         .any(|px| px[ai] <= 0.0)
                         .then(|| resample(&samples, dw, dh, self.interp, &self.options));
-                    for px in samples.data.chunks_exact_mut(ch) {
-                        let a = px[ai] / full;
-                        for (c, v) in px.iter_mut().enumerate() {
-                            if c != ai {
+                    let inv_full = 1.0 / full;
+                    let row = samples.w * ch;
+                    crate::exec::par_rows(&mut samples.data, row, |_, line| {
+                        for px in line.chunks_exact_mut(ch) {
+                            // Scale the whole pixel, then put alpha back.
+                            let alpha = px[ai];
+                            let a = alpha * inv_full;
+                            for v in px.iter_mut() {
                                 *v *= a;
                             }
+                            px[ai] = alpha;
                         }
-                    }
+                    });
                     let mut out = resample(&samples, dw, dh, self.interp, &self.options);
-                    for (i, px) in out.data.chunks_exact_mut(ch).enumerate() {
-                        let cover = px[ai] / full;
-                        for c in (0..ch).filter(|&c| c != ai) {
-                            px[c] = if cover > 1e-6 {
-                                px[c] / cover
+                    let plain = plain.as_ref();
+                    crate::exec::par_rows(&mut out.data, dw * ch, |y, line| {
+                        for (x, px) in line.chunks_exact_mut(ch).enumerate() {
+                            let alpha = px[ai];
+                            let cover = alpha * inv_full;
+                            if cover > 1e-6 {
+                                let inv = 1.0 / cover;
+                                for v in px.iter_mut() {
+                                    *v *= inv;
+                                }
                             } else {
-                                plain.as_ref().map_or(0.0, |p| p.data[i * ch + c])
-                            };
+                                let i = (y * dw + x) * ch;
+                                match plain {
+                                    Some(p) => px.copy_from_slice(&p.data[i..i + ch]),
+                                    None => px.fill(0.0),
+                                }
+                            }
+                            px[ai] = alpha;
                         }
-                    }
+                    });
                     out
                 }
             };
