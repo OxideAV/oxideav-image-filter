@@ -144,6 +144,16 @@ let half = Resize::new(params.width / 2, params.height / 2)
   resizes `rose:` through all 31 filters at 8 and 16 bits and holds
   PSNR ≥ 45 dB (measured: identical to the last code on most).
 
+A packed layout with alpha (`Rgba`, `Bgra`, `Argb`, `Abgr`, `Ya8`,
+`Ya16Le`, `Rgba64Le`, `RgbaF32Le`) averages its colour weighted by
+coverage, so a transparent pixel's colour does not fringe its
+neighbours; an output pixel no coverage reaches keeps the plain average,
+and an opaque picture is untouched by the rule. Both passes of the
+separable resampler and the bilinear / bicubic path run under the thread
+budget. `tests/depth_analytic.rs` reproduces the `BC(B, C)` cubic as the
+impulse response of `Mitchell`, `Catrom`, `Cubic`, `Robidoux`, a custom
+`(B, C)` and `BSpline` at 8 bits, 16 bits and float.
+
 For planar YUV the chroma planes are resized to the matching subsampled
 output dimensions (e.g. 4:2:0 halves both chroma axes). Pipeline JSON
 selects the kernel via `"interpolation"`: `nearest` / `bilinear` /
@@ -1178,8 +1188,8 @@ through 8 bits. The output layout is the input layout (a filter that
 changes layout — an edge detector, a channel extractor — emits its grey
 counterpart at the same precision). Alpha is carried at depth and, where
 a kernel averages colour across pixels of different coverage (`Blur`,
-`Sharpen`, `Unsharp`, the resampler, the distortions' EWA), the colour
-is weighted by it.
+`Sharpen`, `Unsharp`, `Resize` on the packed layouts, the distortions'
+EWA), the colour is weighted by it.
 
 155 of 170 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
 `Unsupported` (never a silent narrowing). `tests/depth_support_table.rs`

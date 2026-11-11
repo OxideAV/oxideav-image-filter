@@ -209,14 +209,56 @@ impl PixelFilter for Resize {
                     ))
                 })?;
             let dst_g = layout::plane_geometry(fmt, idx, new_w, new_h).unwrap_or(src_g);
-            let samples = unpack(plane, src_g, kind);
-            let out = resample(
-                &samples,
-                dst_g.width as usize,
-                dst_g.height as usize,
-                self.interp,
-                &self.options,
-            );
+            let mut samples = unpack(plane, src_g, kind);
+            let (dw, dh) = (dst_g.width as usize, dst_g.height as usize);
+            // A packed layout with alpha averages its colour weighted
+            // by coverage (premultiplied), so the colour of a
+            // transparent pixel does not bleed into its neighbours. An
+            // opaque picture (every alpha at full scale) is left on the
+            // plain path, bit for bit.
+            let full = kind.max_code().map(|m| m as f32).unwrap_or(1.0);
+            let covered = packed_alpha_index(fmt)
+                .filter(|_| !self.is_point_sampling() && samples.ch > 1)
+                .filter(|&ai| {
+                    samples
+                        .data
+                        .chunks_exact(samples.ch)
+                        .any(|px| px[ai] != full)
+                });
+            let out = match covered {
+                None => resample(&samples, dw, dh, self.interp, &self.options),
+                Some(ai) => {
+                    let ch = samples.ch;
+                    // Only where no coverage reaches an output pixel is
+                    // the plain average needed (its colour is all that
+                    // is left to keep).
+                    let plain = samples
+                        .data
+                        .chunks_exact(ch)
+                        .any(|px| px[ai] <= 0.0)
+                        .then(|| resample(&samples, dw, dh, self.interp, &self.options));
+                    for px in samples.data.chunks_exact_mut(ch) {
+                        let a = px[ai] / full;
+                        for (c, v) in px.iter_mut().enumerate() {
+                            if c != ai {
+                                *v *= a;
+                            }
+                        }
+                    }
+                    let mut out = resample(&samples, dw, dh, self.interp, &self.options);
+                    for (i, px) in out.data.chunks_exact_mut(ch).enumerate() {
+                        let cover = px[ai] / full;
+                        for c in (0..ch).filter(|&c| c != ai) {
+                            px[c] = if cover > 1e-6 {
+                                px[c] / cover
+                            } else {
+                                plain.as_ref().map_or(0.0, |p| p.data[i * ch + c])
+                            };
+                        }
+                    }
+                    out
+                }
+            };
             new_planes.push(pack(&out, kind));
         }
 
@@ -224,6 +266,20 @@ impl PixelFilter for Resize {
             pts: input.pts,
             planes: new_planes,
         })
+    }
+}
+
+/// The position of alpha among a packed pixel's samples, for the packed
+/// layouts that carry one (`None` otherwise — planar alpha is its own
+/// plane and is resampled as one).
+fn packed_alpha_index(fmt: PixelFormat) -> Option<usize> {
+    match fmt {
+        PixelFormat::Rgba | PixelFormat::Bgra | PixelFormat::Rgba64Le | PixelFormat::RgbaF32Le => {
+            Some(3)
+        }
+        PixelFormat::Argb | PixelFormat::Abgr => Some(0),
+        PixelFormat::Ya8 | PixelFormat::Ya16Le => Some(1),
+        _ => None,
     }
 }
 

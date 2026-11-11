@@ -7,8 +7,9 @@
 use oxideav_core::{ExecutionContext, PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{
     BayerMatrix, Blur, Despeckle, DiffusionKernel, Dither, EdgeOp, EuclideanDistanceTransform,
-    ImageFilter, Morphology, MorphologyEdge, MorphologyOp, Paint, ScanOrder, Statistic,
-    StatisticOp, StructuringElement, VideoStreamParams, with_execution_context,
+    FilterOptions, ImageFilter, Interpolation, Morphology, MorphologyEdge, MorphologyOp, Paint,
+    ResampleFilter, Resize, ScanOrder, Statistic, StatisticOp, StructuringElement,
+    VideoStreamParams, with_execution_context,
 };
 
 /// Storage depth of a test picture.
@@ -1065,5 +1066,162 @@ fn mask_operators_threshold_a_16_bit_picture_at_its_own_precision() {
     for (x, g) in codes(Depth::F32, &out).iter().enumerate() {
         let want = ((x as f64 - 5.0).abs() as f32 / 255.0) as f64;
         assert_eq!(*g, want, "float x = {x}");
+    }
+}
+
+/// The Mitchell–Netravali cubic `BC(b, c)`:
+/// `|x| < 1`: `((12 − 9B − 6C)|x|³ + (−18 + 12B + 6C)|x|² + (6 − 2B)) / 6`,
+/// `1 ≤ |x| < 2`: `((−B − 6C)|x|³ + (6B + 30C)|x|² + (−12B − 48C)|x| + (8B + 24C)) / 6`.
+fn bc(x: f64, b: f64, c: f64) -> f64 {
+    let x = x.abs();
+    if x < 1.0 {
+        ((12.0 - 9.0 * b - 6.0 * c) * x.powi(3)
+            + (-18.0 + 12.0 * b + 6.0 * c) * x * x
+            + (6.0 - 2.0 * b))
+            / 6.0
+    } else if x < 2.0 {
+        ((-b - 6.0 * c) * x.powi(3)
+            + (6.0 * b + 30.0 * c) * x * x
+            + (-12.0 * b - 48.0 * c) * x
+            + (8.0 * b + 24.0 * c))
+            / 6.0
+    } else {
+        0.0
+    }
+}
+
+#[test]
+fn cubic_resize_reproduces_the_bc_kernel_as_its_impulse_response() {
+    // One bright pixel in a dark row, enlarged 8×: output sample j sits
+    // at source position (j + ½)/8 − ½ and is the kernel evaluated at
+    // its distance from the bright pixel (the BC weights sum to one).
+    let (sw, n, at) = (17usize, 8usize, 8usize);
+    let sqrt2 = std::f64::consts::SQRT_2;
+    type Configure = fn(Resize) -> Resize;
+    let cases: [(Configure, f64, f64); 6] = [
+        (
+            |r| r.with_filter(ResampleFilter::Mitchell),
+            1.0 / 3.0,
+            1.0 / 3.0,
+        ),
+        (|r| r.with_filter(ResampleFilter::Catrom), 0.0, 0.5),
+        (|r| r.with_filter(ResampleFilter::Cubic), 1.0, 0.0),
+        (
+            |r| r.with_filter(ResampleFilter::Robidoux),
+            12.0 / (19.0 + 9.0 * sqrt2),
+            113.0 / (58.0 + 216.0 * sqrt2),
+        ),
+        (
+            |r| {
+                r.with_filter(ResampleFilter::Cubic)
+                    .with_filter_options(FilterOptions::new().with_b(0.2).with_c(0.4))
+            },
+            0.2,
+            0.4,
+        ),
+        (|r| r.with_interpolation(Interpolation::BSpline), 1.0, 0.0),
+    ];
+    for depth in DEPTHS {
+        let s = depth.scale();
+        let amp = match depth {
+            Depth::F32 => 1.0,
+            _ => (0.8 * s).round(),
+        };
+        let mut src = vec![0.0f64; sw];
+        src[at] = amp;
+        let (f, p) = frame(depth, sw, 1, &src);
+        for (i, (configure, b, c)) in cases.iter().enumerate() {
+            let resize = configure(Resize::new(sw as u32 * n as u32, 1));
+            let got = codes(depth, &resize.apply(&f, p).unwrap());
+            assert_eq!(got.len(), sw * n);
+            for (j, g) in got.iter().enumerate() {
+                let centre = (j as f64 + 0.5) / n as f64 - 0.5;
+                let k = bc(centre - at as f64, *b, *c);
+                let want = match depth {
+                    // Integer depths round and saturate (the negative
+                    // lobes clamp to zero).
+                    Depth::F32 => k * amp,
+                    _ => (k * amp).clamp(0.0, s),
+                };
+                let tol = match depth {
+                    Depth::U8 => 0.51,
+                    Depth::U16 => 0.6,
+                    Depth::F32 => 2e-6,
+                };
+                assert!(
+                    (g - want).abs() <= tol,
+                    "{depth:?} case {i} BC({b:.3}, {c:.3}) sample {j}: {g} vs {want}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn area_resize_is_the_block_mean_and_weights_colour_by_coverage() {
+    for depth in DEPTHS {
+        let s = depth.scale();
+        // Halving: every output sample is the mean of its 2×2 block.
+        let (w, h) = (8usize, 6usize);
+        for ch in [1usize, 3] {
+            let src = noise_codes(depth, w * h * ch, 71);
+            let (f, p) = frame(depth, w, ch, &src);
+            let out = Resize::new(4, 3)
+                .with_interpolation(Interpolation::Area)
+                .apply(&f, p)
+                .unwrap();
+            let got = codes(depth, &out);
+            for y in 0..3 {
+                for x in 0..4 {
+                    for c in 0..ch {
+                        let at =
+                            |dx: usize, dy: usize| src[((2 * y + dy) * w + 2 * x + dx) * ch + c];
+                        let want = (at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1)) / 4.0;
+                        let tol = if depth == Depth::F32 { 1e-6 } else { 0.51 };
+                        assert!(
+                            (got[(y * 4 + x) * ch + c] - want).abs() <= tol,
+                            "{depth:?} ch{ch} at {x},{y},{c}"
+                        );
+                    }
+                }
+            }
+        }
+        // Coverage: an opaque pixel of colour A beside a transparent one
+        // of colour B averages to half coverage of pure A; two
+        // transparent pixels keep the plain mean of their colours.
+        let q = |v: f64| {
+            if depth == Depth::F32 {
+                (v as f32) as f64
+            } else {
+                (v * s).round()
+            }
+        };
+        let (a, b) = ([q(0.8), q(0.2), q(0.4)], [q(0.1), q(0.9), q(0.7)]);
+        let full = q(1.0);
+        let src = [
+            a[0], a[1], a[2], full, b[0], b[1], b[2], 0.0, // → half-covered A
+            a[0], a[1], a[2], 0.0, b[0], b[1], b[2], 0.0, // → transparent mean
+        ];
+        let (f, p) = frame(depth, 4, 4, &src);
+        let out = Resize::new(2, 1)
+            .with_interpolation(Interpolation::Area)
+            .apply(&f, p)
+            .unwrap();
+        let got = codes(depth, &out);
+        let tol = if depth == Depth::F32 { 1e-6 } else { 0.51 };
+        for c in 0..3 {
+            assert!(
+                (got[c] - a[c]).abs() <= tol,
+                "{depth:?} covered colour {c}: {}",
+                got[c]
+            );
+            let mean = (a[c] + b[c]) / 2.0;
+            assert!(
+                (got[4 + c] - mean).abs() <= tol,
+                "{depth:?} uncovered colour {c}"
+            );
+        }
+        assert!((got[3] - full / 2.0).abs() <= tol, "{depth:?} coverage");
+        assert_eq!(got[7], 0.0);
     }
 }

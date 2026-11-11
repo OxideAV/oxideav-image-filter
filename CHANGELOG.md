@@ -89,6 +89,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Bloom`'s glow is the exact box mean of the highlights (it was
   truncated to whole codes after each of its two passes), and
   `AnisotropicBlur` steps run under the thread budget.
+- `Resize` with an averaging kernel weights colour by alpha on the
+  packed layouts that carry one (`Rgba`, `Bgra`, `Argb`, `Abgr`, `Ya8`,
+  `Ya16Le`, `Rgba64Le`, `RgbaF32Le`): a transparent pixel's colour no
+  longer fringes its neighbours. Opaque pictures are bit-identical.
 - `Statistic` and `Despeckle` cost no longer grows with the window
   area: sliding-histogram median (8- and 16-bit; a sorted sliding window
   for arbitrary floats), block-scan minimum / maximum, running-sum mean.
