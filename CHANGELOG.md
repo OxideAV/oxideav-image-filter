@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.5...v0.1.6) - 2026-11-11
+
+### Other
+
+- coverage passes under the thread budget; README operator names and resize figures
+- colour weighted by alpha on packed alpha layouts; analytic BC and area tests
+- mask and distance operators take 16-bit and float pictures
+- deep paths for anisotropic blur, bloom, quantize, tilt-shift, stereo; README depth table and throughput table
+- fixed-size pixel chunks in the row kernel (clippy)
+- composite tile placement and 16-bit compose; row parallelism for resize, rotate, colour matrix, tone maps
+- watermark, clut, hald clut, displacement map, channel extract: float paths
+- element radius as a filter field, StructuringElement stays unit-only
+- window filters: exact and bounded at any window size
+- sliding-window oil paint at every depth
+- parametrised square / diamond / disk elements on the shared kernels
+- one binary32 kernel at every depth, 16-bit and float natively
+- shared window kernels, thread budget, hop routes for two-input filters
+
 ### Added
 
 - `with_execution_context(&ExecutionContext, || …)`: a scoped thread
