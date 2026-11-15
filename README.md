@@ -68,7 +68,8 @@ directly.
 
 ### Resize
 
-Rescale to arbitrary dimensions with seven reconstruction kernels:
+Rescale to arbitrary dimensions with seven reconstruction kernels and
+the named filter set:
 
 ```rust
 # use oxideav_core::{PixelFormat, VideoFrame, VideoPlane};
@@ -1260,8 +1261,9 @@ maps exact, a map followed by its inverse returns the picture (affine,
 perspective, bilinear, cylinder, polar), constant pictures stay constant
 for every method under every resampling, the engine agrees with the
 dedicated `Resize` and `Rotate`, a one-pixel checkerboard minified up
-to 48 times — or pushed to a perspective horizon — comes out flat grey,
-and closed-form Jacobians match central differences. The argument
+to 48 times — or pushed to a perspective horizon — comes out flat grey
+(a unit test holds the closed-form Jacobians against central
+differences). The argument
 conventions were recovered black-box from the `magick` binary with
 pictures that encode their own coordinates; `tests/magick_distort.rs`
 holds every method at ≥ 45 dB with point sampling (most ≥ 100 dB) and
@@ -1533,7 +1535,8 @@ each computed exactly as the serial loop computes it, so the output is
 identical at every budget (held by `tests/depth_analytic.rs`). Kernels
 that split: the separable convolution (`Blur`, `Sharpen`, `Unsharp`,
 `TiltShift`, `Charcoal`, `Canny`), the window filters (`Statistic`,
-`Despeckle`, `Morphology`, `Paint`, `Bloom`), `Resize`, `Rotate`,
+`Despeckle`, `Morphology`, `Paint`, `Bloom`), `Resize` (every kernel,
+separable or cylindrical), `DistortImage`, `Rotate`,
 `Composite`, `ColorMatrix`, `AnisotropicBlur`, the ordered mode of
 `Dither`, the float path of the pointwise tonal filters, and the 16-bit
 / float packing every deep path goes through. Error diffusion is serial
@@ -1551,8 +1554,8 @@ count is given.
 |---|---|---:|---:|---:|---:|---:|---:|
 | blur r3 s1.5 | 8-bit | 32.2 | 7.1 | 2.2 | 383 | 89.4 | 16.6 |
 | blur r12 s6 | 8-bit | 111 | 16.4 | 4.5 | 1268 | 203 | 37.2 |
-| resize half lanczos3 | 8-bit | 16.2 | 11.5 | 2.9 | 172 | 148 | 27.9 |
-| resize 1.5x bicubic | 8-bit | 53.0 | 56.7 | 9.7 | 538 | 662 | 102 |
+| resize half lanczos3 | 8-bit | 16.2 | 9.5 | 3.0 | 172 | 136 | 25.8 |
+| resize 1.5x bicubic | 8-bit | 53.0 | 14.3 | 3.3 | 538 | 294 | 41.4 |
 | sharpen r2 s1 | 8-bit | 27.6 | 7.6 | 3.4 | 264 | 82.6 | 31.9 |
 | unsharp r3 s1.5 | 8-bit | 35.0 | 8.1 | 3.4 | 343 | 93.2 | 33.8 |
 | morphology dilate sq x2 | 8-bit | 53.3 | 1.7 | 0.7 | 512 | 21.6 | 4.6 |
@@ -1568,8 +1571,8 @@ count is given.
 | composite over | 8-bit | 5.2 | 6.6 | 3.9 | 65.2 | 83.8 | 36.2 |
 | blur r3 s1.5 | 16-bit | 42.8 | 8.0 | 3.2 | 492 | 113 | 25.3 |
 | blur r12 s6 | 16-bit | 122 | 17.3 | 5.6 | 1317 | 239 | 44.5 |
-| resize half lanczos3 | 16-bit | 16.6 | 11.9 | 3.1 | 176 | 135 | 25.9 |
-| resize 1.5x bicubic | 16-bit | 57.8 | 55.6 | 9.4 | 628 | 630 | 101 |
+| resize half lanczos3 | 16-bit | 16.6 | 9.7 | 3.1 | 176 | 146 | 26.6 |
+| resize 1.5x bicubic | 16-bit | 57.8 | 14.3 | 4.9 | 628 | 228 | 51.8 |
 | sharpen r2 s1 | 16-bit | 40.7 | 9.0 | 4.8 | 419 | 112 | 46.2 |
 | unsharp r3 s1.5 | 16-bit | 46.7 | 10.1 | 5.0 | 642 | 127 | 48.3 |
 | morphology dilate sq x2 | 16-bit | 60.3 | 6.9 | 2.9 | 790 | 83.8 | 25.9 |
@@ -1593,8 +1596,53 @@ oil-paint window slides; the 16-bit float hop is done in-crate; nothing
 allocates per pixel. `Composite` and `Dither` were refused at 16 bits
 before. The benchmark picture has partial alpha, so the "after" figures
 of `blur`, `sharpen`, `unsharp` and `resize` include the coverage
-weighting the earlier release did not do (the serial bicubic enlargement
-pays for it; the others gain more than it costs).
+weighting the earlier release did not do. The two `resize` rows carry
+this round's figures (see "Geometric resampling" below).
+
+### Geometric resampling
+
+Megapixels of input per second (`benches/throughput.rs` with
+`IMF_BENCH_ONLY=resize,distort IMF_BENCH_BEST=1`: the fastest of 7 runs
+at 1 MP, of 3 at 12 MP, the two builds run back to back on one
+Apple-silicon laptop that fourteen other builds were sharing — read the
+ratios). "Before" is the commit before this work (`3c7faed`), serial;
+"after" is serial; the last column of each size is under a budget of 8
+threads.
+
+| operation | depth | 1 MP before | 1 MP after | 1 MP, 8 threads | 12 MP before | 12 MP after | 12 MP, 8 threads |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `Resize` ½, Lanczos 3 | 8-bit | 62 | 105 | 333 | 54 | 88 | 465 |
+| `Resize` 1.5×, bicubic | 8-bit | 13 | 70 | 303 | 8.3 | 41 | 290 |
+| `Resize` ¼, area | 8-bit | 110 | 227 | 625 | 64 | 146 | 710 |
+| `Resize` 2×, bilinear | 8-bit | 17 | 35 | 169 | 15 | 21 | 178 |
+| `Resize` 0.3×, Mitchell filter | 8-bit | 90 | 147 | 435 | 63 | 110 | 558 |
+| `Resize` ½, Robidoux, cylindrical | 8-bit | — | 17 | 154 | — | 14 | 185 |
+| `DistortImage` SRT 0.7 / 17°, area (Robidoux) | 8-bit | 2.4 | 6.4 | 65 | 1.9 | 5.1 | 56 |
+| `DistortImage` perspective, area (Robidoux) | 8-bit | 2.2 | 4.9 | 30 | 1.7 | 4.7 | 23 |
+| `DistortImage` SRT 17°, bilinear point read | 8-bit | 54 | 49 | 204 | 33 | 26 | 242 |
+| `Resize` ½, Lanczos 3 | 16-bit | 61 | 103 | 323 | 25 | 82 | 451 |
+| `Resize` 1.5×, bicubic | 16-bit | 8.4 | 70 | 204 | 6.8 | 53 | 232 |
+| `Resize` ¼, area | 16-bit | 98 | 238 | 556 | 51 | 160 | 694 |
+| `Resize` 2×, bilinear | 16-bit | 16 | 28 | 145 | 11 | 25 | 184 |
+| `Resize` 0.3×, Mitchell filter | 16-bit | 94 | 145 | 417 | 43 | 106 | 585 |
+| `Resize` ½, Robidoux, cylindrical | 16-bit | — | 23 | 161 | — | 17 | 160 |
+| `DistortImage` SRT 0.7 / 17°, area (Robidoux) | 16-bit | 1.9 | 6.8 | 65 | 1.5 | 7.0 | 45 |
+| `DistortImage` perspective, area (Robidoux) | 16-bit | 1.5 | 5.1 | 30 | 1.5 | 4.9 | 19 |
+| `DistortImage` SRT 17°, bilinear point read | 16-bit | 55 | 50 | 185 | 27 | 31 | 227 |
+
+What changed. The separable resize tabulates the taps of each axis once
+(one table, nothing allocated per output index or per pixel), runs its
+horizontal pass on fixed-size pixels, and takes bicubic through the two
+separable passes instead of sixteen taps per output pixel; the area
+average tabulates its overlaps and splits by rows; bilinear and nearest
+tabulate their column positions. Every one of these is bit-identical to
+the previous output (22 464 layout × extent × kernel cases compared
+build against build). The distortion engine renders rows under the
+thread budget, keeps pixels in fixed-size arrays per channel count,
+reads the area filter from a table over the squared distance, computes
+the footprint once per Jacobian (once per picture for an affine map),
+and gathers large footprints from a pyramid. The serial bilinear point
+read is where it was; it gains only from the thread budget.
 
 ## Pixel layouts and the frame contract
 

@@ -107,6 +107,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Resize` throughput, output bit-identical: one tap table per axis for
+  every separable kernel, a horizontal pass on fixed-size pixels,
+  bicubic through two separable passes (1.5× enlargement of a 12 MP
+  `Rgba` picture 1452 → 294 ms serial), the area average tabulated and
+  under the thread budget (187 → 82 ms for ¼ of 12 MP), Lanczos ½
+  221 → 136 ms. `DistortImage` area resampling 6193 → 2359 ms serial on
+  12 MP (213 ms under 8 threads). Figures and method in the README.
 - `DistortImage` renders rows under the thread budget
   (`with_execution_context`), allocates nothing per pixel, reads the
   area filter from a weight table, and keeps the input's channel count
