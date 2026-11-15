@@ -115,6 +115,56 @@ pub struct Resize {
     target_height: u32,
     interp: Interpolation,
     options: FilterOptions,
+    cylindrical: bool,
+    linear_light: bool,
+}
+
+/// The layouts whose samples are RGB or grey intensities (and alpha):
+/// the ones a linear-light resize works on directly. Everything else
+/// reaches it through a conversion to one of these.
+const INTENSITY_LAYOUTS: &[PixelFormat] = &[
+    PixelFormat::Rgba,
+    PixelFormat::Rgb24,
+    PixelFormat::Gray8,
+    PixelFormat::Bgr24,
+    PixelFormat::Bgra,
+    PixelFormat::Argb,
+    PixelFormat::Abgr,
+    PixelFormat::Ya8,
+    PixelFormat::Gbrp8,
+    PixelFormat::Gbrap8,
+    PixelFormat::RgbaF32Le,
+    PixelFormat::RgbF32Le,
+    PixelFormat::GrayF32Le,
+    PixelFormat::GbrpF32Le,
+    PixelFormat::GbrapF32Le,
+    PixelFormat::Rgb48Le,
+    PixelFormat::Rgba64Le,
+    PixelFormat::Gray16Le,
+    PixelFormat::Gray10Le,
+    PixelFormat::Gray12Le,
+    PixelFormat::Ya16Le,
+    PixelFormat::Gbrp10Le,
+    PixelFormat::Gbrap10Le,
+    PixelFormat::Gbrp12Le,
+    PixelFormat::Gbrap12Le,
+    PixelFormat::Gbrp14Le,
+    PixelFormat::Gbrap14Le,
+    PixelFormat::Gbrp16Le,
+    PixelFormat::Gbrap16Le,
+];
+
+/// `true` for the planar GBR layouts that carry alpha as a fourth plane.
+fn has_alpha_plane(fmt: PixelFormat) -> bool {
+    matches!(
+        fmt,
+        PixelFormat::Gbrap8
+            | PixelFormat::Gbrap10Le
+            | PixelFormat::Gbrap12Le
+            | PixelFormat::Gbrap14Le
+            | PixelFormat::Gbrap16Le
+            | PixelFormat::GbrapF32Le
+    )
 }
 
 impl Resize {
@@ -125,7 +175,67 @@ impl Resize {
             target_height: target_height.max(1),
             interp: Interpolation::default(),
             options: FilterOptions::new(),
+            cylindrical: false,
+            linear_light: false,
         }
+    }
+
+    /// Apply the kernel cylindrically instead of separably: every output
+    /// pixel gathers the source pixels inside an ellipse (the kernel's
+    /// disc stretched by the two scale factors) weighted by the kernel
+    /// evaluated at the radial distance, in one pass. The response is
+    /// the same in every direction — diagonals are treated like rows and
+    /// columns — at a higher cost per pixel than the two separable
+    /// passes. A windowed sinc takes its radial (jinc) form; the point
+    /// and nearest selectors stay point reads and
+    /// [`Interpolation::Area`] stays the exact rectangle average.
+    pub fn with_cylindrical(mut self, cylindrical: bool) -> Self {
+        self.cylindrical = cylindrical;
+        self
+    }
+
+    /// Resample in linear light: the colour samples are taken through
+    /// the sRGB decoding curve before the kernel and back through the
+    /// encoding curve after it (alpha is left as it is), so averaging
+    /// mixes light, not code values — a fine dark / bright pattern
+    /// shrinks to the tone it has when seen from afar instead of a
+    /// darker one. Layouts that are not RGB or grey intensities (YUV,
+    /// CMYK) are converted to RGB for the resize and back.
+    pub fn with_linear_light(mut self, linear_light: bool) -> Self {
+        self.linear_light = linear_light;
+        self
+    }
+
+    /// `true` when the kernel is applied cylindrically.
+    pub fn cylindrical(&self) -> bool {
+        self.cylindrical
+    }
+
+    /// `true` when the resize runs in linear light.
+    pub fn linear_light(&self) -> bool {
+        self.linear_light
+    }
+
+    /// The radial filter the cylindrical path uses for the selector
+    /// (`None` for the point reads).
+    fn radial_filter(&self) -> Option<(ResampleFilter, FilterOptions)> {
+        let o = self.options;
+        Some(match self.interp {
+            // Point reads have no footprint, and the area average is the
+            // exact integral over the output pixel's own rectangle.
+            Interpolation::Nearest
+            | Interpolation::Area
+            | Interpolation::Filter(ResampleFilter::Point) => return None,
+            Interpolation::Bilinear => (ResampleFilter::Triangle, o),
+            Interpolation::Bicubic => (ResampleFilter::Catrom, o),
+            Interpolation::Lanczos { a } => (
+                ResampleFilter::Lanczos,
+                FilterOptions::new().with_lobes(a.clamp(1, 8) as u32),
+            ),
+            Interpolation::Mitchell => (ResampleFilter::Mitchell, o),
+            Interpolation::BSpline => (ResampleFilter::Cubic, o),
+            Interpolation::Filter(f) => (f, o),
+        })
     }
 
     /// Choose the interpolation kernel.
@@ -175,6 +285,8 @@ impl PixelFilter for Resize {
     fn accepted_formats(&self) -> &'static [PixelFormat] {
         if self.is_point_sampling() {
             layout::BYTE_ADDRESSABLE
+        } else if self.linear_light {
+            INTENSITY_LAYOUTS
         } else {
             layout::BYTE_ADDRESSABLE_SAMPLED
         }
@@ -217,7 +329,34 @@ impl PixelFilter for Resize {
             // opaque picture (every alpha at full scale) is left on the
             // plain path, bit for bit.
             let full = kind.max_code().map(|m| m as f32).unwrap_or(1.0);
-            let covered = packed_alpha_index(fmt)
+            let alpha_index = packed_alpha_index(fmt);
+            // Linear light: decode the intensity samples (never alpha).
+            let linear = self.linear_light
+                && !self.is_point_sampling()
+                && !(has_alpha_plane(fmt) && idx == 3);
+            if linear {
+                transfer(&mut samples, alpha_index, full, to_linear_light);
+            }
+            if self.cylindrical
+                && samples.ch <= crate::resample_engine::MAX_CH
+                && let Some((filter, options)) = self.radial_filter()
+            {
+                let mut out = resample_cylindrical(
+                    &samples,
+                    dw,
+                    dh,
+                    filter,
+                    &options,
+                    alpha_index.filter(|_| samples.ch > 1),
+                    full,
+                );
+                if linear {
+                    transfer(&mut out, alpha_index, full, from_linear_light);
+                }
+                new_planes.push(pack(&out, kind));
+                continue;
+            }
+            let covered = alpha_index
                 .filter(|_| !self.is_point_sampling() && samples.ch > 1)
                 .filter(|&ai| {
                     samples
@@ -274,6 +413,10 @@ impl PixelFilter for Resize {
                     out
                 }
             };
+            let mut out = out;
+            if linear {
+                transfer(&mut out, alpha_index, full, from_linear_light);
+            }
             new_planes.push(pack(&out, kind));
         }
 
@@ -281,6 +424,107 @@ impl PixelFilter for Resize {
             pts: input.pts,
             planes: new_planes,
         })
+    }
+}
+
+/// The sRGB decoding curve (IEC 61966-2-1) of a normalised code,
+/// continued past 1 by its power segment and odd about zero, so
+/// scene-referred float samples keep their range and sign.
+fn to_linear_light(v: f32) -> f32 {
+    let a = v.abs();
+    let l = if a <= 0.04045 {
+        a / 12.92
+    } else {
+        ((a + 0.055) / 1.055).powf(2.4)
+    };
+    l.copysign(v)
+}
+
+/// Inverse of [`to_linear_light`].
+fn from_linear_light(l: f32) -> f32 {
+    let a = l.abs();
+    let v = if a <= 0.003_130_8 {
+        a * 12.92
+    } else {
+        1.055 * a.powf(1.0 / 2.4) - 0.055
+    };
+    v.copysign(l)
+}
+
+/// Take every intensity sample of a plane through `curve` on the
+/// normalised scale (`full` is the storage's full-scale code); the
+/// sample at `alpha` is left alone.
+fn transfer(s: &mut Samples, alpha: Option<usize>, full: f32, curve: fn(f32) -> f32) {
+    let ch = s.ch;
+    let alpha = alpha.filter(|_| ch > 1);
+    let inv = 1.0 / full;
+    crate::exec::par_rows(&mut s.data, (s.w * ch).max(1), |_, line| {
+        for px in line.chunks_exact_mut(ch) {
+            for (c, v) in px.iter_mut().enumerate() {
+                if Some(c) != alpha {
+                    *v = curve(*v * inv) * full;
+                }
+            }
+        }
+    });
+}
+
+/// Cylindrical resampling of one plane to `dw × dh`: an elliptical
+/// weighted average under the resize's own Jacobian `diag(sw/dw,
+/// sh/dh)`, edge samples replicated, colour weighted by coverage when
+/// the plane carries alpha at `alpha`.
+fn resample_cylindrical(
+    src: &Samples,
+    dw: usize,
+    dh: usize,
+    filter: ResampleFilter,
+    opts: &FilterOptions,
+    alpha: Option<usize>,
+    full: f32,
+) -> Samples {
+    use crate::resample_engine::{AxisScale, EdgeColours, EwaKernel, Gather, Source, View, render};
+    let (sw, sh, ch) = (src.w, src.h, src.ch);
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return Samples {
+            w: dw,
+            h: dh,
+            ch,
+            data: vec![0.0; dw * dh * ch],
+        };
+    }
+    if (sw, sh) == (dw, dh) {
+        // Nothing to resample: the samples are the output's.
+        return Samples {
+            w: dw,
+            h: dh,
+            ch,
+            data: src.data.clone(),
+        };
+    }
+    let kernel = EwaKernel::new(&RadialKernel::cylindrical(filter, opts));
+    let source = Source::new(
+        &src.data,
+        sw,
+        sh,
+        ch,
+        alpha,
+        full,
+        crate::VirtualPixel::Edge,
+        EdgeColours::default(),
+    );
+    let map = AxisScale(sw as f64 / dw as f64, sh as f64 / dh as f64);
+    let view = View {
+        width: dw,
+        height: dh,
+        x: 0.0,
+        y: 0.0,
+        scale: 1.0,
+    };
+    Samples {
+        w: dw,
+        h: dh,
+        ch,
+        data: render(&source, &map, view, &Gather::Ewa(kernel), [0.0; 4]),
     }
 }
 
@@ -963,6 +1207,10 @@ enum Window {
     Sinc,
     /// The jinc window `jinc(t)`.
     Jinc,
+    /// The main lobe of the jinc, `jinc(t · z₁)` with `z₁` its first
+    /// zero: the radial counterpart of the Lanczos window (it reaches
+    /// zero exactly at the support).
+    JincLobe,
 }
 
 impl Window {
@@ -990,6 +1238,7 @@ impl Window {
             Window::Cosine => (pi * a / 2.0).cos(),
             Window::Sinc => sinc(a),
             Window::Jinc => jinc(a),
+            Window::JincLobe => jinc(a * jinc_zero(1) as f32),
         }
     }
 }
@@ -1206,8 +1455,33 @@ impl Kernel {
 pub(crate) struct RadialKernel(Kernel);
 
 impl RadialKernel {
-    pub(crate) fn new(filter: ResampleFilter, opts: &FilterOptions) -> Self {
-        Self(Kernel::build(filter, opts))
+    /// The filter's radial (cylindrical) form. A polynomial, Gaussian or
+    /// jinc kernel is used as a function of the radius as it stands. A
+    /// windowed sinc becomes its two-dimensional counterpart: the
+    /// band-limiting kernel of a disc-shaped pass band is the jinc, so
+    /// the sinc is replaced by `jinc(r)`, the support of `n` lobes by the
+    /// jinc's `n`-th zero, and the Lanczos window by the jinc's main lobe
+    /// stretched over that support. [`ResampleFilter::LanczosRadius`]
+    /// instead keeps the whole-pixel radius `n` and compresses the
+    /// kernel so its `n`-th zero lands there. An explicit
+    /// [`FilterOptions::support`] is kept as given.
+    pub(crate) fn cylindrical(filter: ResampleFilter, opts: &FilterOptions) -> Self {
+        let mut k = Kernel::build(filter, opts);
+        if k.shape == Shape::Sinc {
+            k.shape = Shape::Jinc;
+            if k.window == Some(Window::Sinc) {
+                k.window = Some(Window::JincLobe);
+            }
+            if opts.support.is_none() {
+                let lobes = (k.support.round() as u32).clamp(1, 16);
+                let zero = jinc_zero(lobes) as f32;
+                if filter == ResampleFilter::LanczosRadius {
+                    k.blur *= lobes as f32 / zero;
+                }
+                k.support = zero;
+            }
+        }
+        Self(k)
     }
 
     /// Support radius in source pixels (blur applied).
@@ -1245,10 +1519,31 @@ fn jinc(x: f32) -> f32 {
     }
 }
 
+/// The `n`-th positive zero of `jinc(x) = 2 J₁(πx) / (πx)` (`n ≥ 1`),
+/// by bisection: the zeros interlace as `n + ¼ − ε`, one in each
+/// `[n, n + ½]`.
+fn jinc_zero(n: u32) -> f64 {
+    let f = |x: f64| bessel_j1_f64(std::f64::consts::PI * x);
+    let (mut lo, mut hi) = (n as f64, n as f64 + 0.5);
+    let sign_lo = f(lo) > 0.0;
+    for _ in 0..60 {
+        let mid = 0.5 * (lo + hi);
+        if (f(mid) > 0.0) == sign_lo {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    0.5 * (lo + hi)
+}
+
 /// Bessel `J₁(x)` by its power series (converges for every finite `x`;
 /// the kernel only asks for `|x| ≤ π · support`).
 fn bessel_j1(x: f32) -> f32 {
-    let x = x as f64;
+    bessel_j1_f64(x as f64) as f32
+}
+
+fn bessel_j1_f64(x: f64) -> f64 {
     let mut sum = 0.0f64;
     let mut term = x / 2.0;
     let mut k = 0u32;
@@ -1260,7 +1555,7 @@ fn bessel_j1(x: f32) -> f32 {
             break;
         }
     }
-    sum as f32
+    sum
 }
 
 /// Modified Bessel `I₀(x)` by its power series.

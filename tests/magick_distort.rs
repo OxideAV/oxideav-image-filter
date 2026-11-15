@@ -237,6 +237,31 @@ fn cases() -> Vec<Case> {
             false,
             45.0,
         ),
+        (
+            "Cylinder2Plane",
+            "90",
+            M::Cylinder2Plane,
+            vec![90.0],
+            false,
+            45.0,
+        ),
+        (
+            "Plane2Cylinder",
+            "90",
+            M::Plane2Cylinder,
+            vec![90.0],
+            false,
+            45.0,
+        ),
+        (
+            "Resize",
+            "100x60!",
+            M::Resize,
+            vec![100.0, 60.0],
+            false,
+            35.0,
+        ),
+        ("Resize", "31x20!", M::Resize, vec![31.0, 20.0], false, 45.0),
         ("SRT", "25", M::ScaleRotateTranslate, vec![25.0], true, 45.0),
         (
             "Perspective",
@@ -304,7 +329,7 @@ fn distort_methods_with_point_sampling_match_magick() {
                 format!("{op} {name} {args}: {db:.1} dB")
             }
         };
-        if line.contains("error") || line.contains("size") {
+        if line.contains(": error ") || line.contains(": size ") {
             failures.push(line.clone());
         }
         report.push(line);
@@ -331,6 +356,7 @@ fn interpolation_and_virtual_pixel_methods_match_magick() {
         "bilinear",
         "catrom",
         "spline",
+        "mesh",
     ] {
         let (want, _, _) = magick_rgba(&[
             "rose:",
@@ -439,7 +465,19 @@ fn ewa_resampling_tracks_magick() {
             35.0,
         ),
     ] {
-        for filter in ["Robidoux", "Jinc"] {
+        for filter in [
+            "Robidoux",
+            "Jinc",
+            "Lanczos",
+            "Lanczos2",
+            "LanczosRadius",
+            "Mitchell",
+            "Gaussian",
+            "RobidouxSharp",
+            "LanczosSharp",
+            "Hann",
+            "Triangle",
+        ] {
             let (want, _, _) = magick_rgba(&[
                 "rose:",
                 "-alpha",

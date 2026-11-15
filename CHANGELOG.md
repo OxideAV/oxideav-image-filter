@@ -18,6 +18,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Distortion engine (`DistortImage`): one renderer driven by a reverse
+  mapping and its Jacobian (`ReverseMap`, public — a closure
+  `Fn(x, y) -> Option<(u, v)>` is one; `DistortImage::engine()` +
+  `distort_with` run a caller's mapping with the same sampling).
+  New methods `Cylinder2Plane`, `Plane2Cylinder` and `Resize`;
+  `Polynomial` up to order 16 (coordinates normalised before the
+  least-squares fit); `with_shepards_power`; `with_scale` (output
+  scaling); `with_filter_options` (blur, support, lobes, window, `B` /
+  `C`, sigma for the area filter); `output_extent`; best fit for
+  `BilinearForward` and the cylinder methods. `PixelInterpolate::Mesh`
+  and `VirtualPixel::Dither`. The `distort-image` factory takes
+  `bestfit`, `viewport`, `scale`, `power`, `background`, `matte` and the
+  filter overrides, and declares the resulting extent on its port.
+- Area resampling under distortion: every built-in mapping gives its
+  closed-form Jacobian (central differences remain the default for a
+  caller's mapping); the footprint ellipse is the image of the unit
+  circle, clamped to at least one source pixel; a windowed-sinc filter
+  is used in its radial form (jinc, support at the jinc's zeros, Lanczos
+  window = the jinc's main lobe; `LanczosRadius` keeps a whole-pixel
+  radius); footprints wider than four source pixels are gathered from a
+  box-prefiltered pyramid, so the cost per output pixel is bounded at
+  any minification (a perspective horizon no longer integrates the
+  whole picture per pixel).
+- `tests/distort_properties.rs`: identity maps exact, map ∘ inverse ≈
+  identity, constant pictures constant for every method × resampling,
+  agreement with `Resize` and `Rotate`, no aliasing under minification,
+  coverage-weighted colour, every depth / layout, identical output at
+  every thread budget. `fuzz/fuzz_targets/distort.rs` drives every
+  method with arbitrary arguments and options.
 - `with_execution_context(&ExecutionContext, || …)`: a scoped thread
   budget for every filter call made inside the closure. Kernels that
   split by rows (the separable convolution behind `Blur` / `Sharpen` /
@@ -71,6 +100,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `DistortImage` renders rows under the thread budget
+  (`with_execution_context`), allocates nothing per pixel, reads the
+  area filter from a weight table, and keeps the input's channel count
+  internally (no RGBA detour for grey / RGB pictures). A map that only
+  shifts by whole pixels (the identity included) copies samples
+  untouched whatever the resampling. Output values under area
+  resampling changed slightly (closed-form Jacobians, tabulated
+  weights); the black-box comparison in `tests/magick_distort.rs` holds
+  at the same thresholds and now covers twelve area filters.
 - `Blur` (and with it `Sharpen` / `Unsharp`) keeps the intermediate of
   its two passes in binary32 — the result is the 2-D Gaussian rounded
   once instead of twice — and on `Rgba` / `RgbaF32Le` (and the 16-bit

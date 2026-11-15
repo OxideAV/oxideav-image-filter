@@ -884,46 +884,135 @@ fn make_transpose(f: crate::Transpose, inputs: &[PortSpec]) -> Result<Box<dyn St
 }
 
 /// `distort-image`: `{"method": "SRT", "args": [..], "virtual_pixel":
-/// "edge", "interpolate": "bilinear" | "filter": "Robidoux"}` — the
-/// viewport is the input extent (`+distort` / viewports are the library
-/// API's, whose extent the port cannot declare in advance).
+/// "edge", "interpolate": "bilinear" | "filter": "Robidoux"}`, plus
+/// `"bestfit": true`, `"viewport": [w, h, x, y]`, `"scale": s`,
+/// `"power": p` (Shepards), `"background"` / `"matte"` (normalised
+/// `[r, g, b, a]`) and the filter overrides `resize` takes (`blur`,
+/// `support`, `lobes`, `window`, `sigma`, `b`, `c`, `kaiser_beta`). The
+/// output port carries the extent the settings give.
 fn make_distort_image(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilter>> {
     use crate::{DistortImage, DistortMethod, PixelInterpolate, VirtualPixel};
     let p = params.as_object();
-    let get_str = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_str());
+    let get = |k: &str| p.and_then(|m| m.get(k));
+    let get_str = |k: &str| get(k).and_then(|v| v.as_str());
+    let get_f64 = |k: &str| get(k).and_then(|v| v.as_f64());
+    let bad = |what: String| Error::invalid(format!("job: filter 'distort-image': {what}"));
     let name = get_str("method").unwrap_or("SRT");
-    let method = DistortMethod::from_name(name).ok_or_else(|| {
-        Error::invalid(format!(
-            "job: filter 'distort-image': unknown method '{name}'"
-        ))
-    })?;
-    let args: Vec<f64> = p
-        .and_then(|m| m.get("args"))
+    let method =
+        DistortMethod::from_name(name).ok_or_else(|| bad(format!("unknown method '{name}'")))?;
+    let args: Vec<f64> = get("args")
         .and_then(|v| v.as_array())
         .map(|a| a.iter().filter_map(|v| v.as_f64()).collect())
         .unwrap_or_else(|| vec![0.0]);
     let mut f = DistortImage::new(method, args);
     if let Some(vp) = get_str("virtual_pixel") {
-        f = f.with_virtual_pixel(VirtualPixel::from_name(vp).ok_or_else(|| {
-            Error::invalid(format!(
-                "job: filter 'distort-image': unknown virtual pixel '{vp}'"
-            ))
-        })?);
+        f = f.with_virtual_pixel(
+            VirtualPixel::from_name(vp)
+                .ok_or_else(|| bad(format!("unknown virtual pixel '{vp}'")))?,
+        );
     }
     if let Some(i) = get_str("interpolate") {
-        f = f.with_interpolate(PixelInterpolate::from_name(i).ok_or_else(|| {
-            Error::invalid(format!(
-                "job: filter 'distort-image': unknown interpolate '{i}'"
-            ))
-        })?);
+        f = f.with_interpolate(
+            PixelInterpolate::from_name(i)
+                .ok_or_else(|| bad(format!("unknown interpolate '{i}'")))?,
+        );
     }
     if let Some(k) = get_str("filter") {
-        f = f.with_ewa(crate::ResampleFilter::from_name(k).ok_or_else(|| {
-            Error::invalid(format!("job: filter 'distort-image': unknown filter '{k}'"))
-        })?);
+        f = f.with_ewa(
+            crate::ResampleFilter::from_name(k)
+                .ok_or_else(|| bad(format!("unknown filter '{k}'")))?,
+        );
     }
+    if let Some(b) = get("bestfit").and_then(|v| v.as_bool()) {
+        f = f.with_bestfit(b);
+    }
+    if let Some(v) = get("viewport") {
+        let nums: Vec<f64> = v
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_f64()).collect())
+            .unwrap_or_default();
+        if nums.len() != 4 || nums[0] < 1.0 || nums[1] < 1.0 {
+            return Err(bad("viewport must be [width, height, x, y]".into()));
+        }
+        f = f.with_viewport(
+            nums[0] as u32,
+            nums[1] as u32,
+            nums[2] as i64,
+            nums[3] as i64,
+        );
+    }
+    if let Some(s) = get_f64("scale") {
+        if !(s.is_finite() && s > 0.0) {
+            return Err(bad("scale must be a positive number".into()));
+        }
+        f = f.with_scale(s);
+    }
+    if let Some(pw) = get_f64("power") {
+        f = f.with_shepards_power(pw);
+    }
+    let colour = |k: &str| -> Result<Option<[f32; 4]>> {
+        let Some(v) = get(k) else { return Ok(None) };
+        let nums: Vec<f64> = v
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_f64()).collect())
+            .unwrap_or_default();
+        if nums.len() != 4 {
+            return Err(bad(format!(
+                "{k} must be four normalised numbers [r, g, b, a]"
+            )));
+        }
+        Ok(Some([
+            nums[0] as f32,
+            nums[1] as f32,
+            nums[2] as f32,
+            nums[3] as f32,
+        ]))
+    };
+    if let Some(c) = colour("background")? {
+        f = f.with_background(c);
+    }
+    if let Some(c) = colour("matte")? {
+        f = f.with_matte(c);
+    }
+    let mut opts = crate::FilterOptions::new();
+    if let Some(v) = get_f64("blur") {
+        opts = opts.with_blur(v as f32);
+    }
+    if let Some(v) = get_f64("support") {
+        opts = opts.with_support(v as f32);
+    }
+    if let Some(v) = get("lobes").and_then(|v| v.as_u64()) {
+        opts = opts.with_lobes(v as u32);
+    }
+    if let Some(name) = get_str("window") {
+        opts = opts.with_window(
+            crate::ResampleFilter::from_name(name)
+                .ok_or_else(|| bad(format!("unknown window '{name}'")))?,
+        );
+    }
+    if let Some(v) = get_f64("sigma") {
+        opts = opts.with_sigma(v as f32);
+    }
+    if let Some(v) = get_f64("b") {
+        opts = opts.with_b(v as f32);
+    }
+    if let Some(v) = get_f64("c") {
+        opts = opts.with_c(v as f32);
+    }
+    if let Some(v) = get_f64("kaiser_beta").or_else(|| get_f64("beta")) {
+        opts = opts.with_kaiser_beta(v as f32);
+    }
+    f = f.with_filter_options(opts);
     let in_port = video_in_port(inputs);
-    let out_port = in_port.clone();
+    let mut out_port = in_port.clone();
+    if let PortParams::Video { width, height, .. } = &mut out_port.params
+        && *width > 0
+        && *height > 0
+    {
+        let (w, h) = f.output_extent(*width, *height)?;
+        *width = w;
+        *height = h;
+    }
     Ok(Box::new(ImageFilterAdapter::new(
         Box::new(f),
         in_port,
@@ -1028,9 +1117,16 @@ fn make_resize(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
     if let Some(v) = get_f64("kaiser_beta").or_else(|| get_f64("beta")) {
         opts = opts.with_kaiser_beta(v as f32);
     }
+    let get_bool = |k: &str| p.and_then(|m| m.get(k)).and_then(|v| v.as_bool());
     let f = Resize::new(w, h)
         .with_interpolation(interp)
-        .with_filter_options(opts);
+        .with_filter_options(opts)
+        .with_cylindrical(get_bool("cylindrical").unwrap_or(false))
+        .with_linear_light(
+            get_bool("linear_light")
+                .or_else(|| get_bool("linear"))
+                .unwrap_or(false),
+        );
     let in_port = video_in_port(inputs);
     let out_port = match &in_port.params {
         PortParams::Video {
@@ -9622,6 +9718,59 @@ mod tests {
         assert_eq!(out.planes[0].stride, 2);
         assert_eq!(out.planes[0].data.len(), 4);
         assert!(out.planes[0].data.iter().all(|&v| v == 99));
+    }
+
+    #[test]
+    fn distort_image_factory_declares_the_extent_its_settings_give() {
+        let c = ctx();
+        let inputs = [gray_in_port(4, 4)];
+        for (params, w, h) in [
+            (json!({"method": "Resize", "args": [6, 2]}), 6usize, 2usize),
+            (json!({"method": "SRT", "args": [0], "scale": 2.0}), 8, 8),
+            (
+                json!({"method": "SRT", "args": [0], "viewport": [3, 2, 1, 1],
+                       "interpolate": "mesh", "virtual_pixel": "dither"}),
+                3,
+                2,
+            ),
+            (
+                json!({"method": "Cylinder2Plane", "args": [60], "filter": "Lanczos",
+                       "blur": 0.9, "lobes": 2}),
+                4,
+                4,
+            ),
+            (
+                json!({"method": "Shepards", "args": [0, 0, 1, 1], "power": 3.0}),
+                4,
+                4,
+            ),
+        ] {
+            let f = c
+                .filters
+                .make("distort-image", &params, &inputs)
+                .unwrap_or_else(|e| panic!("{params}: {e}"));
+            match &f.output_ports()[0].params {
+                PortParams::Video { width, height, .. } => {
+                    assert_eq!((*width as usize, *height as usize), (w, h), "{params}");
+                }
+                other => panic!("video port expected, got {other:?}"),
+            }
+            let out = run_one(f, gray_4x4(|_, _| 99));
+            assert_eq!(out.planes[0].stride, w, "{params}");
+            assert_eq!(out.planes[0].data.len(), w * h, "{params}");
+            assert!(out.planes[0].data.iter().all(|&v| v == 99), "{params}");
+        }
+        for params in [
+            json!({"method": "SRT", "args": [0], "scale": 0.0}),
+            json!({"method": "SRT", "args": [0], "viewport": [3, 2]}),
+            json!({"method": "SRT", "args": [0], "window": "nope"}),
+            json!({"method": "Resize", "args": [0, 0]}),
+        ] {
+            assert!(
+                c.filters.make("distort-image", &params, &inputs).is_err(),
+                "{params}"
+            );
+        }
     }
 
     #[test]

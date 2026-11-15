@@ -805,6 +805,7 @@ pub mod reinhard;
 pub mod reinhard_extended;
 pub mod reinhard_local;
 mod replan;
+mod resample_engine;
 pub mod resize;
 pub mod roberts;
 pub mod roll;
@@ -904,7 +905,7 @@ pub use distance_morphology::{DistanceMorphology, DistanceOutline, MorphOp};
 pub use distance_transform::{ChamferKind, DistanceTransform};
 pub use distort::Distort;
 pub use distort_image::{
-    DistortImage, DistortMethod, Distorted, PixelInterpolate, Resampling, VirtualPixel,
+    DistortImage, DistortMethod, Distorted, PixelInterpolate, Resampling, ReverseMap, VirtualPixel,
 };
 pub use dither::{BayerMatrix, DiffusionKernel, Dither, DitherMode, ScanOrder};
 pub use drago::Drago;

@@ -16,9 +16,10 @@ use std::time::Instant;
 
 use oxideav_core::{ExecutionContext, PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{
-    Blur, ColorMatrix, Composite, CompositeOp, DiffusionKernel, Dither, ImageFilter, Interpolation,
-    Morphology, OrderedDither, Resize, Rotate, Sharpen, Statistic, StatisticOp, StructuringElement,
-    Threshold, ThresholdMap, TwoInputImageFilter, Unsharp, VideoStreamParams,
+    Blur, ColorMatrix, Composite, CompositeOp, DiffusionKernel, DistortImage, DistortMethod,
+    Dither, ImageFilter, Interpolation, Morphology, OrderedDither, PixelInterpolate,
+    ResampleFilter, Resize, Rotate, Sharpen, Statistic, StatisticOp, StructuringElement, Threshold,
+    ThresholdMap, TwoInputImageFilter, Unsharp, VideoStreamParams,
 };
 
 /// Deterministic picture: smooth gradients plus xorshift noise so rank
@@ -116,6 +117,48 @@ fn main() {
         (
             "resize 1.5x bicubic",
             Box::new(Resize::new(w * 3 / 2, h * 3 / 2).with_interpolation(Interpolation::Bicubic)),
+        ),
+        (
+            "resize 0.3x mitchell",
+            Box::new(Resize::new(w * 3 / 10, h * 3 / 10).with_filter(ResampleFilter::Mitchell)),
+        ),
+        (
+            "distort srt 0.7 17deg ewa",
+            Box::new(DistortImage::new(
+                DistortMethod::ScaleRotateTranslate,
+                vec![0.7, 17.0],
+            )),
+        ),
+        (
+            "distort srt 17deg bilinear",
+            Box::new(
+                DistortImage::new(DistortMethod::ScaleRotateTranslate, vec![17.0])
+                    .with_interpolate(PixelInterpolate::Bilinear),
+            ),
+        ),
+        (
+            "distort perspective ewa",
+            Box::new(DistortImage::new(
+                DistortMethod::Perspective,
+                vec![
+                    0.0,
+                    0.0,
+                    w as f64 * 0.2,
+                    h as f64 * 0.1,
+                    w as f64,
+                    0.0,
+                    w as f64 * 0.8,
+                    0.0,
+                    w as f64,
+                    h as f64,
+                    w as f64,
+                    h as f64,
+                    0.0,
+                    h as f64,
+                    0.0,
+                    h as f64 * 0.7,
+                ],
+            )),
         ),
         ("sharpen r2 s1", Box::new(Sharpen::new(2, 1.0))),
         ("unsharp r3 s1.5", Box::new(Unsharp::new(3, 1.5, 1.0, 0))),
