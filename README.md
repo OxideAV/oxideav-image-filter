@@ -474,9 +474,10 @@ and rounded back once):
       `dot6@45`, `line4@15`, `diamond8`, `square5@30`.
     - `ThresholdMap::blue_noise(size)` — a blue-noise mask (8 … 128
       pixels a side) built by void-and-cluster on a torus, deterministic
-      on every platform, built on first use and cached (64 × 64: about
-      30 ms once). The mean of 8 × 8 blocks of the 64 × 64 mask scatters
-      four times less than white noise's. Named `blue-noise`, `blue32`.
+      on every platform, built on first use and cached (measured once:
+      4 ms at 32 × 32, 59 ms at 64 × 64, 0.9 s at 128 × 128). The mean
+      of 8 × 8 blocks of the 64 × 64 mask scatters four times less than
+      white noise's. Named `blue-noise`, `blue32`.
   - `Diffusion { stencil, scan }` — error diffusion through a
     `DiffusionStencil`: the seven tabulated kernels
     (`DiffusionStencil::of`), or any stencil from its taps or drawn as
