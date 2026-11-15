@@ -154,6 +154,34 @@ budget. `tests/depth_analytic.rs` reproduces the `BC(B, C)` cubic as the
 impulse response of `Mitchell`, `Catrom`, `Cubic`, `Robidoux`, a custom
 `(B, C)` and `BSpline` at 8 bits, 16 bits and float.
 
+Two options apply to every averaging kernel:
+
+- **`with_cylindrical(true)`** applies the kernel as a function of the
+  radial distance instead of as a product of a horizontal and a vertical
+  pass: each output pixel gathers the source pixels inside an ellipse
+  (the kernel's disc stretched by the two scale factors) in one pass.
+  The response is the same in every direction — a diagonal edge is
+  treated like a horizontal one — at a higher cost per pixel. A windowed
+  sinc takes its radial form: the band-limiting kernel of a disc-shaped
+  pass band is `jinc(r) = 2 J₁(πr) / (πr)`, so the sinc becomes the
+  jinc, a support of `n` lobes becomes the jinc's `n`-th zero and the
+  Lanczos window becomes the jinc's main lobe (`LanczosRadius` keeps the
+  whole-pixel radius `n` instead). The Robidoux cubics were designed
+  for this use. `Area` stays the exact rectangle average. JSON:
+  `"cylindrical": true`.
+- **`with_linear_light(true)`** takes the colour samples through the
+  sRGB decoding curve before the kernel and back after it (alpha is
+  coverage and is left alone), so averaging mixes light rather than
+  code values: a fine black-and-white pattern shrinks to code 188, the
+  grey it has seen from afar, not to 128. Float samples above 1 keep
+  their range. YUV / CMYK pictures are converted to RGB for the resize
+  and back. JSON: `"linear_light": true`.
+
+`tests/resize_options.rs` holds both on 8-bit, 16-bit and float storage
+(constants stay constant on twelve layouts, the cylindrical response is
+isotropic where the separable one is not, no aliasing on shrink, colour
+weighted by coverage, identical output at every thread budget).
+
 For planar YUV the chroma planes are resized to the matching subsampled
 output dimensions (e.g. 4:2:0 halves both chroma axes). Pipeline JSON
 selects the kernel via `"interpolation"`: `nearest` / `bilinear` /
@@ -1133,15 +1161,114 @@ manually with repeated `.apply()` calls, or feed them through
 
 ## Distortion and generators
 
-`DistortImage` is the `-distort` framework: Affine, AffineProjection,
-SRT, Perspective, PerspectiveProjection, BilinearForward / Reverse,
-Polynomial, Arc, Polar, DePolar, Barrel, BarrelInverse and Shepards, with
-`+distort` bestfit and viewports, 14 virtual-pixel methods, 9 point
-interpolations and elliptical weighted averaging through any resize
-filter (Robidoux by default). The conventions were recovered from
-`magick` with pictures that encode their own coordinates;
-`tests/magick_distort.rs` holds every method at ≥ 45 dB with point
-sampling (most ≥ 100 dB) and EWA at ≥ 35 dB (55–73 dB measured).
+`DistortImage` is the `-distort` framework: one engine that renders an
+output window through a **reverse mapping** (output position → source
+position) and its local **Jacobian**.
+
+| method | arguments | mapping |
+|---|---|---|
+| `Affine` | control points `u,v x,y …` | 1 pair translates, 2 fit a similarity, 3+ a least-squares affine |
+| `AffineProjection` | `sx, ry, rx, sy, tx, ty` | the forward matrix |
+| `ScaleRotateTranslate` | `[X,Y] [Scale[,ScaleY]] Angle [NewX,NewY]` | scale, rotate about a centre, move it |
+| `Perspective` | 4+ control point pairs | homography (least squares past four pairs) |
+| `PerspectiveProjection` | the eight forward coefficients | homography |
+| `BilinearForward` / `BilinearReverse` | 4+ control point pairs | destination bilinear in the source (inverted per pixel by Newton iteration) / source bilinear in the destination |
+| `Polynomial` | `order`, control points | least-squares polynomial of the destination, order 1 … 16 (`1.5` = bilinear), fitted on normalised coordinates |
+| `Arc` | `arc_angle [rotate [top_radius [bottom_radius]]]` | the picture bent around a circle |
+| `Polar` / `DePolar` | `[Rmax [Rmin [CenterX,CenterY [start,end]]]]` | polar ↔ cartesian |
+| `Barrel` / `BarrelInverse` | `A B C [D [X,Y]]` | `Rsrc = r · (A r³ + B r² + C r + D)` and its reciprocal form (lens correction) |
+| `Shepards` | control points | inverse-distance-weighted displacement, weights `1 / dᵖ` (`with_shepards_power`) |
+| `Cylinder2Plane` / `Plane2Cylinder` | `fov_angle [CenterX,CenterY]` | a cylinder strip of radius `f` ↔ its tangent plane: `u = cx + f·atan(dx/f)`, `v = cy + dy·f/√(dx² + f²)` and the inverse `u = cx + f·tan(dx/f)`, `v = cy + dy/cos(dx/f)` |
+| `Resize` | `width, height` | plain resampling to that extent |
+
+A caller's own mapping runs through the same engine: `ReverseMap` is a
+public trait (a closure `Fn(f64, f64) -> Option<(f64, f64)>` is one; the
+Jacobian defaults to a central difference) and
+`DistortImage::engine().distort_with(&image, &map)` renders it.
+
+```rust
+use oxideav_image_filter::deep::FloatImage;
+use oxideav_image_filter::{DistortImage, DistortMethod, ResampleFilter, VirtualPixel};
+
+let picture = FloatImage::new(64, 48, 4);
+// A keystone correction from four point pairs, sized to fit.
+let fixed = DistortImage::new(
+    DistortMethod::Perspective,
+    vec![
+        5.0, 3.0, 0.0, 0.0, 60.0, 0.0, 64.0, 0.0, //
+        64.0, 48.0, 64.0, 48.0, 0.0, 44.0, 0.0, 48.0,
+    ],
+)
+.with_bestfit(true)
+.with_virtual_pixel(VirtualPixel::Transparent)
+.with_ewa(ResampleFilter::RobidouxSharp)
+.distort(&picture)?;
+assert_eq!(fixed.image.channels(), 4);
+// Any function of the output position is a mapping.
+let wave = DistortImage::engine()
+    .distort_with(&picture, &|x: f64, y: f64| Some((x + 4.0 * (y / 8.0).sin(), y)))?;
+assert_eq!((wave.image.width(), wave.image.height()), (64, 48));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+**Output window.** The input extent by default; `with_bestfit(true)`
+(`+distort`) sizes it to the distorted outline's bounding box and
+reports the page offset; `with_viewport(w, h, x, y)` sets it outright;
+`with_scale(s)` renders the window `s` times finer; `Resize` and `Arc`
+size their own. `output_extent(w, h)` gives the result's size up front.
+
+**Outside the picture** (`VirtualPixel`, 15 rules): `Edge`, `Background`,
+`Black`, `White`, `Gray`, `Transparent`, `Tile`, `Mirror`,
+`HorizontalTile`, `VerticalTile`, `HorizontalTileEdge`,
+`VerticalTileEdge`, `CheckerTile`, `Random` and `Dither` (the rim
+scattered outward by an ordered offset). Where a mapping has no source
+position at all — beyond a perspective horizon — the matte colour is
+written.
+
+**Reading one position** (`PixelInterpolate`, 10 rules): `Nearest`,
+`Integer`, `Bilinear`, `Catrom` (bicubic), `Spline` (cubic B-spline),
+`Mesh` (the 2 × 2 cell split along its flatter diagonal, read from the
+triangle's plane), `Average` / `Average9` / `Average16` (the mean of 4 /
+9 / 16 neighbours) and `Background`.
+
+**Area resampling** (the default, `with_ewa(filter)`): the unit circle
+around an output pixel maps to first order onto the ellipse
+`{J q : |q| ≤ 1}` in the source. Every source pixel inside that ellipse
+scaled by the kernel radius is weighted by the radial kernel at
+`|J⁻¹ Δ|` — an elliptical weighted average. The ellipse's semi-axes
+(the singular values of `J`) are clamped to at least one source pixel,
+so an enlargement reconstructs instead of point-sampling; footprints
+wider than four source pixels are gathered from a box-prefiltered
+pyramid level in which the thin axis spans two to four pixels, which
+bounds the taps per output pixel at any minification (the rows next to
+a perspective horizon cost what the near rows cost). Any resize filter
+can be the kernel (`Robidoux` by default), tuned by
+`with_filter_options` (blur, support, lobes, window, `B` / `C`, sigma);
+a windowed sinc takes its radial jinc form. Every built-in method gives
+its Jacobian in closed form. Colour is averaged weighted by coverage
+(premultiplied) under every rule, so transparent pixels never fringe.
+
+A mapping that only shifts by whole pixels (the identity included)
+copies samples untouched whatever the resampling. Rows render under the
+thread budget; the output is identical at every budget. The filter takes
+8-bit, 16-bit and float pictures in every layout the crate supports
+(packed grey / RGB / RGBA natively, everything else through the
+conversion routes).
+
+`tests/distort_properties.rs` holds the engine's invariants: identity
+maps exact, a map followed by its inverse returns the picture (affine,
+perspective, bilinear, cylinder, polar), constant pictures stay constant
+for every method under every resampling, the engine agrees with the
+dedicated `Resize` and `Rotate`, a one-pixel checkerboard minified up
+to 48 times — or pushed to a perspective horizon — comes out flat grey,
+and closed-form Jacobians match central differences. The argument
+conventions were recovered black-box from the `magick` binary with
+pictures that encode their own coordinates; `tests/magick_distort.rs`
+holds every method at ≥ 45 dB with point sampling (most ≥ 100 dB) and
+twelve area filters at ≥ 35 dB (46–98 dB measured on the affine cases).
+The explicit-centre form of the cylinder methods and the best-fit
+window of the methods beyond affine / perspective / arc follow this
+crate's own definitions above.
 
 Also from the `-fx` family of operations: `Fx` (an expression evaluator,
 46 forms matching `magick`), `SparseColor` (six methods, bit-exact),

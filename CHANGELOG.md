@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Resize::with_cylindrical(true)`: the kernel applied as a function of
+  the radial distance in one elliptical gather per output pixel (same
+  response in every direction), on every layout and depth; a windowed
+  sinc takes its radial jinc form. `Resize::with_linear_light(true)`:
+  colour samples resampled in linear light (sRGB curve, alpha left as
+  coverage, float range kept; YUV / CMYK converted to RGB and back).
+  JSON `"cylindrical"` / `"linear_light"`. `tests/resize_options.rs`.
 - Distortion engine (`DistortImage`): one renderer driven by a reverse
   mapping and its Jacobian (`ReverseMap`, public — a closure
   `Fn(x, y) -> Option<(u, v)>` is one; `DistortImage::engine()` +

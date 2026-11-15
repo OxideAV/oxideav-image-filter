@@ -57,3 +57,12 @@ name = "registry"
 path = "fuzz_targets/registry.rs"
 test = false
 doc = false
+
+# The distortion engine: every method with arbitrary arguments, edge
+# rule, point interpolation or area filter with arbitrary overrides,
+# viewport, best fit and output scaling; and the cylindrical resize.
+[[bin]]
+name = "distort"
+path = "fuzz_targets/distort.rs"
+test = false
+doc = false

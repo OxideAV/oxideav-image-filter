@@ -265,7 +265,33 @@ pub enum Resampling {
     Ewa(ResampleFilter),
 }
 
-/// `distortImage`.
+/// `distortImage`: a method (or a caller's [`ReverseMap`]) rendered
+/// through the engine with the sampling settings held here.
+///
+/// ```
+/// use oxideav_image_filter::deep::FloatImage;
+/// use oxideav_image_filter::{DistortImage, DistortMethod, ResampleFilter, VirtualPixel};
+///
+/// let picture = FloatImage::new(64, 48, 4);
+/// // A keystone correction from four point pairs, sized to fit.
+/// let fixed = DistortImage::new(
+///     DistortMethod::Perspective,
+///     vec![
+///         5.0, 3.0, 0.0, 0.0, 60.0, 0.0, 64.0, 0.0, //
+///         64.0, 48.0, 64.0, 48.0, 0.0, 44.0, 0.0, 48.0,
+///     ],
+/// )
+/// .with_bestfit(true)
+/// .with_virtual_pixel(VirtualPixel::Transparent)
+/// .with_ewa(ResampleFilter::RobidouxSharp)
+/// .distort(&picture)?;
+/// assert_eq!(fixed.image.channels(), 4);
+/// // Any function of the output position is a mapping.
+/// let wave = DistortImage::engine()
+///     .distort_with(&picture, &|x: f64, y: f64| Some((x + 4.0 * (y / 8.0).sin(), y)))?;
+/// assert_eq!((wave.image.width(), wave.image.height()), (64, 48));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct DistortImage {
