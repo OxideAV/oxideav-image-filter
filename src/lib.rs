@@ -681,6 +681,7 @@
 
 use oxideav_core::{Error, PixelFormat, VideoFrame};
 
+pub mod adaptive;
 pub mod adaptive_threshold;
 pub mod affine;
 pub mod anisotropic;
@@ -783,6 +784,7 @@ pub mod linear_stretch;
 pub mod max_rgb;
 pub mod measure;
 pub mod modulate;
+pub mod morph_kernel;
 pub mod morphology;
 pub mod motion_blur;
 pub mod negate;
@@ -796,6 +798,7 @@ pub mod palette;
 pub mod perspective;
 pub mod pixelate;
 pub mod polar;
+pub mod polaroid;
 pub mod posterize;
 pub mod posterize_channels;
 pub mod prewitt;
@@ -817,6 +820,7 @@ mod route;
 pub mod sample;
 pub mod scharr;
 pub mod screens;
+pub mod segment;
 pub mod selective_color;
 pub mod sepia;
 pub mod sequence;
@@ -846,6 +850,7 @@ pub mod threshold;
 pub mod tilt_shift;
 pub mod tint;
 pub(crate) mod tonal_lut;
+pub mod tone_auto;
 pub mod toon;
 pub mod transpose;
 pub mod trim;
@@ -858,6 +863,9 @@ pub mod wave;
 pub mod weighted_distance_transform;
 pub mod zoom_blur;
 
+pub use adaptive::{
+    AdaptiveBlur, AdaptiveSharpen, Enhance, MeanShift, SelectiveBlur, WaveletDenoise,
+};
 pub use adaptive_threshold::AdaptiveThreshold;
 pub use affine::Affine;
 pub use anisotropic::AnisotropicBlur;
@@ -963,6 +971,7 @@ pub use measure::{
     PerceptualHash, SimilarityMatch,
 };
 pub use modulate::Modulate;
+pub use morph_kernel::{KernelMorphMethod, KernelMorphology, MorphKernel};
 pub use morphology::{
     EdgeOp, Morphology, MorphologyChain, MorphologyEdge, MorphologyOp, StructuringElement,
 };
@@ -978,6 +987,7 @@ pub use palette::{IndexedImage, Palette, PaletteQuantize, PaletteSource};
 pub use perspective::Perspective;
 pub use pixelate::Pixelate;
 pub use polar::{Polar, PolarDirection};
+pub use polaroid::Polaroid;
 pub use posterize::Posterize;
 pub use posterize_channels::PosterizeChannels;
 pub use prewitt::{Prewitt, PrewittMagnitude};
@@ -986,6 +996,8 @@ pub use radial_blur::RadialBlur;
 pub use raise::Raise;
 pub use registry::register;
 pub use screens::SpotShape;
+pub use segment::Segment;
+pub use tone_auto::{AutoThreshold, AutoThresholdMethod, Clahe, LocalContrast, WhiteBalance};
 // Internal: `oxideav_core::register!` dispatch shim re-export, not user-facing API.
 #[doc(hidden)]
 pub use registry::__oxideav_entry;
@@ -1000,7 +1012,7 @@ pub use sample::{Sample, Scale};
 pub use scharr::{Scharr, ScharrMagnitude};
 pub use selective_color::{BandAdjust, HueBand, SelectiveColor};
 pub use sepia::Sepia;
-pub use sequence::{SequenceOp, combine_channels, evaluate_sequence, separate};
+pub use sequence::{SequenceOp, channel_fx, combine_channels, evaluate_sequence, poly, separate};
 pub use shade::Shade;
 pub use shadow_highlight::ShadowHighlight;
 pub use sharpen::Sharpen;

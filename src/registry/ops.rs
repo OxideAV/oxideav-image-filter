@@ -39,6 +39,13 @@ impl<'a> Params<'a> {
         }
     }
 
+    pub(super) fn bool(&self, key: &str, default: bool) -> Result<bool> {
+        match self.get(key) {
+            None => Ok(default),
+            Some(v) => v.as_bool().ok_or_else(|| self.bad(key, "a boolean")),
+        }
+    }
+
     pub(super) fn str(&self, key: &str) -> Result<Option<&'a str>> {
         match self.get(key) {
             None => Ok(None),
@@ -225,6 +232,39 @@ fn palette_quantize(p: &Params) -> Result<Box<dyn ImageFilter>> {
     ))
 }
 
+fn morphology(p: &Params) -> Result<Box<dyn ImageFilter>> {
+    use crate::{KernelMorphMethod, KernelMorphology, MorphKernel};
+    let method = match p.str("method")? {
+        None => KernelMorphMethod::Erode,
+        Some(m) => KernelMorphMethod::from_name(m)
+            .ok_or_else(|| p.bad("method", "a morphology method (erode, dilate, open, …)"))?,
+    };
+    let mut kernels = Vec::new();
+    if let Some(k) = p.str("kernel")? {
+        kernels.push(MorphKernel::parse(k)?);
+    }
+    if let Some(list) = p.get("kernels") {
+        for k in list
+            .as_array()
+            .ok_or_else(|| p.bad("kernels", "a list of kernel strings"))?
+        {
+            let k = k
+                .as_str()
+                .ok_or_else(|| p.bad("kernels", "a list of kernel strings"))?;
+            kernels.push(MorphKernel::parse(k)?);
+        }
+    }
+    if kernels.is_empty() {
+        kernels.push(MorphKernel::square(1));
+    }
+    let f = KernelMorphology::new(method, MorphKernel::square(1)).with_kernels(kernels)?;
+    Ok(Box::new(match p.get("iterations") {
+        Some(v) if v.as_i64() == Some(-1) => f.until_stable(),
+        Some(_) => f.with_iterations(p.u32("iterations", 1)?.min(4096)),
+        None => f,
+    }))
+}
+
 /// Install the factories.
 pub(super) fn register_ops(sink: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
     add(sink, &["channel-dither", "dither-levels"], |p| {
@@ -244,6 +284,123 @@ pub(super) fn register_ops(sink: &mut dyn FnMut(&str, oxideav_core::FilterFactor
         &["palette-quantize", "quantize-colors", "colors", "remap"],
         palette_quantize,
     );
+    add(sink, &["auto-threshold"], |p| {
+        let method = match p.str("method")? {
+            None => crate::AutoThresholdMethod::Otsu,
+            Some(m) => crate::AutoThresholdMethod::from_name(m)
+                .ok_or_else(|| p.bad("method", "'otsu', 'kapur' or 'triangle'"))?,
+        };
+        Ok(Box::new(crate::AutoThreshold::new(method)))
+    });
+    add(sink, &["white-balance"], |_| {
+        Ok(Box::new(crate::WhiteBalance::new()))
+    });
+    add(sink, &["local-contrast"], |p| {
+        Ok(Box::new(crate::LocalContrast::new(
+            p.f64("radius", 10.0)? as f32,
+            p.f64("strength", 0.125)? as f32,
+        )))
+    });
+    add(sink, &["clahe"], |p| {
+        Ok(Box::new(crate::Clahe::new(
+            p.u32("tiles_x", 8)?,
+            p.u32("tiles_y", 8)?,
+            p.u32("bins", 128)?,
+            p.f64("clip_limit", 3.0)? as f32,
+        )))
+    });
+    add(sink, &["adaptive-blur"], |p| {
+        Ok(Box::new(crate::AdaptiveBlur::new(
+            p.f64("sigma", 1.0)?.min(256.0) as f32,
+        )))
+    });
+    add(sink, &["adaptive-sharpen"], |p| {
+        Ok(Box::new(
+            crate::AdaptiveSharpen::new(p.f64("sigma", 1.0)?.min(256.0) as f32)
+                .with_amount(p.f64("amount", 1.0)? as f32),
+        ))
+    });
+    add(sink, &["selective-blur"], |p| {
+        Ok(Box::new(crate::SelectiveBlur::new(
+            p.f64("sigma", 1.0)? as f32,
+            p.f64("threshold", 0.1)? as f32,
+        )))
+    });
+    add(sink, &["enhance"], |p| {
+        Ok(Box::new(
+            crate::Enhance::new().with_distance(p.f64("distance", 0.1)? as f32),
+        ))
+    });
+    add(sink, &["wavelet-denoise"], |p| {
+        Ok(Box::new(
+            crate::WaveletDenoise::new(
+                p.f64("threshold", 0.02)? as f32,
+                p.f64("softness", 0.0)? as f32,
+            )
+            .with_levels(p.u32("levels", 5)?),
+        ))
+    });
+    add(sink, &["mean-shift"], |p| {
+        Ok(Box::new(
+            crate::MeanShift::new(
+                p.u32("width", 5)?,
+                p.u32("height", 5)?,
+                p.f64("distance", 0.1)? as f32,
+            )
+            .with_max_iterations(p.u32("max_iterations", 100)?.min(1000)),
+        ))
+    });
+    add(sink, &["segment"], |p| {
+        Ok(Box::new(crate::Segment::new(
+            p.f64("cluster_threshold", 0.01)? as f32,
+            p.f64("smoothing", 1.5)? as f32,
+        )))
+    });
+    sink(
+        "polaroid",
+        Box::new(
+            |params: &Value, inputs: &[PortSpec]| -> Result<Box<dyn StreamFilter>> {
+                let p = Params {
+                    filter: "polaroid",
+                    map: params.as_object(),
+                };
+                let mut f = crate::Polaroid::new(p.f64("angle", 5.0)? as f32)
+                    .with_shadow(p.bool("shadow", true)?);
+                if p.get("border").is_some() {
+                    f = f.with_border(p.u32("border", 0)?);
+                }
+                let in_port = video_in_port(inputs);
+                // The card is larger than the picture.
+                let out_port = match &in_port.params {
+                    oxideav_core::PortParams::Video {
+                        format,
+                        width,
+                        height,
+                        time_base,
+                        ..
+                    } => {
+                        let (w, h) = f.output_extent(*width, *height);
+                        PortSpec::video("video", w, h, *format, *time_base)
+                    }
+                    _ => passthrough_out_port(&in_port),
+                };
+                Ok(Box::new(ImageFilterAdapter::new(
+                    Box::new(f),
+                    in_port,
+                    out_port,
+                )))
+            },
+        ),
+    );
+    add(sink, &["morphology"], morphology);
+    add(sink, &["skeleton", "morphology-skeleton"], |_| {
+        Ok(Box::new(crate::KernelMorphology::skeleton()))
+    });
+    add(sink, &["fx"], |p| {
+        Ok(Box::new(crate::Fx::new(
+            p.str("expression")?.unwrap_or("u"),
+        )?))
+    });
 }
 
 #[cfg(test)]
@@ -300,5 +457,56 @@ mod tests {
         assert!(make("remap", json!({"palette": [[0, 0]]})).is_err());
         assert!(make("channel-dither", json!({"method": "stencil"})).is_err());
         assert!(make("channel-dither", json!({"scan": "diagonal"})).is_err());
+    }
+
+    #[test]
+    fn operator_factories_take_their_parameters() {
+        for name in [
+            "auto-threshold",
+            "white-balance",
+            "local-contrast",
+            "clahe",
+            "adaptive-blur",
+            "adaptive-sharpen",
+            "selective-blur",
+            "enhance",
+            "wavelet-denoise",
+            "mean-shift",
+            "segment",
+            "polaroid",
+            "morphology",
+            "skeleton",
+            "fx",
+            "rotational-blur",
+        ] {
+            make(name, json!({})).unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+        make("auto-threshold", json!({"method": "triangle"})).unwrap();
+        make(
+            "clahe",
+            json!({"tiles_x": 4, "tiles_y": 2, "bins": 64, "clip_limit": 2.5}),
+        )
+        .unwrap();
+        make(
+            "polaroid",
+            json!({"angle": -8, "border": 6, "shadow": false}),
+        )
+        .unwrap();
+        make(
+            "morphology",
+            json!({"method": "hit-and-miss", "kernels": ["3: 0,0,0 -,1,- 1,1,1"], "iterations": -1}),
+        )
+        .unwrap();
+        make(
+            "morphology",
+            json!({"method": "top-hat", "kernel": "disk:3", "iterations": 2}),
+        )
+        .unwrap();
+        make("fx", json!({"expression": "x = u * 2; clamp(x)"})).unwrap();
+        assert!(make("auto-threshold", json!({"method": "guess"})).is_err());
+        assert!(make("morphology", json!({"kernel": "3x3: 1"})).is_err());
+        assert!(make("morphology", json!({"method": "melt"})).is_err());
+        assert!(make("fx", json!({"expression": "1 +"})).is_err());
+        assert!(make("clahe", json!({"bins": "many"})).is_err());
     }
 }

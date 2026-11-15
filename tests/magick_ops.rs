@@ -987,3 +987,124 @@ fn shear_matches_magick() {
         }
     }
 }
+
+fn rose_rgb() -> Option<oxideav_image_filter::deep::FloatImage> {
+    if !reference() {
+        return None;
+    }
+    let data = magick(&["rose:", "-depth", "8", "rgb:-"])?;
+    let frame = VideoFrame {
+        pts: None,
+        planes: vec![VideoPlane {
+            stride: 70 * 3,
+            data,
+        }],
+    };
+    let params = VideoStreamParams {
+        format: PixelFormat::Rgb24,
+        width: 70,
+        height: 46,
+    };
+    oxideav_image_filter::measure::float_image_of(&frame, params).ok()
+}
+
+#[test]
+fn auto_threshold_levels_match_magick() {
+    use oxideav_image_filter::{AutoThreshold, AutoThresholdMethod};
+    let Some(rose) = rose_rgb() else {
+        eprintln!("magick not on the path: live auto-threshold comparison skipped");
+        return;
+    };
+    for (name, method) in [
+        ("OTSU", AutoThresholdMethod::Otsu),
+        ("Kapur", AutoThresholdMethod::Kapur),
+        ("Triangle", AutoThresholdMethod::Triangle),
+    ] {
+        // The validator prints the threshold it chose as a percentage.
+        let out = Command::new("magick")
+            .args([
+                "rose:",
+                "-define",
+                "auto-threshold:verbose=true",
+                "-auto-threshold",
+                name,
+                "null:",
+            ])
+            .output()
+            .unwrap();
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let theirs: f64 = text
+            .split_whitespace()
+            .find_map(|t| t.strip_suffix('%').and_then(|v| v.parse().ok()))
+            .unwrap_or_else(|| panic!("no threshold in '{text}'"));
+        let ours = AutoThreshold::new(method).threshold_of(&rose) as f64 * 100.0;
+        eprintln!("auto-threshold {name}: ours {ours:.3}%, validator {theirs:.3}%");
+        assert!(
+            (ours - theirs).abs() <= 100.0 / 255.0 + 1e-6,
+            "{name}: {ours} vs {theirs}"
+        );
+    }
+}
+
+#[test]
+fn channel_fx_and_poly_match_magick() {
+    use oxideav_image_filter::{channel_fx, poly};
+    let Some(rose) = rose_rgb() else {
+        eprintln!("magick not on the path: live channel-fx / poly comparison skipped");
+        return;
+    };
+    let codes = |img: &oxideav_image_filter::deep::FloatImage| -> Vec<u8> {
+        img.samples()
+            .iter()
+            .map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
+            .collect()
+    };
+    for (expr, sink) in [
+        ("red<=>blue", "rgb:-"),
+        ("red=>green", "rgb:-"),
+        ("green=50%,blue=0", "rgb:-"),
+        ("green", "gray:-"),
+        ("red<=>green,green=>alpha", "rgba:-"),
+        ("red, blue", "rgb:-"),
+    ] {
+        let want = magick(&["rose:", "-channel-fx", expr, "-depth", "8", sink]).unwrap();
+        let got = codes(&channel_fx(&rose, expr).unwrap());
+        assert_eq!(got.len(), want.len(), "channel-fx '{expr}'");
+        assert!(
+            worst(&got, &want) <= 1,
+            "channel-fx '{expr}': off by {}",
+            worst(&got, &want)
+        );
+    }
+    let want = magick(&[
+        "rose:",
+        "(",
+        "rose:",
+        "-flop",
+        ")",
+        "-poly",
+        "0.5,1 0.75,2",
+        "-depth",
+        "8",
+        "rgb:-",
+    ])
+    .unwrap();
+    let mut flopped = rose.clone();
+    for y in 0..46 {
+        for x in 0..70 {
+            flopped
+                .pixel_mut(x, y)
+                .copy_from_slice(rose.pixel(69 - x, y));
+        }
+    }
+    let got = codes(&poly(&[rose, flopped], &[(0.5, 1.0), (0.75, 2.0)]).unwrap());
+    assert!(
+        worst(&got, &want) <= 1,
+        "poly: off by {}",
+        worst(&got, &want)
+    );
+}

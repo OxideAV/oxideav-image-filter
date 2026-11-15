@@ -42,10 +42,33 @@ fn p(name: &'static str, filter: impl TwoInputImageFilter + 'static) -> PairEntr
 /// targets 5×3 so odd sizes and both directions of scaling are hit).
 pub fn all_single() -> Vec<Entry> {
     vec![
+        e("AdaptiveBlur", AdaptiveBlur::new(1.0)),
+        e("AdaptiveSharpen", AdaptiveSharpen::new(1.0)),
         e("AdaptiveThreshold", AdaptiveThreshold::new(1, 0)),
         e("Affine", Affine::identity()),
         e("AnisotropicBlur", AnisotropicBlur::new(1)),
         e("AutoGamma", AutoGamma::new()),
+        e("AutoThreshold", AutoThreshold::default()),
+        e("Clahe", Clahe::new(2, 2, 16, 2.0)),
+        e("Enhance", Enhance::new()),
+        e(
+            "KernelMorphology",
+            KernelMorphology::new(KernelMorphMethod::TopHat, MorphKernel::disk(1)),
+        ),
+        e("KernelMorphology(skeleton)", KernelMorphology::skeleton()),
+        e("LocalContrast", LocalContrast::new(2.0, 0.5)),
+        e(
+            "MeanShift",
+            MeanShift::new(3, 3, 0.2).with_max_iterations(4),
+        ),
+        e("Polaroid", Polaroid::new(7.0).with_border(2)),
+        e("Segment", Segment::default()),
+        e("SelectiveBlur", SelectiveBlur::new(1.0, 0.2)),
+        e(
+            "WaveletDenoise",
+            WaveletDenoise::new(0.05, 0.5).with_levels(2),
+        ),
+        e("WhiteBalance", WhiteBalance::new()),
         e("AutoLevel", AutoLevel::new()),
         e("AutoTrim", AutoTrim::new()),
         e("BarrelInverse", BarrelInverse::new(0.0, 0.0, 0.0, 1.0)),

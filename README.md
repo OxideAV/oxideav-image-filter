@@ -1228,6 +1228,48 @@ All single-input filters listed above share the `ImageFilter` trait — chain th
 manually with repeated `.apply()` calls, or feed them through
 `oxideav-pipeline` as `video.<name>` filter nodes in a JSON job.
 
+## ImageMagick operation coverage
+
+The operations asked for in the Imagick requests, item by item. "Exact"
+means bit-exact (or within one 8-bit code) against the `magick` binary
+in the live tests; "own" means the operator is defined here by the
+mathematics stated in its module documentation — aimed at the best
+result, not at the validator's pixels.
+
+| operation | here | status |
+|---|---|---|
+| `-fx` | `Fx` (`fx`) | expression language: numbers, `u` / `v` / `p[]` / `p{}` / `u[k]`, channel symbols, `i j w h t n`, `hue` / `saturation` / `intensity`, operators, `?:`, 37 functions, `;` statements with variables, `while` / `for` / `do` / `if`; listed forms exact; rows under the thread budget. Lacks colour-name constants and the `page` / `resolution` / statistics symbols |
+| `-sparse-color` | `SparseColor` | Barycentric, Bilinear, Shepards, Inverse, Voronoi, Manhattan |
+| `-color-threshold`, `-random-threshold`, `-range-threshold`, `-white-threshold`, `-black-threshold` | `ColorThreshold`, `RandomThreshold`, `RangeThreshold`, `WhiteThreshold`, `BlackThreshold` | exact (`-random-threshold` by distribution: own generator) |
+| `-ordered-dither` + named maps | `OrderedDither`, `ThresholdMap` | all 19 maps exact at 2, 3 and 6 levels; plus generated clustered-dot and blue-noise maps |
+| `-dither FloydSteinberg` / `Riemersma`, `-colors`, `-remap` | `PaletteQuantize`, `ChannelDither`, `DitherMethod` | own (lower error than the validator's palette on `rose:`) |
+| `-cdl` | `Cdl` | exact |
+| `-white-balance` | `WhiteBalance` (`white-balance`) | own: grey world in CIE L\*a\*b\* |
+| `-auto-threshold` | `AutoThreshold` (`auto-threshold`) | Otsu, Kapur, Triangle; the chosen level is the validator's on `rose:` for all three |
+| `-local-contrast` | `LocalContrast` (`local-contrast`) | own |
+| `-clahe` | `Clahe` (`clahe`) | own: tiles, bins, clip limit, bilinear blending of tile maps |
+| `-kmeans` | `Kmeans` | exact from the same seeds |
+| `-mean-shift` | `MeanShift` (`mean-shift`) | own |
+| `-segment` | `Segment` (`segment`) | own: histogram valleys, minimum class share, nearest-class merge |
+| `-connected-components` | `ConnectedComponents`, `connected_components` | labelling and object list exact; area threshold |
+| `-adaptive-blur`, `-adaptive-sharpen` | `AdaptiveBlur`, `AdaptiveSharpen` | own |
+| `-selective-blur` | `SelectiveBlur` (`selective-blur`) | own |
+| `-rotational-blur` | `RadialBlur` (`rotational-blur`, `radial-blur`, `spin-blur`) | own |
+| `-motion-blur` | `MotionBlur` | present |
+| `+noise` | `AddNoise` | Uniform, Gaussian, Multiplicative, Impulse, Laplacian, Poisson, Random; seeded; distributions as measured |
+| `-wavelet-denoise` | `WaveletDenoise` (`wavelet-denoise`) | own: à-trous layers, per-layer thresholds from the kernel norms, soft / hard |
+| `-enhance` | `Enhance` (`enhance`) | own |
+| `-despeckle`, `-statistic`, `-median` | `Despeckle`, `Statistic` | present |
+| `-shear`, `-transpose`, `-transverse`, `-splice`, `-chop`, `-raise` | `Shear`, `Transpose`, `Splice`, `Chop`, `Raise` | exact (shear: geometry measured) |
+| `-polaroid` | `Polaroid` (`polaroid`) | own: card, turn, soft shadow; no caption, no curl |
+| `-fft` / `-ift` | `fourier::forward` / `inverse` | magnitude / phase or real / imaginary; exact inverse (the validator build has no FFT delegate to compare with) |
+| `-morphology` | `KernelMorphology`, `MorphKernel` (`morphology`, `skeleton`); `Morphology`, `MorphologyEdge`, `DistanceMorphology` | erode, dilate, open, close, smooth, edge in / out / edge, top hat, bottom hat, hit-and-miss, thinning, thicken, skeleton; user kernels with don't-care cells, several kernels, iterate until stable. Lacks the named hit-and-miss kernel sets (corners, line ends, convex hull) |
+| `-evaluate-sequence` | `evaluate_sequence` | 15 operators, exact |
+| `-poly` | `poly` | exact |
+| `-combine`, `-separate` | `combine_channels`, `separate` | RGB(A) and grey + alpha; CMYK pictures go through the layout routes |
+| `-channel-fx` | `channel_fx` | exchange, copy, constant, bare channel lists; exact. Lacks the `|` and `;` forms that emit several pictures |
+| `-compose` (70 operators) + placement | `Composite` | see *Two-input compositing* |
+
 ## Distortion and generators
 
 `DistortImage` is the `-distort` framework: one engine that renders an
@@ -1388,7 +1430,7 @@ a kernel averages colour across pixels of different coverage (`Blur`,
 `Sharpen`, `Unsharp`, `Resize` on the packed layouts, the distortions'
 EWA), the colour is weighted by it.
 
-158 of 172 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
+172 of 186 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
 `Unsupported` (never a silent narrowing). `tests/depth_support_table.rs`
 regenerates this table from the filters' own declarations and fails
 when a row here is out of date; `tests/depth_analytic.rs` and
@@ -1411,10 +1453,24 @@ sample directly.
 
 | filter | 8-bit | 16-bit | float | why not |
 |---|---|---|---|---|
+| `AdaptiveBlur` | yes | yes | yes |  |
+| `AdaptiveSharpen` | yes | yes | yes |  |
 | `AdaptiveThreshold` | yes | yes | yes |  |
 | `Affine` | yes | yes | yes |  |
 | `AnisotropicBlur` | yes | yes | yes |  |
 | `AutoGamma` | yes | yes | yes |  |
+| `AutoThreshold` | yes | yes | yes |  |
+| `Clahe` | yes | yes | yes |  |
+| `Enhance` | yes | yes | yes |  |
+| `KernelMorphology` | yes | yes | yes |  |
+| `KernelMorphology(skeleton)` | yes | yes | yes |  |
+| `LocalContrast` | yes | yes | yes |  |
+| `MeanShift` | yes | yes | yes |  |
+| `Polaroid` | yes | yes | yes |  |
+| `Segment` | yes | yes | yes |  |
+| `SelectiveBlur` | yes | yes | yes |  |
+| `WaveletDenoise` | yes | yes | yes |  |
+| `WhiteBalance` | yes | yes | yes |  |
 | `AutoLevel` | yes | yes | yes |  |
 | `AutoTrim` | yes | yes | yes |  |
 | `BarrelInverse` | yes | yes | yes |  |

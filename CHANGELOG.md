@@ -18,6 +18,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tone_auto`: `AutoThreshold` (Otsu / Kapur / Triangle — the level
+  chosen on `rose:` is the validator's for all three), `WhiteBalance`
+  (grey world in CIE L\*a\*b\*), `LocalContrast`, `Clahe`
+  (contrast-limited adaptive equalisation with bilinear tile blending).
+- `adaptive`: `AdaptiveBlur`, `AdaptiveSharpen`, `SelectiveBlur`,
+  `Enhance`, `WaveletDenoise` (à-trous layers thresholded by their
+  kernel norms) and `MeanShift`, row bands under the thread budget.
+- `segment`: `Segment` (histogram-valley segmentation with a minimum
+  class share).
+- `morph_kernel`: `KernelMorphology` over `MorphKernel`s (user-supplied
+  with don't-care cells, or generated) — erode, dilate, open, close,
+  smooth, the three edges, top hat, bottom hat, hit-and-miss, thinning,
+  thicken, `skeleton()`; several kernels; iterate until stable.
+- `Polaroid` (card, turn, soft shadow; RGBA out).
+- `sequence::poly` (`-poly`) and `sequence::channel_fx` (`-channel-fx`:
+  exchange, copy, constant, bare channel lists), both exact against the
+  validator.
+- `Fx`: `v` and `u[k]` (`Fx::apply_images`), `;` statements with user
+  variables and compound assignment, `while` / `for` / `do` / `if`,
+  `hue` / `saturation`, `t` / `n`, and the functions `clamp`, `gauss`,
+  `sinc`, `isnan`, `not`, `alt`, `drc`, `rand`, `channel`; rows are
+  evaluated under the thread budget.
+- Factories `auto-threshold`, `white-balance`, `local-contrast`,
+  `clahe`, `adaptive-blur`, `adaptive-sharpen`, `selective-blur`,
+  `enhance`, `wavelet-denoise`, `mean-shift`, `segment`, `polaroid`,
+  `morphology`, `skeleton`, `fx`, `rotational-blur`.
+- README: an operation-coverage table for the Imagick requests.
 - Dither engine (`diffusion`): `DitherMethod` — threshold maps, error
   diffusion through any `DiffusionStencil` (the tabulated kernels, taps,
   or rows) in raster or serpentine order, and error diffusion along a

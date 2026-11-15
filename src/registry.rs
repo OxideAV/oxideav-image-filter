@@ -272,6 +272,7 @@ fn register_into(outer: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
     sink("zoom-blur", Box::new(make_zoom_blur));
     sink("radial-blur", Box::new(make_radial_blur));
     sink("spin-blur", Box::new(make_radial_blur));
+    sink("rotational-blur", Box::new(make_radial_blur));
     sink("emboss-directional", Box::new(make_emboss_directional));
     sink("displacement-map", Box::new(make_displacement_map));
 

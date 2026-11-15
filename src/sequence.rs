@@ -291,3 +291,242 @@ mod tests {
         assert_eq!(combine_channels(&parts).unwrap(), rgb);
     }
 }
+
+/// `-poly`: the weighted sum of powers `Σ wᵢ · imageᵢ^eᵢ`, one
+/// `(weight, exponent)` term per picture, on every channel.
+///
+/// The pictures must share one shape and there must be one term each.
+/// An exponent of 1 is the plain weighted sum (so `[(0.5, 1), (0.5, 1)]`
+/// is the mean of two pictures); a negative base under a fractional
+/// exponent contributes nothing.
+pub fn poly(images: &[FloatImage], terms: &[(f64, f64)]) -> Result<FloatImage, Error> {
+    let first = images
+        .first()
+        .ok_or_else(|| Error::invalid("oxideav-image-filter: poly needs at least one picture"))?;
+    if terms.len() != images.len() {
+        return Err(Error::invalid(format!(
+            "oxideav-image-filter: poly needs one (weight, exponent) term per picture: \
+             {} pictures, {} terms",
+            images.len(),
+            terms.len()
+        )));
+    }
+    if images.iter().any(|i| {
+        i.width() != first.width()
+            || i.height() != first.height()
+            || i.channels() != first.channels()
+    }) {
+        return Err(Error::invalid(
+            "oxideav-image-filter: the pictures of a poly must share one shape",
+        ));
+    }
+    let mut out = vec![0.0f64; first.samples().len()];
+    for (img, &(weight, exponent)) in images.iter().zip(terms) {
+        for (o, &v) in out.iter_mut().zip(img.samples()) {
+            let p = if exponent == 1.0 {
+                v as f64
+            } else {
+                (v as f64).powf(exponent)
+            };
+            if p.is_finite() {
+                *o += weight * p;
+            }
+        }
+    }
+    FloatImage::from_samples(
+        first.width(),
+        first.height(),
+        first.channels(),
+        out.into_iter().map(|v| v as f32).collect(),
+    )
+}
+
+/// `-channel-fx`: move channels about by a short expression.
+///
+/// The expression is a comma-separated list of steps. Every step reads
+/// the *original* picture and writes the result, so the steps do not
+/// see each other's writes:
+///
+/// - `a<=>b` — exchange channels `a` and `b`;
+/// - `a=>b` — copy channel `a` into `b`;
+/// - `a=value` — set channel `a` to a constant: a fraction of the range
+///   as `50%`, or a normalised number;
+/// - `a` on its own — copy channel `a` into the next channel of the
+///   result (the first bare name fills the first channel, the second
+///   the second, …). An expression that is one bare name gives that
+///   channel as a grey picture.
+///
+/// Channels are `red`, `green`, `blue`, `alpha` (or `r`, `g`, `b`, `a`;
+/// `gray` is the first channel). Naming `alpha` on a picture without
+/// one adds an opaque alpha channel first; a grey picture is widened to
+/// colour when a colour channel other than the first is named.
+pub fn channel_fx(image: &FloatImage, expression: &str) -> Result<FloatImage, Error> {
+    let bad = |what: &str| {
+        Error::invalid(format!(
+            "oxideav-image-filter: channel-fx: {what} in '{expression}'"
+        ))
+    };
+    let channel = |name: &str| -> Result<usize, Error> {
+        Ok(match name.trim().to_ascii_lowercase().as_str() {
+            "red" | "r" | "gray" | "grey" | "0" => 0,
+            "green" | "g" | "1" => 1,
+            "blue" | "b" | "2" => 2,
+            "alpha" | "a" | "opacity" | "3" => 3,
+            other => return Err(bad(&format!("unknown channel '{other}'"))),
+        })
+    };
+    enum Step {
+        Swap(usize, usize),
+        Copy(usize, usize),
+        Set(usize, f32),
+        Take(usize),
+    }
+    let mut steps = Vec::new();
+    for step in expression
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        steps.push(if let Some((a, b)) = step.split_once("<=>") {
+            Step::Swap(channel(a)?, channel(b)?)
+        } else if let Some((a, b)) = step.split_once("=>") {
+            Step::Copy(channel(a)?, channel(b)?)
+        } else if let Some((a, value)) = step.split_once('=') {
+            let value = value.trim();
+            let v = match value.strip_suffix('%') {
+                Some(pc) => pc.trim().parse::<f32>().map(|p| p / 100.0),
+                None => value.parse::<f32>(),
+            }
+            .map_err(|_| bad(&format!("bad value '{value}'")))?;
+            Step::Set(channel(a)?, v)
+        } else {
+            Step::Take(channel(step)?)
+        });
+    }
+    // The layout that holds every channel named (layouts only grow).
+    let mut needs_alpha = image.has_alpha();
+    let mut needs_colour = image.color_channels() == 3;
+    let mut bare = 0usize;
+    for s in &steps {
+        let named: &[usize] = match s {
+            Step::Swap(a, b) | Step::Copy(a, b) => &[*a, *b],
+            Step::Set(a, _) => &[*a],
+            Step::Take(a) => {
+                bare += 1;
+                &[*a, bare - 1]
+            }
+        };
+        needs_alpha |= named.contains(&3);
+        needs_colour |= named.iter().any(|c| (1..3).contains(c));
+    }
+    let single_take = matches!(steps.as_slice(), [Step::Take(_)]);
+    if single_take {
+        // One bare name: that channel as grey (opaque when there is no
+        // alpha to take).
+        let Step::Take(a) = steps[0] else {
+            unreachable!()
+        };
+        let ch = image.channels();
+        let data = image
+            .samples()
+            .chunks_exact(ch)
+            .map(|px| match a {
+                3 if image.has_alpha() => px[ch - 1],
+                3 => 1.0,
+                c => px[c.min(image.color_channels() - 1)],
+            })
+            .collect();
+        return FloatImage::from_samples(image.width(), image.height(), 1, data);
+    }
+    let src = match (needs_colour, needs_alpha) {
+        (true, true) => image.to_rgba(),
+        (true, false) => image.to_channels(3),
+        (false, true) if !image.has_alpha() => image.to_rgba(),
+        _ => image.clone(),
+    };
+    let ch = src.channels();
+    let cc = src.color_channels();
+    let slot = |c: usize| if c == 3 { ch - 1 } else { c.min(cc - 1) };
+    let mut out = src.clone();
+    let mut next = 0usize;
+    for s in &steps {
+        let moves: Vec<(usize, usize)> = match *s {
+            Step::Swap(a, b) => vec![(a, b), (b, a)],
+            Step::Copy(a, b) => vec![(a, b)],
+            Step::Take(a) => {
+                next += 1;
+                vec![(a, next - 1)]
+            }
+            Step::Set(a, v) => {
+                let sa = slot(a);
+                out.samples_mut()
+                    .chunks_exact_mut(ch)
+                    .for_each(|px| px[sa] = v);
+                continue;
+            }
+        };
+        for (from, to) in moves {
+            let (sf, st) = (slot(from), slot(to));
+            for (o, i) in out
+                .samples_mut()
+                .chunks_exact_mut(ch)
+                .zip(src.samples().chunks_exact(ch))
+            {
+                o[st] = i[sf];
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod poly_and_channel_fx_tests {
+    use super::*;
+
+    fn rgb(px: &[[f32; 3]]) -> FloatImage {
+        FloatImage::from_samples(
+            px.len() as u32,
+            1,
+            3,
+            px.iter().flatten().copied().collect(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn poly_is_the_weighted_sum_of_powers() {
+        let a = rgb(&[[0.25, 0.5, 1.0]]);
+        let b = rgb(&[[0.5, 0.5, 0.0]]);
+        let out = poly(&[a.clone(), b.clone()], &[(0.5, 1.0), (2.0, 2.0)]).unwrap();
+        assert_eq!(out.samples(), &[0.125 + 0.5, 0.25 + 0.5, 0.5]);
+        let mean = poly(&[a.clone(), b.clone()], &[(0.5, 1.0), (0.5, 1.0)]).unwrap();
+        assert_eq!(mean.samples(), &[0.375, 0.5, 0.5]);
+        assert!(poly(std::slice::from_ref(&a), &[]).is_err());
+        assert!(poly(&[], &[]).is_err());
+        let gray = FloatImage::from_samples(1, 1, 1, vec![0.5]).unwrap();
+        assert!(poly(&[a, gray], &[(1.0, 1.0), (1.0, 1.0)]).is_err());
+    }
+
+    #[test]
+    fn channel_fx_swaps_copies_sets_and_selects() {
+        let img = rgb(&[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]);
+        let swapped = channel_fx(&img, "red<=>blue").unwrap();
+        assert_eq!(swapped.samples(), &[0.3, 0.2, 0.1, 0.6, 0.5, 0.4]);
+        let copied = channel_fx(&img, "red=>green").unwrap();
+        assert_eq!(copied.samples(), &[0.1, 0.1, 0.3, 0.4, 0.4, 0.6]);
+        let set = channel_fx(&img, "green=50%, blue=0").unwrap();
+        assert_eq!(set.samples(), &[0.1, 0.5, 0.0, 0.4, 0.5, 0.0]);
+        let green = channel_fx(&img, "green").unwrap();
+        assert_eq!((green.channels(), green.samples()), (1, &[0.2f32, 0.5][..]));
+        // Every step reads the original; alpha is added on demand.
+        let out = channel_fx(&img, "red<=>green, green=>alpha").unwrap();
+        assert_eq!(out.channels(), 4);
+        assert_eq!(&out.samples()[..4], &[0.2, 0.1, 0.3, 0.2]);
+        // Bare names fill the result's channels in turn.
+        let out = channel_fx(&img, "red, blue").unwrap();
+        assert_eq!(&out.samples()[..3], &[0.1, 0.3, 0.3]);
+        assert!(channel_fx(&img, "mauve=>red").is_err());
+        assert!(channel_fx(&img, "red=lots").is_err());
+        assert_eq!(channel_fx(&img, "alpha").unwrap().samples(), &[1.0, 1.0]);
+    }
+}

@@ -119,6 +119,7 @@ const CHANGES_EXTENT: &[&str] = &[
     "Extent",
     "Frame",
     "GravityTranslate",
+    "Polaroid",
     "Resize",
     "Rotate",
     "Sample",
