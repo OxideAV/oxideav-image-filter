@@ -89,9 +89,62 @@ impl FloodFill {
     }
 }
 
+/// Scan-line flood fill of a tight `w × h` picture of `bpp` samples a
+/// pixel, from `(sx, sy)`: every pixel connected to the seed through
+/// pixels `close` to the seed's colour (and not already the fill
+/// colour) takes `fill`.
+fn flood<T: Copy + PartialEq + Default>(
+    data: &mut [T],
+    (w, h, bpp): (usize, usize, usize),
+    (sx, sy): (usize, usize),
+    fill: [T; 4],
+    close: impl Fn(T, T) -> bool,
+) {
+    let stride = w * bpp;
+    let mut seed = [T::default(); 4];
+    seed[..bpp].copy_from_slice(&data[sy * stride + sx * bpp..][..bpp]);
+    // A pixel to fill: like the seed, and not filled yet.
+    let open = |data: &[T], x: usize, y: usize| {
+        let px = &data[y * stride + x * bpp..][..bpp];
+        px.iter().zip(&seed).all(|(&v, &s)| close(v, s)) && px != &fill[..bpp]
+    };
+    let mut stack: Vec<(usize, usize)> = Vec::with_capacity(64);
+    stack.push((sx, sy));
+    while let Some((mut x, y)) = stack.pop() {
+        if !open(data, x, y) {
+            continue;
+        }
+        while x > 0 && open(data, x - 1, y) {
+            x -= 1;
+        }
+        let (mut span_above, mut span_below) = (false, false);
+        loop {
+            data[y * stride + x * bpp..][..bpp].copy_from_slice(&fill[..bpp]);
+            if y > 0 {
+                let m = open(data, x, y - 1);
+                if !span_above && m {
+                    stack.push((x, y - 1));
+                }
+                span_above = m;
+            }
+            if y + 1 < h {
+                let m = open(data, x, y + 1);
+                if !span_below && m {
+                    stack.push((x, y + 1));
+                }
+                span_below = m;
+            }
+            x += 1;
+            if x >= w || !open(data, x, y) {
+                break;
+            }
+        }
+    }
+}
+
 impl PixelFilter for FloodFill {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -99,16 +152,6 @@ impl PixelFilter for FloodFill {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        let bpp = match params.format {
-            PixelFormat::Gray8 => 1usize,
-            PixelFormat::Rgb24 => 3,
-            PixelFormat::Rgba => 4,
-            other => {
-                return Err(Error::unsupported(format!(
-                    "oxideav-image-filter: FloodFill requires Gray8/Rgb24/Rgba, got {other:?}"
-                )));
-            }
-        };
         let w = params.width as usize;
         let h = params.height as usize;
         if w == 0 || h == 0 {
@@ -121,116 +164,47 @@ impl PixelFilter for FloodFill {
                 "FloodFill: seed ({sx},{sy}) outside image {w}x{h}"
             )));
         }
-
+        if crate::deep::is_float(params.format) {
+            // The tolerance and the fill colour are on the 8-bit scale;
+            // a deep picture is compared at its own precision.
+            let (tol, colour) = (self.tolerance as f32 / 255.0 + 1e-6, self.fill_color);
+            return crate::deep::run(input, params, move |mut img| {
+                let ch = img.channels();
+                let mut fill = [0.0f32; 4];
+                for (c, slot) in fill.iter_mut().enumerate().take(ch) {
+                    *slot = colour[c.min(3)] as f32 / 255.0;
+                }
+                flood(img.samples_mut(), (w, h, ch), (sx, sy), fill, |v, s| {
+                    (v - s).abs() <= tol
+                });
+                Ok(img)
+            });
+        }
+        let bpp = match params.format {
+            PixelFormat::Gray8 => 1usize,
+            PixelFormat::Rgb24 => 3,
+            PixelFormat::Rgba => 4,
+            other => {
+                return Err(Error::unsupported(format!(
+                    "oxideav-image-filter: FloodFill requires Gray8/Rgb24/Rgba, got {other:?}"
+                )));
+            }
+        };
         let stride = w * bpp;
-        // Reflate to a tight, contiguous buffer (no input-stride
-        // surprises in the worker loop).
         let src_plane = &input.planes[0];
         let mut data = vec![0u8; stride * h];
         for y in 0..h {
             let s = &src_plane.data[y * src_plane.stride..y * src_plane.stride + stride];
             data[y * stride..(y + 1) * stride].copy_from_slice(s);
         }
-
-        // Capture the seed colour BEFORE painting (otherwise the very
-        // first pixel we paint changes the match criterion).
-        let mut seed = [0u8; 4];
-        {
-            let base = sy * stride + sx * bpp;
-            seed[..bpp].copy_from_slice(&data[base..base + bpp]);
-        }
         let tol = self.tolerance;
         let mut fill = [0u8; 4];
         for (c, slot) in fill.iter_mut().enumerate().take(bpp) {
             *slot = self.fill_color[c.min(3)];
         }
-
-        let matches = |row: &[u8], x: usize| {
-            let b = x * bpp;
-            for c in 0..bpp {
-                if row[b + c].abs_diff(seed[c]) > tol {
-                    return false;
-                }
-            }
-            true
-        };
-
-        let already_filled = |row: &[u8], x: usize| {
-            let b = x * bpp;
-            for c in 0..bpp {
-                if row[b + c] != fill[c] {
-                    return false;
-                }
-            }
-            true
-        };
-
-        // Span-fill stack of (x, y) seed points.
-        let mut stack: Vec<(usize, usize)> = Vec::with_capacity(64);
-        stack.push((sx, sy));
-
-        while let Some((mut x, y)) = stack.pop() {
-            // Re-check: an earlier span may have painted this pixel.
-            {
-                let row = &data[y * stride..(y + 1) * stride];
-                if !matches(row, x) || already_filled(row, x) {
-                    continue;
-                }
-            }
-            // Walk left.
-            while x > 0 {
-                let row = &data[y * stride..(y + 1) * stride];
-                if matches(row, x - 1) && !already_filled(row, x - 1) {
-                    x -= 1;
-                } else {
-                    break;
-                }
-            }
-            let mut span_above = false;
-            let mut span_below = false;
-            let mut sx = x;
-            // Walk right + paint the contiguous span.
-            loop {
-                {
-                    let row = &mut data[y * stride..(y + 1) * stride];
-                    let base = sx * bpp;
-                    row[base..base + bpp].copy_from_slice(&fill[..bpp]);
-                }
-
-                // Above-row check.
-                if y > 0 {
-                    let row = &data[(y - 1) * stride..y * stride];
-                    let m = matches(row, sx) && !already_filled(row, sx);
-                    if !span_above && m {
-                        stack.push((sx, y - 1));
-                        span_above = true;
-                    } else if span_above && !m {
-                        span_above = false;
-                    }
-                }
-                // Below-row check.
-                if y + 1 < h {
-                    let row = &data[(y + 1) * stride..(y + 2) * stride];
-                    let m = matches(row, sx) && !already_filled(row, sx);
-                    if !span_below && m {
-                        stack.push((sx, y + 1));
-                        span_below = true;
-                    } else if span_below && !m {
-                        span_below = false;
-                    }
-                }
-
-                sx += 1;
-                if sx >= w {
-                    break;
-                }
-                let row = &data[y * stride..(y + 1) * stride];
-                if !matches(row, sx) || already_filled(row, sx) {
-                    break;
-                }
-            }
-        }
-
+        flood(&mut data, (w, h, bpp), (sx, sy), fill, |v, s| {
+            v.abs_diff(s) <= tol
+        });
         Ok(VideoFrame {
             pts: input.pts,
             planes: vec![VideoPlane { stride, data }],

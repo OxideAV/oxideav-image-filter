@@ -88,9 +88,60 @@ impl Crystallize {
     }
 }
 
+impl Crystallize {
+    /// For a `w × h` picture: the index of the cell every pixel belongs
+    /// to (row-major) and the number of cells. One jittered seed per
+    /// `cell_size` square; a pixel belongs to the nearest seed among
+    /// those of its own square and the eight around it.
+    fn owners(&self, w: usize, h: usize) -> (Vec<u32>, usize) {
+        let cell = self.cell_size.max(2);
+        let cols = (w as u32).div_ceil(cell);
+        let rows = (h as u32).div_ceil(cell);
+        let cell_f = cell as f32;
+        let half = cell_f * 0.5;
+        let jitter = self.jitter.clamp(0.0, 1.0) * half;
+        let mut seeds: Vec<(f32, f32)> = Vec::with_capacity((rows * cols) as usize);
+        for cy in 0..rows {
+            for cx in 0..cols {
+                let key = (cy as u64) * (cols as u64) + (cx as u64);
+                let r1 = next_rand(self.seed, key, 0);
+                let r2 = next_rand(self.seed, key, 1);
+                let dx = ((r1 as f32 / u32::MAX as f32) * 2.0 - 1.0) * jitter;
+                let dy = ((r2 as f32 / u32::MAX as f32) * 2.0 - 1.0) * jitter;
+                seeds.push((
+                    cx as f32 * cell_f + half + dx,
+                    cy as f32 * cell_f + half + dy,
+                ));
+            }
+        }
+        let mut owners = vec![0u32; w * h];
+        crate::exec::par_rows(&mut owners, w, |y, line| {
+            let yf = y as f32 + 0.5;
+            let row_cy = ((y as u32) / cell).min(rows - 1);
+            for (x, slot) in line.iter_mut().enumerate() {
+                let xf = x as f32 + 0.5;
+                let row_cx = ((x as u32) / cell).min(cols - 1);
+                let mut best = f32::INFINITY;
+                for ny in row_cy.saturating_sub(1)..=(row_cy + 1).min(rows - 1) {
+                    for nx in row_cx.saturating_sub(1)..=(row_cx + 1).min(cols - 1) {
+                        let idx = ny * cols + nx;
+                        let (sx, sy) = seeds[idx as usize];
+                        let d2 = (sx - xf) * (sx - xf) + (sy - yf) * (sy - yf);
+                        if d2 < best {
+                            best = d2;
+                            *slot = idx;
+                        }
+                    }
+                }
+            }
+        });
+        (owners, seeds.len())
+    }
+}
+
 impl PixelFilter for Crystallize {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -98,6 +149,34 @@ impl PixelFilter for Crystallize {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // The cells are geometry; a deep picture takes each cell's
+            // mean at its own precision (alpha kept per pixel).
+            let me = *self;
+            return crate::deep::run(input, params, move |mut img| {
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                if w == 0 || h == 0 {
+                    return Ok(img);
+                }
+                let (ch, cc) = (img.channels(), img.color_channels());
+                let (owners, cells) = me.owners(w, h);
+                let mut sums = vec![[0.0f64; 3]; cells];
+                let mut counts = vec![0u32; cells];
+                for (px, &o) in img.samples().chunks_exact(ch).zip(&owners) {
+                    for (s, v) in sums[o as usize].iter_mut().zip(&px[..cc]) {
+                        *s += *v as f64;
+                    }
+                    counts[o as usize] += 1;
+                }
+                for (px, &o) in img.samples_mut().chunks_exact_mut(ch).zip(&owners) {
+                    let n = counts[o as usize].max(1) as f64;
+                    for (v, s) in px[..cc].iter_mut().zip(&sums[o as usize]) {
+                        *v = (s / n) as f32;
+                    }
+                }
+                Ok(img)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,
@@ -108,88 +187,28 @@ impl PixelFilter for Crystallize {
                 )));
             }
         };
-        let cell = self.cell_size.max(2);
         let w = params.width as usize;
         let h = params.height as usize;
         if w == 0 || h == 0 {
             return Ok(input.clone());
         }
 
-        let cols = (w as u32).div_ceil(cell);
-        let rows = (h as u32).div_ceil(cell);
-        let cell_f = cell as f32;
-        let half = cell_f * 0.5;
-        let jitter = self.jitter.clamp(0.0, 1.0) * half;
-
-        // Generate jittered seed positions for every grid cell.
-        let mut seeds: Vec<(f32, f32)> = Vec::with_capacity((rows * cols) as usize);
-        for cy in 0..rows {
-            for cx in 0..cols {
-                let key = (cy as u64) * (cols as u64) + (cx as u64);
-                let r1 = next_rand(self.seed, key, 0);
-                let r2 = next_rand(self.seed, key, 1);
-                let dx = ((r1 as f32 / u32::MAX as f32) * 2.0 - 1.0) * jitter;
-                let dy = ((r2 as f32 / u32::MAX as f32) * 2.0 - 1.0) * jitter;
-                let sx = (cx as f32) * cell_f + half + dx;
-                let sy = (cy as f32) * cell_f + half + dy;
-                seeds.push((sx, sy));
-            }
-        }
-
-        // Two-pass accumulator: sum colours per cell, then count, then
-        // mean. We need to know each pixel's owner cell before we can
-        // start averaging so this is unavoidable.
-        let mut owners = vec![0u32; w * h];
-        let mut sums: Vec<[u64; 4]> = vec![[0u64; 4]; seeds.len()];
-        let mut counts: Vec<u32> = vec![0u32; seeds.len()];
-
+        let (owners, cells) = self.owners(w, h);
+        let mut sums: Vec<[u64; 4]> = vec![[0u64; 4]; cells];
+        let mut counts: Vec<u32> = vec![0u32; cells];
         let row_stride = w * bpp;
         let src = &input.planes[0];
-
         for y in 0..h {
-            let yf = y as f32 + 0.5;
-            let row_cy = ((y as u32) / cell).min(rows - 1);
             let src_row = &src.data[y * src.stride..y * src.stride + row_stride];
-            for x in 0..w {
-                let xf = x as f32 + 0.5;
-                let row_cx = ((x as u32) / cell).min(cols - 1);
-                // Scan the 3×3 cell neighbourhood for nearest seed.
-                let mut best = u32::MAX as f32 * u32::MAX as f32; // big number
-                let mut owner = 0u32;
-                for dy in -1i32..=1 {
-                    let ny = row_cy as i32 + dy;
-                    if ny < 0 || ny as u32 >= rows {
-                        continue;
-                    }
-                    for dx in -1i32..=1 {
-                        let nx = row_cx as i32 + dx;
-                        if nx < 0 || nx as u32 >= cols {
-                            continue;
-                        }
-                        let idx = (ny as u32) * cols + (nx as u32);
-                        let (sx, sy) = seeds[idx as usize];
-                        let dxs = sx - xf;
-                        let dys = sy - yf;
-                        let d2 = dxs * dxs + dys * dys;
-                        if d2 < best {
-                            best = d2;
-                            owner = idx;
-                        }
-                    }
-                }
-                owners[y * w + x] = owner;
-                let cell_sum = &mut sums[owner as usize];
-                let base = x * bpp;
-                for c in 0..bpp {
-                    cell_sum[c] += src_row[base + c] as u64;
+            for (px, &owner) in src_row.chunks_exact(bpp).zip(&owners[y * w..(y + 1) * w]) {
+                for (sum, &v) in sums[owner as usize].iter_mut().zip(px) {
+                    *sum += v as u64;
                 }
                 counts[owner as usize] += 1;
             }
         }
 
-        // Compute the per-cell mean. For empty cells (shouldn't happen
-        // for this 3×3 sweep but defensive), fall back to zero.
-        let mut means: Vec<[u8; 4]> = vec![[0u8; 4]; seeds.len()];
+        let mut means: Vec<[u8; 4]> = vec![[0u8; 4]; cells];
         for (i, m) in means.iter_mut().enumerate() {
             let c = counts[i].max(1) as u64;
             for ch in 0..bpp {

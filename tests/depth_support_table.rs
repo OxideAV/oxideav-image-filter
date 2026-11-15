@@ -39,9 +39,6 @@ fn reason(name: &str) -> &'static str {
         "FreiChen" | "Gabor" | "Sketch" | "Toon" | "Comic" => {
             "8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal)"
         }
-        "Crystallize" | "FloodFill" | "Halftone" | "InnerShadow" | "Feather" => {
-            "8-bit only: float path not written yet (typed refusal, never narrowed)"
-        }
         _ => "",
     }
 }

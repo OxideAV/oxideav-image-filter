@@ -93,7 +93,7 @@ impl Halftone {
 
 impl PixelFilter for Halftone {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::PACKED_8BIT
+        crate::layout::PACKED_8BIT_DEEP
     }
 
     fn apply_pixels(
@@ -101,6 +101,52 @@ impl PixelFilter for Halftone {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // The same screen at the picture's own precision: the cell
+            // mean is the mean Rec. 601 luma of its samples (not of
+            // their 8-bit codes), the dot's area the ink coverage.
+            let me = *self;
+            return crate::deep::run(input, params, move |mut img| {
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                if w == 0 || h == 0 {
+                    return Ok(img);
+                }
+                let (ch, cc) = (img.channels(), img.color_channels());
+                let cell = me.cell_size.max(2) as usize;
+                let (cols, rows) = (w.div_ceil(cell), h.div_ceil(cell));
+                let mut sums = vec![(0.0f64, 0u32); rows * cols];
+                for (i, px) in img.samples().chunks_exact(ch).enumerate() {
+                    let slot = &mut sums[(i / w / cell) * cols + (i % w) / cell];
+                    let l = crate::deep::FloatImage::luma(&px[..cc]);
+                    slot.0 += if l.is_finite() { l as f64 } else { 0.0 };
+                    slot.1 += 1;
+                }
+                let colour = |c: [u8; 3]| -> [f32; 3] {
+                    let f = c.map(|v| v as f32 / 255.0);
+                    if cc == 1 {
+                        [crate::deep::FloatImage::luma(&f); 3]
+                    } else {
+                        f
+                    }
+                };
+                let (ink, paper) = (colour(me.ink_color), colour(me.paper_color));
+                let half = cell as f32 * 0.5;
+                crate::exec::par_rows(img.samples_mut(), w * ch, |y, line| {
+                    let cy = y / cell;
+                    let dy = y as f32 + 0.5 - (cy as f32 * cell as f32 + half);
+                    for (x, px) in line.chunks_exact_mut(ch).enumerate() {
+                        let cx = x / cell;
+                        let (sum, n) = sums[cy * cols + cx];
+                        let mean = (sum / n.max(1) as f64) as f32;
+                        let r2 = half * half * (1.0 - mean).clamp(0.0, 1.0);
+                        let dx = x as f32 + 0.5 - (cx as f32 * cell as f32 + half);
+                        let c = if dx * dx + dy * dy <= r2 { ink } else { paper };
+                        px[..cc].copy_from_slice(&c[..cc]);
+                    }
+                });
+                Ok(img)
+            });
+        }
         let bpp = match params.format {
             PixelFormat::Gray8 => 1usize,
             PixelFormat::Rgb24 => 3usize,

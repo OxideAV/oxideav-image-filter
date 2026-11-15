@@ -96,7 +96,7 @@ impl InnerShadow {
 
 impl PixelFilter for InnerShadow {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::RGBA_ONLY
+        crate::layout::RGBA_DEEP
     }
 
     fn apply_pixels(
@@ -104,6 +104,71 @@ impl PixelFilter for InnerShadow {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if params.format == PixelFormat::RgbaF32Le {
+            // The same recipe in binary32: the inverse alpha, box-blurred
+            // (replicated edges, the two passes unrounded), read at the
+            // offset, mixes the shadow colour into every covered pixel.
+            let me = self.clone();
+            return crate::deep::run(input, params, move |mut img| {
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                if w == 0 || h == 0 {
+                    return Ok(img);
+                }
+                let inverse: Vec<f32> = img
+                    .samples()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|p| 1.0 - p[3].clamp(0.0, 1.0))
+                    .collect();
+                let r = me.radius.min(4096) as i64;
+                let box_pass = |src: &[f32], horizontal: bool| -> Vec<f32> {
+                    let mut out = vec![0.0f32; w * h];
+                    let scale = 1.0 / (2 * r + 1) as f32;
+                    crate::exec::par_rows(&mut out, w, |y, line| {
+                        for (x, o) in line.iter_mut().enumerate() {
+                            let mut acc = 0.0f32;
+                            for d in -r..=r {
+                                let (sx, sy) = if horizontal {
+                                    ((x as i64 + d).clamp(0, w as i64 - 1) as usize, y)
+                                } else {
+                                    (x, (y as i64 + d).clamp(0, h as i64 - 1) as usize)
+                                };
+                                acc += src[sy * w + sx];
+                            }
+                            *o = acc * scale;
+                        }
+                    });
+                    out
+                };
+                let blurred = if r == 0 {
+                    inverse
+                } else {
+                    box_pass(&box_pass(&inverse, true), false)
+                };
+                let opacity = me.opacity.clamp(0.0, 1.0);
+                let tint = me.colour.map(|v| v as f32 / 255.0);
+                crate::exec::par_rows(img.samples_mut(), w * 4, |y, line| {
+                    for (x, px) in line.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                        if px[3] <= 0.0 {
+                            continue;
+                        }
+                        let (sx, sy) =
+                            (x as i64 - me.offset_x as i64, y as i64 - me.offset_y as i64);
+                        let inside = sx >= 0 && sx < w as i64 && sy >= 0 && sy < h as i64;
+                        let t = if inside {
+                            blurred[sy as usize * w + sx as usize]
+                        } else {
+                            1.0
+                        } * opacity;
+                        for (v, c) in px[..3].iter_mut().zip(tint) {
+                            *v = *v * (1.0 - t) + c * t;
+                        }
+                    }
+                });
+                Ok(img)
+            });
+        }
         if params.format != PixelFormat::Rgba {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: InnerShadow requires Rgba, got {:?}",

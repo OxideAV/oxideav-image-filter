@@ -206,7 +206,7 @@ impl Feather {
 
 impl PixelFilter for Feather {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::GRAY8_RGBA
+        crate::layout::GRAY8_RGBA_DEEP
     }
 
     fn apply_pixels(
@@ -225,6 +225,26 @@ impl PixelFilter for Feather {
             return Ok(input.clone());
         }
 
+        if crate::deep::is_float(params.format) {
+            // The mask is the picture's own alpha (or grey) against the
+            // threshold on the 8-bit scale, compared at the picture's
+            // precision; the coverage ramp is written unquantised.
+            let me = *self;
+            return crate::deep::run(input, params, move |mut img| {
+                let ch = img.channels();
+                let limit = me.threshold as f32 / 255.0;
+                let is_fg: Vec<bool> = img
+                    .samples()
+                    .chunks_exact(ch)
+                    .map(|px| (px[ch - 1] >= limit) != me.invert)
+                    .collect();
+                let cov = me.coverage(&is_fg, w, h);
+                for (px, c) in img.samples_mut().chunks_exact_mut(ch).zip(&cov) {
+                    px[ch - 1] = c.clamp(0.0, 1.0);
+                }
+                Ok(img)
+            });
+        }
         match params.format {
             PixelFormat::Rgba => {
                 let src = &input.planes[0];
