@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/OxideAV/oxideav-image-filter/compare/v0.1.5...v0.1.6) - 2026-11-15
+
+### Other
+
+- wording of the coverage section
+- measured blue-noise mask build times
+- 16-bit and float paths for FreiChen and Gabor; live dither tests held to the reference build
+- clahe, polaroid: bound working memory under hostile parameters
+- 16-bit and float paths for Crystallize, FloodFill, Halftone, InnerShadow and Feather
+- Affine, Srt, Perspective and Polar rendered by the distortion engine
+- Hilbert dither, palette quantiser, selective blur, kernel morphology, Radon range; bench entries and README figures
+- ten more operators fold partial alpha as the validator does; algebraic property tests
+- issue #12 operators: auto-threshold, white balance, local contrast, CLAHE, adaptive / selective blur, enhance, wavelet denoise, mean shift, segment, kernel morphology, polaroid, poly, channel-fx; Fx statements, loops and a second picture
+- one engine for threshold maps, stencil and Hilbert-curve diffusion; clustered-dot and blue-noise maps; palette quantisation; Radon skew estimate
+- geometric-resampling throughput (megapixels per second, before / after / 8 threads); CHANGELOG figures
+- tabulated taps for every separable kernel, bicubic and area through two passes; distort: monomorphic gather, cached footprints
+- cylindrical and linear-light options held by tests; distort fuzz target; README for the engine
+- one engine on a reverse map and its Jacobian; cylinder / resize methods, mesh, dither, pyramid-bounded area resampling
+- clippy 1.100: iterate instead of indexing by a range (needless_range_loop)
+- arbitrary angles turn clockwise like the quarter turns; deskew removes the tilt
+- coverage passes under the thread budget; README operator names and resize figures
+- colour weighted by alpha on packed alpha layouts; analytic BC and area tests
+- mask and distance operators take 16-bit and float pictures
+- deep paths for anisotropic blur, bloom, quantize, tilt-shift, stereo; README depth table and throughput table
+- fixed-size pixel chunks in the row kernel (clippy)
+- composite tile placement and 16-bit compose; row parallelism for resize, rotate, colour matrix, tone maps
+- watermark, clut, hald clut, displacement map, channel extract: float paths
+- element radius as a filter field, StructuringElement stays unit-only
+- window filters: exact and bounded at any window size
+- sliding-window oil paint at every depth
+- parametrised square / diamond / disk elements on the shared kernels
+- one binary32 kernel at every depth, 16-bit and float natively
+- shared window kernels, thread budget, hop routes for two-input filters
+
 ### Fixed
 
 - `Composite` on partial alpha: `Difference`, `Exclusion`,
