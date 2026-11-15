@@ -449,7 +449,8 @@ pub struct Clahe {
     pub tiles_x: u32,
     /// Tiles down.
     pub tiles_y: u32,
-    /// Histogram bins per tile (2 … 65 536).
+    /// Histogram bins per tile (2 … 65 536; fewer on a grid so fine
+    /// that tiles × bins would pass 2²²).
     pub bins: u32,
     /// Clip limit as a multiple of the mean bin height (`≥ 1`).
     pub clip_limit: f32,
@@ -467,8 +468,7 @@ impl Clahe {
     }
 
     /// The tone map of one tile: `bins` output levels in `[0, 1]`.
-    fn tile_map(&self, values: impl Iterator<Item = f32>) -> Vec<f32> {
-        let bins = self.bins.clamp(2, 65_536) as usize;
+    fn tile_map(&self, bins: usize, values: impl Iterator<Item = f32>) -> Vec<f32> {
         let mut hist = vec![0.0f64; bins];
         let mut n = 0.0f64;
         for v in values {
@@ -533,11 +533,14 @@ impl PixelFilter for Clahe {
                 return Ok(img);
             }
             let light = intensity_plane(&img);
+            // At most 256 tiles a side, and no more tone-map entries in
+            // all than 2²² (the bin count gives way on a fine grid).
             let (tx, ty) = (
-                (self.tiles_x as usize).clamp(1, w),
-                (self.tiles_y as usize).clamp(1, h),
+                (self.tiles_x as usize).clamp(1, w.min(256)),
+                (self.tiles_y as usize).clamp(1, h.min(256)),
             );
-            let bins = self.bins.clamp(2, 65_536) as usize;
+            let bins =
+                (self.bins.clamp(2, 65_536) as usize).min(((1usize << 22) / (tx * ty)).max(2));
             // Tile `i` spans [i·w/tx, (i+1)·w/tx).
             let edge = |i: usize, n: usize, len: usize| i * len / n;
             let mut maps = Vec::with_capacity(tx * ty);
@@ -546,6 +549,7 @@ impl PixelFilter for Clahe {
                     let (x0, x1) = (edge(i, tx, w), edge(i + 1, tx, w));
                     let (y0, y1) = (edge(j, ty, h), edge(j + 1, ty, h));
                     maps.push(self.tile_map(
+                        bins,
                         (y0..y1).flat_map(|y| light[y * w + x0..y * w + x1].iter().copied()),
                     ));
                 }
@@ -697,8 +701,11 @@ mod tests {
         // Monotone within a tile: order of two pixels is kept.
         let limited = run(&Clahe::new(2, 2, 64, 2.5), &img);
         assert!(limited.pixel(60, 60)[0] >= limited.pixel(40, 40)[0]);
-        // Tiles more numerous than pixels, and an empty-range picture.
+        // Tiles more numerous than pixels, and a grid so fine that the
+        // bin count gives way.
         let tiny = gray(3, 2, |x, _| x as f32 / 2.0);
         run(&Clahe::new(64, 64, 16, 2.0), &tiny);
+        let fine = run(&Clahe::new(u32::MAX, u32::MAX, 65_536, 2.0), &img);
+        assert!(fine.samples().iter().all(|v| v.is_finite()));
     }
 }

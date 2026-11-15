@@ -34,6 +34,9 @@ pub struct Polaroid {
 }
 
 impl Polaroid {
+    /// Widest border, in pixels (a wider request is held to this).
+    pub const MAX_BORDER: u32 = 512;
+
     /// A card turned by `angle_degrees`.
     pub fn new(angle_degrees: f32) -> Self {
         Self {
@@ -58,7 +61,7 @@ impl Polaroid {
     fn border_for(&self, w: usize, h: usize) -> usize {
         self.border
             .unwrap_or(((w.max(h) / 20) as u32).max(3))
-            .min(4096) as usize
+            .min(Self::MAX_BORDER) as usize
     }
 
     /// `(sin, cos)` of the turn, the card's extent and the canvas's.
