@@ -277,13 +277,12 @@ fn rose_statistics_compare_moments_histogram_bounds_match_magick() {
             1e-4,
             &format!("{block_name} intensity"),
         );
-        for i in 0..8 {
+        for (i, &got) in m.hu.iter().enumerate().take(8) {
             let want = field(block, &format!("I{}:", i + 1));
             assert!(
-                (m.hu[i] - want).abs() <= 1e-3 * want.abs().max(1e-6),
-                "{block_name} I{}: got {} magick {want}",
+                (got - want).abs() <= 1e-3 * want.abs().max(1e-6),
+                "{block_name} I{}: got {got} magick {want}",
                 i + 1,
-                m.hu[i]
             );
         }
     }

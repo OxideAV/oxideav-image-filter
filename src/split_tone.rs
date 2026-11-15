@@ -236,8 +236,8 @@ mod tests {
             .unwrap();
         // The midtone is the soft mask's null point — output stays
         // within a couple of LSBs of the input.
-        for c in 0..3 {
-            let v = out.planes[0].data[c] as i16;
+        for (c, &code) in out.planes[0].data.iter().enumerate().take(3) {
+            let v = code as i16;
             assert!((v - 128).abs() <= 4, "channel {c}: expected ≈128, got {v}");
         }
     }
