@@ -51,9 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 16-bit and float paths for `Crystallize` (cell means at the
   picture's precision), `FloodFill` (one generic scan-line fill for
   bytes and floats; tolerance and fill colour on the 8-bit scale),
-  `Halftone`, `InnerShadow` and `Feather` (unquantised coverage ramp).
-  `tests/deep_parity.rs` holds each to its 8-bit result. 177 of 186
-  catalogued filters now take deep pictures.
+  `Halftone`, `InnerShadow`, `Feather` (unquantised coverage ramp),
+  `FreiChen` (the projection cosine on the deep luma) and `Gabor` (the
+  kernel on the deep luma; its convolution now runs under the thread
+  budget). `tests/deep_parity.rs` holds each to its 8-bit result. 179 of
+  186 catalogued filters now take deep pictures; `Sketch`, `Toon`,
+  `Comic`, `HoughLines` and `HoughCircles` still refuse them.
 - `tests/composite_properties.rs`: Porter–Duff coverage rules,
   role-exchange identities and disjoint decompositions, associativity of
   `over`, commutativity / duality / neutral colours of the blends, the

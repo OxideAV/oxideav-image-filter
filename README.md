@@ -1466,7 +1466,7 @@ a kernel averages colour across pixels of different coverage (`Blur`,
 `Sharpen`, `Unsharp`, `Resize` on the packed layouts, the distortions'
 EWA), the colour is weighted by it.
 
-177 of 186 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
+179 of 186 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
 `Unsupported` (never a silent narrowing). `tests/depth_support_table.rs`
 regenerates this table from the filters' own declarations and fails
 when a row here is out of date; `tests/depth_analytic.rs` and
@@ -1571,10 +1571,10 @@ sample directly.
 | `FloodFill` | yes | yes | yes |  |
 | `Flop` | yes | yes | yes |  |
 | `Frame` | yes | yes | yes |  |
-| `FreiChen` | yes | no | no | 8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal) |
+| `FreiChen` | yes | yes | yes |  |
 | `Function` | yes | yes | yes |  |
 | `Fx` | yes | yes | yes |  |
-| `Gabor` | yes | no | no | 8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal) |
+| `Gabor` | yes | yes | yes |  |
 | `Gamma` | yes | yes | yes |  |
 | `GradientConic` | yes | yes | yes |  |
 | `GradientMap` | yes | yes | yes |  |

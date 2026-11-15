@@ -17,11 +17,14 @@ fn magick(args: &[&str]) -> Option<Vec<u8>> {
     out.status.success().then_some(out.stdout)
 }
 
+/// `true` for the build the comparisons were made on (ImageMagick 7.1.2
+/// Q16-HDRI, macOS / Linux); other builds are not held to them.
 fn reference() -> bool {
-    magick(&["-version"]).is_some_and(|v| {
-        let v = String::from_utf8_lossy(&v).to_string();
-        v.contains("ImageMagick 7.1") && v.contains("Q16-HDRI")
-    })
+    !cfg!(windows)
+        && magick(&["-version"]).is_some_and(|v| {
+            let v = String::from_utf8_lossy(&v).to_string();
+            v.contains("ImageMagick 7.1.2") && v.contains("Q16-HDRI")
+        })
 }
 
 fn params(format: PixelFormat, width: u32, height: u32) -> VideoStreamParams {

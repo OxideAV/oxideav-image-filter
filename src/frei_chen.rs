@@ -169,12 +169,16 @@ impl FreiChen {
 
 impl PixelFilter for FreiChen {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -182,6 +186,39 @@ impl PixelFilter for FreiChen {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
+        if crate::deep::is_float(params.format) {
+            // The measure is a ratio of projections, so it does not
+            // depend on the luma's scale: the deep luma goes in as it is
+            // and the cosine comes out unquantised.
+            let mode = self.mode;
+            return crate::deep::run(input, params, move |img| {
+                let grey = crate::laplacian::luma_float(&img);
+                let (w, h) = (grey.width() as usize, grey.height() as usize);
+                let mut out = crate::deep::FloatImage::new(grey.width(), grey.height(), 1);
+                if w == 0 || h == 0 {
+                    return Ok(out);
+                }
+                crate::exec::par_rows(out.samples_mut(), w, |y, line| {
+                    for (x, o) in line.iter_mut().enumerate() {
+                        let px = |dx: i64, dy: i64| {
+                            grey.sample_clamped(x as i64 + dx, y as i64 + dy, 0) as f64
+                        };
+                        let n = [
+                            [px(-1, -1), px(0, -1), px(1, -1)],
+                            [px(-1, 0), px(0, 0), px(1, 0)],
+                            [px(-1, 1), px(0, 1), px(1, 1)],
+                        ];
+                        let m = project_cosine(&n, mode);
+                        *o = if m.is_finite() {
+                            m.clamp(0.0, 1.0) as f32
+                        } else {
+                            0.0
+                        };
+                    }
+                });
+                Ok(out)
+            });
+        }
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: FreiChen does not yet handle {:?}",
@@ -220,13 +257,7 @@ impl PixelFilter for FreiChen {
 ///
 /// `n[i][j]` is the neighbourhood value at row `i`, column `j` with
 /// `i, j ∈ {0, 1, 2}`.
-fn project_cosine(n: &[[i32; 3]; 3], mode: FreiChenMode) -> f64 {
-    // Convert the integer neighbourhood to f64 once.
-    let p: [[f64; 3]; 3] = [
-        [n[0][0] as f64, n[0][1] as f64, n[0][2] as f64],
-        [n[1][0] as f64, n[1][1] as f64, n[1][2] as f64],
-        [n[2][0] as f64, n[2][1] as f64, n[2][2] as f64],
-    ];
+fn project_cosine(p: &[[f64; 3]; 3], mode: FreiChenMode) -> f64 {
     let s2 = std::f64::consts::SQRT_2;
 
     // S1: 1/(2√2) * [[1, √2, 1], [0, 0, 0], [-1, -√2, -1]]
@@ -276,10 +307,10 @@ fn frei_chen(luma: &[u8], w: usize, h: usize, mode: FreiChenMode) -> Vec<u8> {
     if w == 0 || h == 0 {
         return out;
     }
-    let px = |x: i64, y: i64| -> i32 {
+    let px = |x: i64, y: i64| -> f64 {
         let cx = x.clamp(0, w as i64 - 1) as usize;
         let cy = y.clamp(0, h as i64 - 1) as usize;
-        luma[cy * w + cx] as i32
+        luma[cy * w + cx] as f64
     };
     for y in 0..h as i64 {
         for x in 0..w as i64 {
@@ -468,13 +499,13 @@ mod tests {
         // gives c5..c9 all zero and projects entirely onto S1, so the
         // edge cosine is exactly 1.0 → 255.
         let n: [[i32; 3]; 3] = [[100, 100, 100], [0, 0, 0], [-100, -100, -100]];
-        let m = project_cosine(&n, FreiChenMode::Edge);
+        let m = project_cosine(&n.map(|row| row.map(f64::from)), FreiChenMode::Edge);
         assert!(
             (m - 1.0).abs() < 1e-9,
             "mean-zero step is not a pure edge: cos = {}",
             m
         );
-        let l = project_cosine(&n, FreiChenMode::Line);
+        let l = project_cosine(&n.map(|row| row.map(f64::from)), FreiChenMode::Line);
         assert!(l < 1e-9, "mean-zero step has line content: cos = {}", l);
     }
 
@@ -488,7 +519,7 @@ mod tests {
         let _ = n; // we'll test the more general property below
         // Use a clearly-integer mean-zero pattern aligned to S2 axes:
         let n: [[i32; 3]; 3] = [[40, 0, -40], [40, 0, -40], [40, 0, -40]];
-        let m = project_cosine(&n, FreiChenMode::Edge);
+        let m = project_cosine(&n.map(|row| row.map(f64::from)), FreiChenMode::Edge);
         assert!(
             m > 0.99,
             "S2-shaped patch is not registered as a pure edge: cos = {}",

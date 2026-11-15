@@ -36,7 +36,7 @@ fn reason(name: &str) -> &'static str {
         "HoughLines" | "HoughCircles" => {
             "8-bit only: analysis on an 8-bit luma / edge map; float path not written yet (typed refusal)"
         }
-        "FreiChen" | "Gabor" | "Sketch" | "Toon" | "Comic" => {
+        "Sketch" | "Toon" | "Comic" => {
             "8-bit only: built on an 8-bit luma edge map; float path not written yet (typed refusal)"
         }
         _ => "",

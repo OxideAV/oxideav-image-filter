@@ -263,12 +263,16 @@ impl Gabor {
 
 impl PixelFilter for Gabor {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     /// Collapses every input to a single-plane `Gray8` picture.
-    fn output_format(&self, _input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
-        oxideav_core::PixelFormat::Gray8
+    fn output_format(&self, input: oxideav_core::PixelFormat) -> oxideav_core::PixelFormat {
+        if crate::deep::is_float(input) {
+            oxideav_core::PixelFormat::GrayF32Le
+        } else {
+            oxideav_core::PixelFormat::Gray8
+        }
     }
 
     fn apply_pixels(
@@ -276,7 +280,8 @@ impl PixelFilter for Gabor {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if !is_supported_format(params.format) {
+        let float = crate::deep::is_float(params.format);
+        if !float && !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Gabor does not yet handle {:?}",
                 params.format
@@ -300,7 +305,6 @@ impl PixelFilter for Gabor {
         }
         let w = params.width as usize;
         let h = params.height as usize;
-        let luma = build_luma_plane(input, params)?;
         // Auto-radius spans 3σ along the elongated axis. The carrier's
         // envelope is wider along the perpendicular axis when γ < 1, so
         // we expand by max(1, 1/γ).
@@ -323,6 +327,35 @@ impl PixelFilter for Gabor {
             self.sigma,
             self.gamma,
         );
+        if float {
+            // The kernel on the deep luma (scaled to the 8-bit range the
+            // kernel's normalisation is stated in, not rounded to it);
+            // the response is rendered by the same rule, unquantised.
+            let (mode, gain) = (self.mode, self.output_gain);
+            return crate::deep::run(input, params, move |img| {
+                let grey = crate::laplacian::luma_float(&img);
+                let luma: Vec<f64> = grey
+                    .samples()
+                    .iter()
+                    .map(|&v| if v.is_finite() { v as f64 * 255.0 } else { 0.0 })
+                    .collect();
+                let response = convolve(&luma, w, h, &kernel, radius);
+                let data = response
+                    .iter()
+                    .map(|v| match mode {
+                        GaborMode::Signed => {
+                            (128.0 + (v / scale * gain).clamp(-1.0, 1.0) * 127.0) / 255.0
+                        }
+                        GaborMode::Magnitude => (v.abs() * gain / scale).clamp(0.0, 1.0),
+                    })
+                    .collect();
+                crate::deep::FloatImage::from_samples(w as u32, h as u32, 1, data)
+            });
+        }
+        let luma: Vec<f64> = build_luma_plane(input, params)?
+            .iter()
+            .map(|&v| v as f64)
+            .collect();
         let response = convolve(&luma, w, h, &kernel, radius);
         let out = match self.mode {
             GaborMode::Signed => render_signed(&response, scale, self.output_gain),
@@ -395,28 +428,27 @@ pub(crate) fn build_kernel(
     (k, scale)
 }
 
-fn convolve(luma: &[u8], w: usize, h: usize, kernel: &[f32], radius: usize) -> Vec<f32> {
+fn convolve(luma: &[f64], w: usize, h: usize, kernel: &[f32], radius: usize) -> Vec<f32> {
     let n = 2 * radius + 1;
     let mut out = vec![0.0f32; w * h];
     if w == 0 || h == 0 {
         return out;
     }
-    for y in 0..h {
-        for x in 0..w {
-            // Accumulate in f64 so the zero-mean kernel actually
-            // produces ~zero on flat input regardless of order.
+    // Rows under the thread budget (each output sample is one sum).
+    crate::exec::par_rows(&mut out, w, |y, line| {
+        for (x, o) in line.iter_mut().enumerate() {
             let mut acc = 0.0f64;
             for kj in 0..n {
                 let sy = (y as i32 + kj as i32 - radius as i32).clamp(0, h as i32 - 1) as usize;
                 let row = sy * w;
                 for ki in 0..n {
                     let sx = (x as i32 + ki as i32 - radius as i32).clamp(0, w as i32 - 1) as usize;
-                    acc += kernel[kj * n + ki] as f64 * luma[row + sx] as f64;
+                    acc += kernel[kj * n + ki] as f64 * luma[row + sx];
                 }
             }
-            out[y * w + x] = acc as f32;
+            *o = acc as f32;
         }
-    }
+    });
     out
 }
 
