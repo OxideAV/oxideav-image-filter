@@ -1419,6 +1419,21 @@ held by `tests/magick_ops.rs`: the threshold family (`WhiteThreshold`,
 `OrderedDither` carries every map `magick -list threshold` names, their
 cells recovered black-box and bit-exact at any level count.
 
+### The older warps
+
+`Affine`, `Srt`, `Perspective` and `Polar` — the point-sampling warps
+that predate `DistortImage` — are rendered by the same engine (its
+renderer and bilinear sampler, rows under the thread budget). Their
+definition is unchanged: every output pixel is the bilinear blend of the
+four source pixels round the mapped position, each channel on its own
+(alpha is one more channel; they do not weight colour by coverage, and
+do no area resampling — use `DistortImage` for that), or the background
+where the map leaves the source rectangle. `tests/legacy_warps.rs`
+holds each to that definition within one 8-bit code (`2e-4` on float
+pictures) and identical at every thread budget; the 8-bit pictures now
+take the float kernel (rounded once) instead of a separate integer one,
+which is where the one-code tolerance comes from.
+
 ## Measurement
 
 `measure` is the read-only side of the Imagick surface: `statistics`

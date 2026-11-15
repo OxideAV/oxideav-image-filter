@@ -337,6 +337,66 @@ pub struct Distorted {
     pub offset: (i64, i64),
 }
 
+/// The point-sampling warps that predate the engine (`Affine`, `Srt`,
+/// `Perspective`, `Polar`) rendered through it.
+///
+/// `map` is in their convention: it takes an output pixel index and
+/// returns the source pixel index to read (fractional), or `None` for
+/// "outside" — painted with `fill` (a colour in the picture's own
+/// layout). Inside, the sample is the bilinear blend of the four
+/// surrounding pixels with replicated edges, each channel on its own
+/// (alpha included: these filters do not weight colour by coverage).
+/// The engine's coordinates put pixel `i` at `i + ½`, hence the
+/// half-pixel shifts. The output is
+/// `width × height` in the input's layout; rows run under the thread
+/// budget.
+pub(crate) fn warp_bilinear(
+    img: &FloatImage,
+    width: u32,
+    height: u32,
+    fill: &[f32],
+    map: impl Fn(f32, f32) -> Option<(f32, f32)> + Sync,
+) -> Result<FloatImage, Error> {
+    if width == 0 || height == 0 || img.width() == 0 || img.height() == 0 {
+        return Ok(img.filled_like(width, height, fill));
+    }
+    let ch = img.channels();
+    let mut undefined: Px = [0.0; 4];
+    undefined[..ch].copy_from_slice(&fill[..ch]);
+    let reverse = |x: f64, y: f64| -> Option<(f64, f64)> {
+        map(x as f32 - 0.5, y as f32 - 0.5).map(|(u, v)| (u as f64 + 0.5, v as f64 + 0.5))
+    };
+    // These filters blend every channel on its own — alpha is one more
+    // channel to them — so the source is handed to the renderer without
+    // an alpha role.
+    let src = Source::new(
+        img.samples(),
+        img.width() as usize,
+        img.height() as usize,
+        ch,
+        None,
+        1.0,
+        VirtualPixel::Edge,
+        EdgeColours {
+            background: undefined,
+            black: [0.0; 4],
+            white: [1.0; 4],
+            gray: [0.5; 4],
+            transparent: [0.0; 4],
+        },
+    );
+    let view = View {
+        width: width as usize,
+        height: height as usize,
+        x: 0.0,
+        y: 0.0,
+        scale: 1.0,
+    };
+    let gather = Gather::Point(PixelInterpolate::Bilinear);
+    let data = render(&src, &reverse, view, &gather, undefined);
+    FloatImage::from_samples(width, height, ch, data)
+}
+
 /// An RGBA colour in a `channels`-sample layout (grey takes the Rec. 601
 /// luma).
 fn colour_in_layout(rgba: [f32; 4], channels: usize) -> Px {

@@ -34,9 +34,8 @@
 //! Operates on packed `Rgb24` / `Rgba`. Output dimensions match the
 //! input — no canvas resize.
 
-use crate::implode::bilinear_sample_into;
 use crate::{PixelFilter, VideoStreamParams};
-use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
+use oxideav_core::{Error, VideoFrame};
 
 /// Direction of the polar distortion.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -130,141 +129,39 @@ impl PixelFilter for Polar {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if crate::deep::is_float(params.format) {
-            let me = *self;
-            return crate::deep::run(input, params, |img| {
-                let (w, h) = (img.width() as usize, img.height() as usize);
-                let mut out = img.clone();
-                let cx = me.cx.unwrap_or((w as f32 - 1.0) * 0.5);
-                let cy = me.cy.unwrap_or((h as f32 - 1.0) * 0.5);
-                let auto_max_r =
-                    ((w.max(1) as f32 - 1.0 - cx).hypot(h.max(1) as f32 - 1.0 - cy)).max(1.0);
-                let max_r = me.max_radius.unwrap_or(auto_max_r).max(1.0);
-                let two_pi = std::f32::consts::TAU;
-                for py in 0..h {
-                    for px in 0..w {
-                        let (sx, sy) = match me.direction {
-                            PolarDirection::Polar => {
-                                let r = (py as f32 / h as f32) * max_r;
-                                let angle = (px as f32 / w as f32) * two_pi;
-                                let (sin_a, cos_a) = angle.sin_cos();
-                                (cx + r * sin_a, cy - r * cos_a)
-                            }
-                            PolarDirection::DePolar => {
-                                let dx = px as f32 - cx;
-                                let dy = py as f32 - cy;
-                                let r = (dx * dx + dy * dy).sqrt();
-                                let mut a = dx.atan2(-dy);
-                                if a < 0.0 {
-                                    a += two_pi;
-                                }
-                                (a / two_pi * w as f32, (r / max_r) * h as f32)
-                            }
-                        };
-                        img.bilinear_into(sx, sy, out.pixel_mut(px as u32, py as u32));
-                    }
-                }
-                Ok(out)
-            });
-        }
-        let bpp = match params.format {
-            PixelFormat::Rgb24 => 3usize,
-            PixelFormat::Rgba => 4usize,
-            other => {
-                return Err(Error::unsupported(format!(
-                    "oxideav-image-filter: Polar requires Rgb24/Rgba, got {other:?}"
-                )));
+        // Rendered by the distortion engine (bilinear point sampling,
+        // replicated edges); rows under the thread budget.
+        let me = *self;
+        crate::deep::run_any(input, params, |img| {
+            let (w, h) = (img.width(), img.height());
+            if w == 0 || h == 0 {
+                return Ok(img);
             }
-        };
-
-        let w = params.width as usize;
-        let h = params.height as usize;
-        let src = &input.planes[0];
-        let row_bytes = w * bpp;
-        let mut out = vec![0u8; row_bytes * h];
-        if w == 0 || h == 0 {
-            return Ok(VideoFrame {
-                pts: input.pts,
-                planes: vec![VideoPlane {
-                    stride: row_bytes,
-                    data: out,
-                }],
-            });
-        }
-
-        let cx = self.cx.unwrap_or((w as f32 - 1.0) * 0.5);
-        let cy = self.cy.unwrap_or((h as f32 - 1.0) * 0.5);
-        // Distance to the farthest corner — the smallest radius that
-        // covers the whole input image. Honoured only when the user
-        // hasn't supplied an explicit `max_radius`.
-        let auto_max_r = ((w.max(1) as f32 - 1.0 - cx).hypot(h.max(1) as f32 - 1.0 - cy)).max(1.0);
-        let max_r = self.max_radius.unwrap_or(auto_max_r).max(1.0);
-
-        match self.direction {
-            PolarDirection::Polar => {
-                let two_pi = std::f32::consts::TAU;
-                for py in 0..h {
-                    let r = (py as f32 / h as f32) * max_r;
-                    let dst_row = &mut out[py * row_bytes..(py + 1) * row_bytes];
-                    for px in 0..w {
-                        let angle = (px as f32 / w as f32) * two_pi;
-                        let (sin_a, cos_a) = angle.sin_cos();
-                        let sx = cx + r * sin_a;
-                        let sy = cy - r * cos_a;
-                        let base = px * bpp;
-                        bilinear_sample_into(
-                            &src.data,
-                            src.stride,
-                            w,
-                            h,
-                            bpp,
-                            sx,
-                            sy,
-                            &mut dst_row[base..base + bpp],
-                        );
+            let (wf, hf) = (w as f32, h as f32);
+            let cx = me.cx.unwrap_or((wf - 1.0) * 0.5);
+            let cy = me.cy.unwrap_or((hf - 1.0) * 0.5);
+            let auto_max_r = ((wf - 1.0 - cx).hypot(hf - 1.0 - cy)).max(1.0);
+            let max_r = me.max_radius.unwrap_or(auto_max_r).max(1.0);
+            let two_pi = std::f32::consts::TAU;
+            let fill = vec![0.0; img.channels()];
+            crate::distort_image::warp_bilinear(&img, w, h, &fill, |px, py| {
+                Some(match me.direction {
+                    PolarDirection::Polar => {
+                        let r = (py / hf) * max_r;
+                        let (sin_a, cos_a) = ((px / wf) * two_pi).sin_cos();
+                        (cx + r * sin_a, cy - r * cos_a)
                     }
-                }
-            }
-            PolarDirection::DePolar => {
-                let two_pi = std::f32::consts::TAU;
-                let inv_two_pi = 1.0 / two_pi;
-                for py in 0..h {
-                    let dy = py as f32 - cy;
-                    let dst_row = &mut out[py * row_bytes..(py + 1) * row_bytes];
-                    for px in 0..w {
-                        let dx = px as f32 - cx;
+                    PolarDirection::DePolar => {
+                        let (dx, dy) = (px - cx, py - cy);
                         let r = (dx * dx + dy * dy).sqrt();
-                        // atan2(dx, -dy) measures the clockwise angle
-                        // from the +Y ("up") axis — matches the Polar
-                        // direction's `(sin_a, -cos_a)` mapping.
                         let mut a = dx.atan2(-dy);
                         if a < 0.0 {
                             a += two_pi;
                         }
-                        let sx = a * inv_two_pi * w as f32;
-                        let sy = (r / max_r) * h as f32;
-                        let base = px * bpp;
-                        bilinear_sample_into(
-                            &src.data,
-                            src.stride,
-                            w,
-                            h,
-                            bpp,
-                            sx,
-                            sy,
-                            &mut dst_row[base..base + bpp],
-                        );
+                        (a / two_pi * wf, (r / max_r) * hf)
                     }
-                }
-            }
-        }
-
-        Ok(VideoFrame {
-            pts: input.pts,
-            planes: vec![VideoPlane {
-                stride: row_bytes,
-                data: out,
-            }],
+                })
+            })
         })
     }
 }
@@ -273,6 +170,7 @@ impl PixelFilter for Polar {
 mod tests {
     use super::*;
     use crate::ImageFilter;
+    use oxideav_core::{PixelFormat, VideoPlane};
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

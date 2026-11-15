@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   full range); `Fx` rows run under the thread budget (8.6× at 8
   threads). README table.
 
+### Changed
+
+- `Affine`, `Srt`, `Perspective` and `Polar` are rendered by the
+  distortion engine (same definition: per-channel bilinear point
+  sampling, background outside the source rectangle; within one 8-bit
+  code of the previous output, `tests/legacy_warps.rs`). They now run
+  their rows under the thread budget, and their 8-bit path is the float
+  kernel rounded once.
+
 ### Added
 
 - `tests/composite_properties.rs`: Porter–Duff coverage rules,

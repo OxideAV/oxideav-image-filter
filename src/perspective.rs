@@ -48,9 +48,8 @@
 //! (collinear) — the linear system is singular and there's no unique
 //! mapping.
 
-use crate::implode::bilinear_sample_into;
 use crate::{PixelFilter, VideoStreamParams};
-use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
+use oxideav_core::{Error, VideoFrame};
 
 /// Four-corner perspective warp.
 #[derive(Clone, Debug)]
@@ -118,132 +117,37 @@ impl PixelFilter for Perspective {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if crate::deep::is_float(params.format) {
+        // Rendered by the distortion engine (bilinear point sampling,
+        // background outside the source rectangle and beyond the
+        // horizon); rows under the thread budget.
+        let (bg, size) = (self.background, self.output_size);
+        crate::deep::run_any(input, params, |img| {
+            let (src_w, src_h) = (img.width(), img.height());
+            let (dst_w, dst_h) = size.unwrap_or((src_w, src_h));
+            let fill = crate::deep::background(bg, img.channels());
+            if dst_w == 0 || dst_h == 0 || src_w == 0 || src_h == 0 {
+                return Ok(img.filled_like(dst_w, dst_h, &fill));
+            }
+            // The forward homography src → dst, inverted for the
+            // per-pixel back-mapping.
             let forward = solve_homography(&self.src_corners, &self.dst_corners)
                 .ok_or_else(|| Error::invalid("Perspective: source corners are degenerate"))?;
             let inverse = invert_3x3(&forward).ok_or_else(|| {
                 Error::invalid("Perspective: forward homography is non-invertible")
             })?;
-            let (bg, size) = (self.background, self.output_size);
-            return crate::deep::run(input, params, |img| {
-                let (src_w, src_h) = (img.width(), img.height());
-                let (dst_w, dst_h) = size.unwrap_or((src_w, src_h));
-                let fill = crate::deep::background(bg, img.channels());
-                let mut out = img.filled_like(dst_w, dst_h, &fill);
-                const EPS: f32 = 1e-4;
-                for py in 0..dst_h {
-                    for px in 0..dst_w {
-                        let (sx, sy, w_h) = apply_homography(&inverse, px as f32, py as f32);
-                        if w_h.abs() < 1e-9 {
-                            continue;
-                        }
-                        let (sx, sy) = (sx / w_h, sy / w_h);
-                        if sx < -EPS
-                            || sx > (src_w as f32 - 1.0) + EPS
-                            || sy < -EPS
-                            || sy > (src_h as f32 - 1.0) + EPS
-                        {
-                            continue;
-                        }
-                        img.bilinear_into(sx, sy, out.pixel_mut(px, py));
-                    }
-                }
-                Ok(out)
-            });
-        }
-        let bpp = match params.format {
-            PixelFormat::Rgb24 => 3usize,
-            PixelFormat::Rgba => 4usize,
-            other => {
-                return Err(Error::unsupported(format!(
-                    "oxideav-image-filter: Perspective requires Rgb24/Rgba, got {other:?}"
-                )));
-            }
-        };
-
-        let src_w = params.width as usize;
-        let src_h = params.height as usize;
-        // Destination canvas size — defaults to the input shape, can be
-        // overridden by `with_output_size` to emit a wider / taller
-        // canvas when the dst quad escapes the source rectangle.
-        let (dst_w, dst_h) = self
-            .output_size
-            .map(|(w, h)| (w as usize, h as usize))
-            .unwrap_or((src_w, src_h));
-
-        let src = &input.planes[0];
-        let row_bytes = dst_w * bpp;
-        let mut out = vec![0u8; row_bytes * dst_h];
-
-        if dst_w == 0 || dst_h == 0 || src_w == 0 || src_h == 0 {
-            return Ok(VideoFrame {
-                pts: input.pts,
-                planes: vec![VideoPlane {
-                    stride: row_bytes,
-                    data: out,
-                }],
-            });
-        }
-
-        // Solve the forward homography src → dst, then invert it for
-        // per-pixel back-mapping.
-        let forward = solve_homography(&self.src_corners, &self.dst_corners)
-            .ok_or_else(|| Error::invalid("Perspective: source corners are degenerate"))?;
-        let inverse = invert_3x3(&forward)
-            .ok_or_else(|| Error::invalid("Perspective: forward homography is non-invertible"))?;
-
-        for py in 0..dst_h {
-            let dst_row = &mut out[py * row_bytes..(py + 1) * row_bytes];
-            for px in 0..dst_w {
-                let (sx, sy, w_h) = apply_homography(&inverse, px as f32, py as f32);
-                let base = px * bpp;
+            // A small margin absorbs round-off at the source rectangle's
+            // edge.
+            const EPS: f32 = 1e-4;
+            let (max_x, max_y) = (src_w as f32 - 1.0 + EPS, src_h as f32 - 1.0 + EPS);
+            crate::distort_image::warp_bilinear(&img, dst_w, dst_h, &fill, |px, py| {
+                let (sx, sy, w_h) = apply_homography(&inverse, px, py);
                 if w_h.abs() < 1e-9 {
-                    write_background(&mut dst_row[base..base + bpp], &self.background, bpp);
-                    continue;
+                    return None;
                 }
-                let sx = sx / w_h;
-                let sy = sy / w_h;
-                // A tiny epsilon absorbs floating-point round-off at
-                // the source-rectangle boundary so e.g. an sx that
-                // computes to `15.0000005` for a 16-pixel-wide source
-                // still hits the inside branch (and clamps to 15.0
-                // inside `bilinear_sample_into`) instead of falling
-                // through to the background fill.
-                const EPS: f32 = 1e-4;
-                if sx < -EPS
-                    || sx > (src_w as f32 - 1.0) + EPS
-                    || sy < -EPS
-                    || sy > (src_h as f32 - 1.0) + EPS
-                {
-                    write_background(&mut dst_row[base..base + bpp], &self.background, bpp);
-                    continue;
-                }
-                bilinear_sample_into(
-                    &src.data,
-                    src.stride,
-                    src_w,
-                    src_h,
-                    bpp,
-                    sx,
-                    sy,
-                    &mut dst_row[base..base + bpp],
-                );
-            }
-        }
-
-        Ok(VideoFrame {
-            pts: input.pts,
-            planes: vec![VideoPlane {
-                stride: row_bytes,
-                data: out,
-            }],
+                let (sx, sy) = (sx / w_h, sy / w_h);
+                (sx >= -EPS && sx <= max_x && sy >= -EPS && sy <= max_y).then_some((sx, sy))
+            })
         })
-    }
-}
-
-fn write_background(dst: &mut [u8], bg: &[u8; 4], bpp: usize) {
-    for (i, slot) in dst.iter_mut().enumerate().take(bpp) {
-        *slot = bg[i.min(3)];
     }
 }
 
@@ -378,6 +282,7 @@ pub(crate) fn invert_3x3(m: &[[f32; 3]; 3]) -> Option<[[f32; 3]; 3]> {
 mod tests {
     use super::*;
     use crate::ImageFilter;
+    use oxideav_core::{PixelFormat, VideoPlane};
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);

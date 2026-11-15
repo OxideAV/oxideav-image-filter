@@ -23,9 +23,8 @@
 //! Packed `Rgb24` and `Rgba` only — geometric warps make no sense on
 //! sub-sampled chroma without a full pipeline-aware re-rasteriser.
 
-use crate::implode::bilinear_sample_into;
 use crate::{PixelFilter, VideoStreamParams};
-use oxideav_core::{Error, PixelFormat, VideoFrame, VideoPlane};
+use oxideav_core::{Error, VideoFrame};
 
 /// 2-D affine warp.
 #[derive(Clone, Copy, Debug)]
@@ -102,104 +101,28 @@ impl PixelFilter for Affine {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
-        if crate::deep::is_float(params.format) {
-            let (matrix, bg, size) = (self.matrix, self.background, self.output_size);
-            return crate::deep::run(input, params, |img| {
-                let (src_w, src_h) = (img.width(), img.height());
-                let (dst_w, dst_h) = size.unwrap_or((src_w, src_h));
-                let fill = crate::deep::background(bg, img.channels());
-                let mut out = img.filled_like(dst_w, dst_h, &fill);
-                let inv = invert_affine(matrix)
-                    .ok_or_else(|| Error::invalid("Affine: matrix is singular (det == 0)"))?;
-                const EPS: f32 = 1e-4;
-                for py in 0..dst_h {
-                    for px in 0..dst_w {
-                        let (sx, sy) = apply_affine(inv, px as f32, py as f32);
-                        if sx < -EPS
-                            || sx > (src_w as f32 - 1.0) + EPS
-                            || sy < -EPS
-                            || sy > (src_h as f32 - 1.0) + EPS
-                        {
-                            continue;
-                        }
-                        img.bilinear_into(sx, sy, out.pixel_mut(px, py));
-                    }
-                }
-                Ok(out)
-            });
-        }
-        let bpp = match params.format {
-            PixelFormat::Rgb24 => 3usize,
-            PixelFormat::Rgba => 4usize,
-            other => {
-                return Err(Error::unsupported(format!(
-                    "oxideav-image-filter: Affine requires Rgb24/Rgba, got {other:?}"
-                )));
+        // Rendered by the distortion engine (bilinear point sampling,
+        // background outside the source rectangle); rows under the
+        // thread budget.
+        let (matrix, bg, size) = (self.matrix, self.background, self.output_size);
+        crate::deep::run_any(input, params, |img| {
+            let (src_w, src_h) = (img.width(), img.height());
+            let (dst_w, dst_h) = size.unwrap_or((src_w, src_h));
+            let fill = crate::deep::background(bg, img.channels());
+            if dst_w == 0 || dst_h == 0 || src_w == 0 || src_h == 0 {
+                return Ok(img.filled_like(dst_w, dst_h, &fill));
             }
-        };
-        let src_w = params.width as usize;
-        let src_h = params.height as usize;
-        let (dst_w, dst_h) = self
-            .output_size
-            .map(|(w, h)| (w as usize, h as usize))
-            .unwrap_or((src_w, src_h));
-        let row_bytes = dst_w * bpp;
-        let mut out = vec![0u8; row_bytes * dst_h];
-
-        if dst_w == 0 || dst_h == 0 || src_w == 0 || src_h == 0 {
-            return Ok(VideoFrame {
-                pts: input.pts,
-                planes: vec![VideoPlane {
-                    stride: row_bytes,
-                    data: out,
-                }],
-            });
-        }
-
-        let inv = invert_affine(self.matrix)
-            .ok_or_else(|| Error::invalid("Affine: matrix is singular (det == 0)"))?;
-        let src = &input.planes[0];
-
-        for py in 0..dst_h {
-            let dst_row = &mut out[py * row_bytes..(py + 1) * row_bytes];
-            for px in 0..dst_w {
-                let (sx, sy) = apply_affine(inv, px as f32, py as f32);
-                let base = px * bpp;
-                const EPS: f32 = 1e-4;
-                if sx < -EPS
-                    || sx > (src_w as f32 - 1.0) + EPS
-                    || sy < -EPS
-                    || sy > (src_h as f32 - 1.0) + EPS
-                {
-                    write_background(&mut dst_row[base..base + bpp], &self.background, bpp);
-                    continue;
-                }
-                bilinear_sample_into(
-                    &src.data,
-                    src.stride,
-                    src_w,
-                    src_h,
-                    bpp,
-                    sx,
-                    sy,
-                    &mut dst_row[base..base + bpp],
-                );
-            }
-        }
-
-        Ok(VideoFrame {
-            pts: input.pts,
-            planes: vec![VideoPlane {
-                stride: row_bytes,
-                data: out,
-            }],
+            let inv = invert_affine(matrix)
+                .ok_or_else(|| Error::invalid("Affine: matrix is singular (det == 0)"))?;
+            // A small margin absorbs round-off at the source rectangle's
+            // edge.
+            const EPS: f32 = 1e-4;
+            let (max_x, max_y) = (src_w as f32 - 1.0 + EPS, src_h as f32 - 1.0 + EPS);
+            crate::distort_image::warp_bilinear(&img, dst_w, dst_h, &fill, |px, py| {
+                let (sx, sy) = apply_affine(inv, px, py);
+                (sx >= -EPS && sx <= max_x && sy >= -EPS && sy <= max_y).then_some((sx, sy))
+            })
         })
-    }
-}
-
-fn write_background(dst: &mut [u8], bg: &[u8; 4], bpp: usize) {
-    for (i, slot) in dst.iter_mut().enumerate().take(bpp) {
-        *slot = bg[i.min(3)];
     }
 }
 
@@ -231,6 +154,7 @@ pub(crate) fn invert_affine(m: [f32; 6]) -> Option<[f32; 6]> {
 mod tests {
     use super::*;
     use crate::ImageFilter;
+    use oxideav_core::{PixelFormat, VideoPlane};
 
     fn rgb(w: u32, h: u32, f: impl Fn(u32, u32) -> (u8, u8, u8)) -> VideoFrame {
         let mut data = Vec::with_capacity((w * h * 3) as usize);
