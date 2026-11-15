@@ -30,29 +30,34 @@
 //! width of 1 000) and its range ±45°.
 
 /// The sharpness of the projection profile of every slope `s / W`,
-/// `s = 0 … W − 1` (rows dropping to the right), of a binary picture
+/// `s = 0 … limit` (rows dropping to the right), of a binary picture
 /// `ink` (`width × height`, row-major). `W` is `width` rounded up to a
-/// power of two.
-fn profile_sharpness(ink: &[bool], width: usize, height: usize) -> Vec<f64> {
+/// power of two. Only what the slopes up to `limit` need is computed: a
+/// strip `w` columns wide takes part with its slopes up to `⌈limit · w /
+/// W⌉ + 1`, and a line starts at most `limit + 1` rows above the picture.
+fn profile_sharpness(ink: &[bool], width: usize, height: usize, limit: usize) -> Vec<f64> {
     let big = width.next_power_of_two();
-    // A line that ends inside the picture may start up to `W − 1` rows
-    // above it.
-    let rows = height + big;
+    let limit = limit.min(big - 1);
+    let top = (limit + 2).min(big);
+    let rows = height + top;
     let mut cur = vec![0u32; big * rows];
     for x in 0..width {
         let col = &mut cur[x * rows..(x + 1) * rows];
-        for (y, slot) in col[big..].iter_mut().enumerate() {
+        for (y, slot) in col[top..].iter_mut().enumerate() {
             *slot = ink[y * width + x] as u32;
         }
     }
+    // Slopes a strip of `w` columns must provide.
+    let needed = |w: usize| (w - 1).min((limit * w).div_ceil(big) + 1);
     let mut next = vec![0u32; big * rows];
     let mut strip = 1usize;
     while strip < big {
         // `cur[(i · strip + j) · rows + y]`: strip `i`, slope `j`.
+        let pairs = needed(2 * strip) / 2;
         for (pair, out) in next.chunks_exact_mut(2 * strip * rows).enumerate() {
             let left = &cur[2 * pair * strip * rows..][..strip * rows];
             let right = &cur[(2 * pair + 1) * strip * rows..][..strip * rows];
-            for j in 0..strip {
+            for j in 0..=pairs.min(strip - 1) {
                 let (l, r) = (&left[j * rows..][..rows], &right[j * rows..][..rows]);
                 let (even, odd) = out[2 * j * rows..][..2 * rows].split_at_mut(rows);
                 let below = r.iter().skip(j).chain(std::iter::repeat(&0));
@@ -71,6 +76,7 @@ fn profile_sharpness(ink: &[bool], width: usize, height: usize) -> Vec<f64> {
         strip *= 2;
     }
     cur.chunks_exact(rows)
+        .take(limit + 1)
         .map(|profile| {
             profile
                 .windows(2)
@@ -93,14 +99,15 @@ pub fn skew_degrees(ink: &[bool], width: usize, height: usize, max_degrees: f64)
     }
     let big = width.next_power_of_two() as f64;
     let limit = max_degrees.clamp(0.0, 45.0).to_radians().tan() * big;
-    let falling = profile_sharpness(ink, width, height);
+    let steps = (limit + 1e-9).floor() as usize;
+    let falling = profile_sharpness(ink, width, height, steps);
     let flipped: Vec<bool> = ink[..width * height]
         .chunks_exact(width)
         .rev()
         .flatten()
         .copied()
         .collect();
-    let rising = profile_sharpness(&flipped, width, height);
+    let rising = profile_sharpness(&flipped, width, height, steps);
     // Level first, then by increasing tilt, falling before rising: a tie
     // goes to the smaller angle.
     let mut best = (falling[0], 0.0f64);
@@ -163,7 +170,11 @@ mod tests {
         // `w`, so its sharpness is 2 w²; the 45° profile is flat.
         let (w, h) = (16usize, 16usize);
         let ink: Vec<bool> = (0..w * h).map(|i| i / w == 5).collect();
-        let s = profile_sharpness(&ink, w, h);
+        let s = profile_sharpness(&ink, w, h, w - 1);
+        // A limited search computes the same sums for the slopes it keeps.
+        for limit in [0usize, 1, 3, 7] {
+            assert_eq!(profile_sharpness(&ink, w, h, limit), s[..=limit]);
+        }
         assert_eq!(s[0], 2.0 * (w * w) as f64);
         assert!(s[w - 1] <= 2.0 * w as f64 + 2.0);
     }

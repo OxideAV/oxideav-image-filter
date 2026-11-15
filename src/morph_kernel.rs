@@ -486,28 +486,49 @@ fn extremum(
         return out;
     }
     let sign = if reflect { -1 } else { 1 };
-    crate::exec::par_rows(out.samples_mut(), w as usize * ch, |y, line| {
-        for (x, px) in line.chunks_exact_mut(ch).enumerate() {
-            for (c, v) in px[..cc].iter_mut().enumerate() {
-                let mut best = if max {
-                    f32::NEG_INFINITY
-                } else {
-                    f32::INFINITY
-                };
-                for &(dx, dy) in offsets {
-                    let (sx, sy) = (x as i64 + sign * dx, y as i64 + sign * dy);
-                    let s = if sx < 0 || sy < 0 || sx >= w || sy >= h {
-                        match outside {
-                            Some(v) => v,
-                            None => continue,
-                        }
-                    } else {
-                        src[(sy * w + sx) as usize * ch + c]
-                    };
-                    best = if max { best.max(s) } else { best.min(s) };
+    let pick = |a: f32, b: f32| if max { a.max(b) } else { a.min(b) };
+    let start = if max {
+        f32::NEG_INFINITY
+    } else {
+        f32::INFINITY
+    };
+    let (wu, row) = (w as usize, w as usize * ch);
+    crate::exec::par_bands(out.samples_mut(), row, |y0, band| {
+        // One scratch row; each kernel cell folds a whole shifted source
+        // row into it.
+        let mut best = vec![start; row];
+        for (i, line) in band.chunks_exact_mut(row).enumerate() {
+            let y = (y0 + i) as i64;
+            best.fill(start);
+            for &(dx, dy) in offsets {
+                let (sdx, sy) = (sign * dx, y + sign * dy);
+                // Columns whose tap lands inside the picture.
+                let x0 = (-sdx).clamp(0, w) as usize;
+                let x1 = (w - sdx).clamp(0, w) as usize;
+                let inside = sy >= 0 && sy < h && x0 < x1;
+                if inside {
+                    let from = &src[sy as usize * row..][..row];
+                    let shifted = &from[(x0 as i64 + sdx) as usize * ch..][..(x1 - x0) * ch];
+                    for (b, s) in best[x0 * ch..x1 * ch].iter_mut().zip(shifted) {
+                        *b = pick(*b, *s);
+                    }
                 }
-                if best.is_finite() {
-                    *v = best;
+                if let Some(v) = outside {
+                    // Everywhere the tap fell outside.
+                    let (lo, hi) = if inside { (x0 * ch, x1 * ch) } else { (0, 0) };
+                    best[..lo].iter_mut().for_each(|b| *b = pick(*b, v));
+                    best[hi..].iter_mut().for_each(|b| *b = pick(*b, v));
+                }
+            }
+            for (px, b) in line
+                .chunks_exact_mut(ch)
+                .zip(best.chunks_exact(ch))
+                .take(wu)
+            {
+                for (v, m) in px[..cc].iter_mut().zip(b) {
+                    if m.is_finite() {
+                        *v = *m;
+                    }
                 }
             }
         }

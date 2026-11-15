@@ -240,13 +240,6 @@ fn gated_mean(
     out
 }
 
-fn intensity_of(px: &[f32]) -> f32 {
-    match px.len() {
-        1 | 2 => px[0],
-        _ => 0.212_656 * px[0] + 0.715_158 * px[1] + 0.072_186 * px[2],
-    }
-}
-
 /// Gaussian blur that does not cross a contrast step.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -275,12 +268,44 @@ impl PixelFilter for SelectiveBlur {
         params: VideoStreamParams,
     ) -> Result<VideoFrame, Error> {
         deep::run_any(input, params, |img| {
-            let g = gaussian(finite(self.sigma, 0.0).clamp(0.0, 64.0));
+            let kernel = gaussian(finite(self.sigma, 0.0).clamp(0.0, 64.0));
             let t = finite(self.threshold, 0.0);
-            let cc = img.color_channels();
-            Ok(gated_mean(&img, &g, |a, b| {
-                (intensity_of(&a[..cc]) - intensity_of(&b[..cc])).abs() <= t
-            }))
+            // The gate reads one intensity plane; the window walks whole
+            // rows of it (edge columns resolved once).
+            let lum = intensity_plane(&img);
+            let (w, h, ch) = (img.width() as usize, img.height() as usize, img.channels());
+            let r = kernel.len() / 2;
+            let cols: Vec<usize> = (0..w + 2 * r)
+                .map(|p| p.saturating_sub(r).min(w.saturating_sub(1)))
+                .collect();
+            let src = img.samples();
+            let mut out = img.clone();
+            crate::exec::par_rows(out.samples_mut(), (w * ch).max(1), |y, line| {
+                for (x, px) in line.chunks_exact_mut(ch).enumerate() {
+                    let centre = lum[y * w + x];
+                    let mut acc = [0.0f32; 4];
+                    let mut weight = 0.0f32;
+                    for (dy, &ky) in kernel.iter().enumerate() {
+                        let sy = (y + dy).saturating_sub(r).min(h - 1);
+                        let (lrow, srow) = (&lum[sy * w..][..w], &src[sy * w * ch..][..w * ch]);
+                        for (&sx, &kx) in cols[x..].iter().zip(&kernel) {
+                            if (lrow[sx] - centre).abs() <= t {
+                                let k = ky * kx;
+                                weight += k;
+                                for (a, v) in acc.iter_mut().zip(&srow[sx * ch..][..ch]) {
+                                    *a += k * v;
+                                }
+                            }
+                        }
+                    }
+                    if weight > 0.0 {
+                        for (o, a) in px.iter_mut().zip(&acc) {
+                            *o = a / weight;
+                        }
+                    }
+                }
+            });
+            Ok(out)
         })
     }
 }

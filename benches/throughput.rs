@@ -17,6 +17,10 @@ use std::time::Instant;
 
 use oxideav_core::{ExecutionContext, PixelFormat, VideoFrame, VideoPlane};
 use oxideav_image_filter::{
+    AdaptiveBlur, ChannelDither, Clahe, Deskew, DitherMethod, Fx, KernelMorphMethod,
+    KernelMorphology, MeanShift, MorphKernel, PaletteQuantize, SelectiveBlur, WaveletDenoise,
+};
+use oxideav_image_filter::{
     Blur, ColorMatrix, Composite, CompositeOp, DiffusionKernel, DistortImage, DistortMethod,
     Dither, ImageFilter, Interpolation, Morphology, OrderedDither, PixelInterpolate,
     ResampleFilter, Resize, Rotate, Sharpen, Statistic, StatisticOp, StructuringElement, Threshold,
@@ -223,6 +227,51 @@ fn main() {
             Box::new(OrderedDither::new(
                 ThresholdMap::named("o8x8").expect("built-in map"),
             )),
+        ),
+        (
+            "dither levels fs serp",
+            Box::new(ChannelDither::new(DitherMethod::floyd_steinberg()).with_levels(4)),
+        ),
+        (
+            "dither levels hilbert",
+            Box::new(ChannelDither::new(DitherMethod::hilbert()).with_levels(4)),
+        ),
+        (
+            "dither levels blue-noise",
+            Box::new(ChannelDither::new(DitherMethod::blue_noise()).with_levels(4)),
+        ),
+        ("quantize 256 fs", Box::new(PaletteQuantize::adaptive(256))),
+        (
+            "quantize 256 none",
+            Box::new(PaletteQuantize::adaptive(256).with_dither(DitherMethod::None)),
+        ),
+        (
+            "quantize 16 hilbert",
+            Box::new(PaletteQuantize::adaptive(16).with_dither(DitherMethod::hilbert())),
+        ),
+        (
+            "deskew radon",
+            Box::new(Deskew::new(128).with_max_angle(45.0)),
+        ),
+        ("deskew radon 10deg", Box::new(Deskew::new(128))),
+        ("clahe 8x8", Box::new(Clahe::default())),
+        ("selective-blur s2", Box::new(SelectiveBlur::new(2.0, 0.1))),
+        ("wavelet-denoise", Box::new(WaveletDenoise::new(0.02, 0.5))),
+        ("adaptive-blur s2", Box::new(AdaptiveBlur::new(2.0))),
+        (
+            "mean-shift 5x5",
+            Box::new(MeanShift::new(5, 5, 0.1).with_max_iterations(8)),
+        ),
+        (
+            "kernel morph open disk3",
+            Box::new(KernelMorphology::new(
+                KernelMorphMethod::Open,
+                MorphKernel::disk(3),
+            )),
+        ),
+        (
+            "fx expression",
+            Box::new(Fx::new("clamp(u * 1.2 - 0.1 * sin(i / 20))").expect("valid")),
         ),
     ];
 

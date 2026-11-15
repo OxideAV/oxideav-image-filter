@@ -224,45 +224,87 @@ impl Entry {
 
 /// The picture's colours, binned, in ascending bin order.
 fn gather(img: &FloatImage) -> Vec<Entry> {
-    let mut bins: HashMap<u32, Entry> = HashMap::new();
+    // An open-addressing table on the 32-bit bin key (the pixels of a
+    // picture repeat their colours; one multiply finds the slot). When
+    // the bins outgrow the limit the grid is coarsened at once — one low
+    // bit a channel dropped, the bins so far merged — so the table never
+    // holds more than the limit and stays in cache.
+    const LIMIT: usize = 65_536;
+    let mut bits = 8u32;
+    let mut keep = u32::MAX;
+    let mut mask = (1usize << 12) - 1;
+    let mut slots: Vec<u32> = vec![u32::MAX; mask + 1];
+    let mut keyed: Vec<(u32, Entry)> = Vec::new();
+    let place = |key: u32, mask: usize| (key.wrapping_mul(0x9E37_79B1) as usize >> 7) & mask;
+    let rebuild = |keyed: &[(u32, Entry)], mask: usize| {
+        let mut slots = vec![u32::MAX; mask + 1];
+        for (i, (k, _)) in keyed.iter().enumerate() {
+            let mut at = place(*k, mask);
+            while slots[at] != u32::MAX {
+                at = (at + 1) & mask;
+            }
+            slots[at] = i as u32;
+        }
+        slots
+    };
     for c in straight_pixels(img) {
         let p = premultiplied(c.map(tame));
         let key = p.iter().fold(0u32, |k, &v| {
             (k << 8) | (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32
-        });
-        let e = bins.entry(key).or_insert(Entry {
-            sum: [0.0; 4],
-            weight: 0.0,
-        });
+        }) & keep;
+        let mut at = place(key, mask);
+        let entry = loop {
+            match slots[at] {
+                u32::MAX => {
+                    slots[at] = keyed.len() as u32;
+                    keyed.push((
+                        key,
+                        Entry {
+                            sum: [0.0; 4],
+                            weight: 0.0,
+                        },
+                    ));
+                    break keyed.len() - 1;
+                }
+                i if keyed[i as usize].0 == key => break i as usize,
+                _ => at = (at + 1) & mask,
+            }
+        };
+        let e = &mut keyed[entry].1;
         for (s, v) in e.sum.iter_mut().zip(p) {
             *s += v as f64;
         }
         e.weight += 1.0;
-    }
-    let mut keyed: Vec<(u32, Entry)> = bins.into_iter().collect();
-    keyed.sort_unstable_by_key(|(k, _)| *k);
-    // Coarsen while there are too many bins: drop one low bit a channel.
-    let mut bits = 8u32;
-    while keyed.len() > 65_536 && bits > 3 {
-        bits -= 1;
-        let drop = 8 - bits;
-        let mask = (0xFFu32 >> drop << drop) * 0x0101_0101;
-        let mut merged: Vec<(u32, Entry)> = Vec::with_capacity(keyed.len() / 2);
-        keyed.iter_mut().for_each(|(k, _)| *k &= mask);
-        keyed.sort_by_key(|(k, _)| *k);
-        for (k, e) in keyed {
-            match merged.last_mut() {
-                Some((lk, le)) if *lk == k => {
-                    for (s, v) in le.sum.iter_mut().zip(e.sum) {
-                        *s += v;
+        if keyed.len() > LIMIT && bits > 3 {
+            // Coarsen: mask the keys, merge equal ones.
+            while keyed.len() > LIMIT && bits > 3 {
+                bits -= 1;
+                let drop = 8 - bits;
+                keep = (0xFFu32 >> drop << drop) * 0x0101_0101;
+                keyed.iter_mut().for_each(|(k, _)| *k &= keep);
+                keyed.sort_by_key(|(k, _)| *k);
+                let mut merged: Vec<(u32, Entry)> = Vec::with_capacity(keyed.len() / 2);
+                for (k, e) in keyed {
+                    match merged.last_mut() {
+                        Some((lk, le)) if *lk == k => {
+                            for (s, v) in le.sum.iter_mut().zip(e.sum) {
+                                *s += v;
+                            }
+                            le.weight += e.weight;
+                        }
+                        _ => merged.push((k, e)),
                     }
-                    le.weight += e.weight;
                 }
-                _ => merged.push((k, e)),
+                keyed = merged;
             }
+            slots = rebuild(&keyed, mask);
+        } else if keyed.len() * 2 > mask {
+            // Keep the table at most half full.
+            mask = mask * 2 + 1;
+            slots = rebuild(&keyed, mask);
         }
-        keyed = merged;
     }
+    keyed.sort_unstable_by_key(|(k, _)| *k);
     keyed.into_iter().map(|(_, e)| e).collect()
 }
 
@@ -395,8 +437,13 @@ fn lloyd(entries: &[Entry], centres: &mut [V4], rounds: usize) {
             };
             centres.len()
         ];
+        // The entries are in colour order: the previous one's centre is
+        // a close first candidate for the next.
+        let mut last = 0usize;
         for e in entries {
-            let a = &mut acc[matcher.nearest(&e.mean())];
+            let mean = e.mean();
+            last = matcher.nearest_from(&mean, (dist2(&centres[last], &mean), last as u32));
+            let a = &mut acc[last];
             for (s, v) in a.sum.iter_mut().zip(e.sum) {
                 *s += v;
             }
@@ -454,10 +501,20 @@ impl Matcher {
 
     /// Index (in the palette) of the vector nearest to `p`; the lowest
     /// index on a tie.
+    #[cfg(test)]
     pub(crate) fn nearest(&self, p: &V4) -> usize {
+        self.nearest_from(p, (f32::INFINITY, u32::MAX))
+    }
+
+    /// [`Self::nearest`] given a first candidate `(squared distance,
+    /// index)` — any palette entry, typically the one the previous
+    /// pixel took. The answer is the same; a close candidate bounds the
+    /// walk along the axis from its first step, and neighbouring pixels
+    /// mostly are close.
+    pub(crate) fn nearest_from(&self, p: &V4, first: (f32, u32)) -> usize {
         let k = p[self.axis];
         let start = self.sorted.partition_point(|e| e.0[self.axis] < k);
-        let mut best = (f32::INFINITY, u32::MAX);
+        let mut best = first;
         let consider = |best: &mut (f32, u32), e: &(V4, u32)| {
             let d = dist2(&e.0, p);
             if d < best.0 || (d == best.0 && e.1 < best.1) {
@@ -572,9 +629,13 @@ impl PaletteQuantize {
         let (w, h) = (img.width() as usize, img.height() as usize);
         let vectors: Vec<V4> = palette.colors.iter().map(|c| premultiplied(*c)).collect();
         let matcher = Matcher::new(&vectors);
-        let mut work: Vec<f32> = Vec::with_capacity(w * h * 4);
+        // Five samples a pixel: the premultiplied vector and, once the
+        // quantiser has run, the index of the palette entry it chose.
+        const SLOTS: usize = 5;
+        let mut work: Vec<f32> = Vec::with_capacity(w * h * SLOTS);
         for c in straight_pixels(img) {
             work.extend(premultiplied(c.map(tame)));
+            work.push(0.0);
         }
         // Ordered dither moves a pixel along the grey diagonal by the
         // threshold deviation times a spread. To carry a colour to its
@@ -610,38 +671,74 @@ impl PaletteQuantize {
         // part in the dither.
         let active = if img.has_alpha() { 4 } else { 3 };
         let spread = [spacing; 4];
+        thread_local! {
+            /// The palette entry the last pixel quantised on this thread took.
+            static LAST: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        }
         let quant = |px: &mut [f32]| {
             let mut p = [0.0, 0.0, 0.0, 1.0];
-            for (slot, v) in p.iter_mut().zip(px.iter()) {
+            for (slot, v) in p[..active].iter_mut().zip(px.iter()) {
                 *slot = tame(*v);
             }
-            let q = &vectors[matcher.nearest(&p)];
-            px.copy_from_slice(&q[..px.len()]);
+            let hint = (LAST.get() as usize).min(vectors.len() - 1);
+            let chosen = matcher.nearest_from(&p, (dist2(&vectors[hint], &p), hint as u32));
+            LAST.set(chosen as u32);
+            px[..active].copy_from_slice(&vectors[chosen][..active]);
+            px[SLOTS - 1] = chosen as f32;
         };
-        let job = crate::diffusion::Job {
-            data: &mut work,
-            w,
-            h,
-            ch: 4,
-            active,
-            spread: &spread,
-        };
-        crate::diffusion::run(&self.dither, job, &quant);
-        // Every pixel now holds a palette vector on its active channels.
-        let lookup: HashMap<[u32; 4], u32> = vectors
-            .iter()
-            .enumerate()
-            .rev()
-            .map(|(i, v)| (key_of(v, active), i as u32))
-            .collect();
+        if matches!(self.dither, DitherMethod::None) && crate::exec::threads() <= 1 {
+            // Without dither a colour always goes to the same entry, and
+            // pictures repeat their colours: on one thread each distinct
+            // pixel is matched once and remembered by its bit pattern
+            // (the table stops growing on a picture of mostly distinct
+            // pixels). With a thread budget the rows run in parallel
+            // instead; the result is the same.
+            const MEMO: usize = 1 << 17;
+            let mut table: Vec<([u32; 4], u32)> = vec![([0; 4], u32::MAX); 2 * MEMO];
+            let mut held = 0usize;
+            for px in work.as_chunks_mut::<SLOTS>().0 {
+                let key: [u32; 4] = std::array::from_fn(|i| px[i].to_bits());
+                let hash = key.iter().fold(0u64, |k, v| {
+                    (k ^ *v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                });
+                let mut at = (hash >> 40) as usize & (2 * MEMO - 1);
+                let hit = loop {
+                    match table[at] {
+                        (_, u32::MAX) => break None,
+                        (k, i) if k == key => break Some(i),
+                        _ => at = (at + 1) & (2 * MEMO - 1),
+                    }
+                };
+                match hit {
+                    Some(i) => {
+                        px[..active].copy_from_slice(&vectors[i as usize][..active]);
+                        px[SLOTS - 1] = i as f32;
+                    }
+                    None => {
+                        quant(px);
+                        if held < MEMO {
+                            table[at] = (key, px[SLOTS - 1] as u32);
+                            held += 1;
+                        }
+                    }
+                }
+            }
+        } else {
+            let job = crate::diffusion::Job {
+                data: &mut work,
+                w,
+                h,
+                ch: SLOTS,
+                active,
+                spread: &spread,
+            };
+            crate::diffusion::run(&self.dither, job, &quant);
+        }
         let indices = work
-            .as_chunks::<4>()
+            .as_chunks::<SLOTS>()
             .0
             .iter()
-            .map(|v| match lookup.get(&key_of(v, active)) {
-                Some(&i) => i,
-                None => matcher.nearest(v) as u32,
-            })
+            .map(|px| px[SLOTS - 1] as u32)
             .collect();
         IndexedImage {
             width: img.width(),
@@ -672,10 +769,6 @@ impl PaletteQuantize {
         }
         out
     }
-}
-
-fn key_of(v: &V4, active: usize) -> [u32; 4] {
-    std::array::from_fn(|i| if i < active { v[i].to_bits() } else { 0 })
 }
 
 impl PixelFilter for PaletteQuantize {
@@ -775,6 +868,47 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_of_very_many_colours_is_binned_coarser_and_still_fits() {
+        // 512 × 512 pixels, all distinct on the 8-bit grid in two
+        // channels plus a third that varies: more bins than the limit.
+        let img = rgb(512, 512, |x, y| {
+            [
+                x as f32 / 511.0,
+                y as f32 / 511.0,
+                ((x * 7 + y * 13) % 256) as f32 / 255.0,
+            ]
+        });
+        let entries = gather(&img);
+        assert!(
+            entries.len() <= 65_536 && entries.len() > 256,
+            "{}",
+            entries.len()
+        );
+        let total: f64 = entries.iter().map(|e| e.weight).sum();
+        assert_eq!(total, 512.0 * 512.0);
+        let p = Palette::adaptive(&img, 64);
+        assert_eq!(p.len(), 64);
+        // Nearest-colour output is the same with and without a thread
+        // budget (the serial path remembers colours it has matched).
+        let q = PaletteQuantize::new(p).with_dither(DitherMethod::None);
+        let serial = q.indexed(&img);
+        let ctx = oxideav_core::ExecutionContext::with_threads(4);
+        let parallel = crate::with_execution_context(&ctx, || q.indexed(&img));
+        assert_eq!(serial.indices, parallel.indices);
+        for (i, px) in serial
+            .indices
+            .iter()
+            .zip(img.samples().as_chunks::<3>().0)
+            .step_by(977)
+        {
+            assert_eq!(
+                *i as usize,
+                serial.palette.nearest([px[0], px[1], px[2], 1.0])
+            );
+        }
+    }
+
+    #[test]
     fn matcher_agrees_with_the_exhaustive_search() {
         let mut rng = crate::noise::Rng::new(7);
         let vectors: Vec<V4> = (0..300)
@@ -787,10 +921,19 @@ mod tests {
                 .map(|v| premultiplied(*v))
                 .collect::<Vec<_>>(),
         );
-        for _ in 0..2000 {
+        let premult: Vec<V4> = vectors.iter().map(|v| premultiplied(*v)).collect();
+        for i in 0..2000usize {
             let p: V4 = std::array::from_fn(|_| rng.unit() as f32 * 1.4 - 0.2);
             let p = [p[0], p[1], p[2], p[3].clamp(0.0, 1.0)];
-            assert_eq!(m.nearest(&premultiplied(p)), palette.nearest(p));
+            let want = palette.nearest(p);
+            let q = premultiplied(p);
+            assert_eq!(m.nearest(&q), want);
+            // Any first candidate gives the same answer.
+            let hint = i % premult.len();
+            assert_eq!(
+                m.nearest_from(&q, (dist2(&premult[hint], &q), hint as u32)),
+                want
+            );
         }
     }
 

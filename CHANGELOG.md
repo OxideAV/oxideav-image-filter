@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path. `Deskew`, which applies `Rotate` by the negative of the tilt it
   measures, therefore doubled the tilt; it now removes it.
 
+### Performance
+
+- Hilbert-curve dither: the fading error sum is a running value (about
+  2× at 1 MP: 15.5 → 29 MP/s).
+- `PaletteQuantize` / `Palette::adaptive`: colours binned in an
+  open-addressing table that coarsens as it overflows, the
+  nearest-colour search seeded with the previous pixel's entry, distinct
+  colours matched once without dither (1.2–2.6× serial at 1 MP).
+- `SelectiveBlur` 2.5×, `KernelMorphology` 1.5–1.8× serial; `Deskew`'s
+  Radon search sums only the slopes inside the angle range (±10°: 5× the
+  full range); `Fx` rows run under the thread budget (8.6× at 8
+  threads). README table.
+
 ### Added
 
 - `tests/composite_properties.rs`: Porter–Duff coverage rules,

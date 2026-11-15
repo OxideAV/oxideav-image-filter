@@ -1221,7 +1221,7 @@ physically-meaningful luminance.
     `tests/depth_two_input.rs` holds `over` and eight blend functions
     to their closed forms to the 16-bit code, and every placement mode
     exactly; `tests/magick_composite.rs` compares all operators with
-    `magick` on partial-alpha pictures and holds 47 of the 70 to
+    `magick` on partial-alpha pictures and holds 48 of the 70 to
     PSNR ≥ 45 dB (most are identical) — the Porter–Duff set, the
     separable blends including `difference`, `exclusion`,
     `lineardodge`, `linearlight`, `pegtoplight`, `softburn`,
@@ -1289,7 +1289,7 @@ result, not at the validator's pixels.
 | `-poly` | `poly` | exact |
 | `-combine`, `-separate` | `combine_channels`, `separate` | RGB(A) and grey + alpha; CMYK pictures go through the layout routes |
 | `-channel-fx` | `channel_fx` | exchange, copy, constant, bare channel lists; exact. Lacks the `|` and `;` forms that emit several pictures |
-| `-compose` (70 operators) + placement | `Composite` | 47 operators within 45 dB of the validator on partial-alpha pictures (most identical), 23 reported; offset, gravity, tile, outside-overlay, channel mask; see *Two-input compositing* |
+| `-compose` (70 operators) + placement | `Composite` | 48 operators within 45 dB of the validator on partial-alpha pictures (most identical), 22 reported; offset, gravity, tile, outside-overlay, channel mask; see *Two-input compositing* |
 
 ## Distortion and generators
 
@@ -1745,6 +1745,53 @@ before. The benchmark picture has partial alpha, so the "after" figures
 of `blur`, `sharpen`, `unsharp` and `resize` include the coverage
 weighting the earlier release did not do. The two `resize` rows carry
 this round's figures (see "Geometric resampling" below).
+
+### Dithering, quantisation and the edge-aware operators
+
+`IMF_BENCH_ONLY=dither,quantize,deskew,clahe,selective,wavelet,adaptive,mean-shift,kernel,fx,composite
+IMF_BENCH_BEST=1 IMF_BENCH_RUNS=5 cargo bench --bench throughput`
+on the bench's 1 MP noisy RGBA picture (1152 × 868, 8-bit; Apple
+M-series, a machine shared with other builds — fastest of five), in
+megapixels per second. "Before" is the first working version of each
+operator in this round, timed in alternation with the current one
+(median of three rounds); "—" where nothing changed.
+
+Where the time went before the pass (stage timers on the 1 MP picture
+as RGB, 256 colours): choosing the palette 126 ms — most of it binning
+the pixels' colours in a general-purpose hash map — and the
+nearest-colour pass 160 ms without dither, 291 ms through a diffusion
+and 496 ms along the Hilbert curve, whose error memory was re-summed at
+every pixel; every search started from nothing. The selective blur
+evaluated its gate through a closure on re-derived intensities and
+clamped coordinates per tap; kernel morphology clamped two coordinates
+per kernel cell per sample.
+
+| operation | before | serial | 8 threads | what changed |
+|---|---|---|---|---|
+| `ChannelDither` Hilbert, 4 levels | 15.5 | 29 | 30 | the fading error sum kept as a running value: `acc ← q·acc + w₀·e − w₀qⁿ·e_oldest` |
+| `ChannelDither` serpentine diffusion, 4 levels | — | 33 | 34 | (a diffusion is one dependency chain; the budget does not apply) |
+| `ChannelDither` blue noise, 4 levels | — | 172 | 400 | rows under the budget |
+| `Dither` (tabulated kernel) | — | 25 | 23 | |
+| `OrderedDither` `o8x8` | — | 116 | 119 | |
+| `PaletteQuantize` 256 colours, diffusion | 1.9 | 2.3–2.8 | 2.4 | bins in an open-addressing table, coarsened as they overflow; the search seeded with the previous pixel's entry |
+| `PaletteQuantize` 256 colours, no dither | 3.0 | 3.6–4.5 | 12.3 | the same, and each distinct colour matched once |
+| `PaletteQuantize` 16 colours, Hilbert | 3.3 | 7.5–8.7 | 7.4 | both of the above |
+| `Deskew` (Radon), ±45° | 8.0 | 6.6 | 6.0 | unchanged work at the full range |
+| `Deskew` (Radon), ±10° (default) | = ±45° | 33 | 33 | only the slopes inside the range are summed |
+| `SelectiveBlur` σ 2 | 1.9 | 4.2–5.4 | 32 | one intensity plane, whole-row window walks |
+| `KernelMorphology` open, disk 3 | 4.4–4.9 | 6.7–9.0 | 48 | each kernel cell folds a shifted source row into a scratch row |
+| `Clahe` 8 × 8 | — | 115 | 182 | |
+| `AdaptiveBlur` σ 2 | — | 18 | 58 | |
+| `WaveletDenoise` 5 layers | — | 8.2 | 21 | |
+| `MeanShift` 5 × 5 | — | 1.7–4.4 | 13.6 | |
+| `Fx` `clamp(u * 1.2 - 0.1 * sin(i / 20))` | 4.5 | 4.2 | 36 | rows under the budget |
+| `Composite` over | — | 96 | 217 | |
+
+Every figure is the same picture at every budget (`tests/dither_quantize.rs`,
+`tests/composite_properties.rs` and the unit tests hold the outputs
+identical). The remaining cost of the quantiser is the nearest-colour
+search itself (a sorted-axis walk); a k-d tree over the palette is the
+next step.
 
 ### Geometric resampling
 

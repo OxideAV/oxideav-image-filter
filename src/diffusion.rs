@@ -260,8 +260,9 @@ pub(crate) struct Job<'a> {
     pub(crate) spread: &'a [f32],
 }
 
-/// Dither `job` in place. `quant` replaces a target pixel (its `active`
-/// channels) by the output value nearest to it.
+/// Dither `job` in place. `quant` is handed a whole pixel whose first
+/// `active` channels hold the target and replaces them by the output
+/// value nearest to it (it may use the remaining channels as it likes).
 pub(crate) fn run(method: &DitherMethod, job: Job, quant: &(dyn Fn(&mut [f32]) + Sync)) {
     let Job {
         data,
@@ -288,7 +289,7 @@ pub(crate) fn run(method: &DitherMethod, job: Job, quant: &(dyn Fn(&mut [f32]) +
         DitherMethod::None => {
             crate::exec::par_rows(data, row_len, |_, row| {
                 for px in row.chunks_exact_mut(ch) {
-                    quant(&mut px[..active]);
+                    quant(px);
                 }
             });
         }
@@ -302,7 +303,7 @@ pub(crate) fn run(method: &DitherMethod, job: Job, quant: &(dyn Fn(&mut [f32]) +
                     for (v, s) in px[..active].iter_mut().zip(spread) {
                         *v += d * s;
                     }
-                    quant(&mut px[..active]);
+                    quant(px);
                 }
             });
         }
@@ -318,12 +319,12 @@ pub(crate) fn run(method: &DitherMethod, job: Job, quant: &(dyn Fn(&mut [f32]) +
                 let base = (y % rows) * padded;
                 for col in 0..w {
                     let x = if reverse { w - 1 - col } else { col };
-                    let px = &mut data[y * row_len + x * ch..][..active];
+                    let px = &mut data[y * row_len + x * ch..][..ch];
                     let own = base + (pad + x) * active;
                     for c in 0..active {
                         target[c] = px[c] + bounded(err[own + c]);
                     }
-                    px.copy_from_slice(&target);
+                    px[..active].copy_from_slice(&target);
                     quant(px);
                     for (t, q) in target.iter_mut().zip(px.iter()) {
                         *t -= *q;
@@ -350,39 +351,41 @@ pub(crate) fn run(method: &DitherMethod, job: Job, quant: &(dyn Fn(&mut [f32]) +
             } else {
                 16.0
             };
-            // w[k] for the error k steps back, summing to one.
-            let mut weights: Vec<f32> = (0..n)
-                .map(|k| ratio.powf(-(k as f32) / (n - 1) as f32))
-                .collect();
-            let total: f32 = weights.iter().sum();
-            weights.iter_mut().for_each(|v| *v /= total);
-            // Ring of the last `n` errors; `head` is the newest.
+            // w[k] = w[0] · q^k for the error k steps back, summing to
+            // one over the memory: the weighted sum is kept as a running
+            // value, `acc ← q · acc + w[0] · e_new − w[0] · q^n · e_oldest`,
+            // so a pixel costs the same whatever the memory length.
+            let q = ratio.powf(-1.0 / (n - 1) as f32);
+            let w0 = if q < 1.0 {
+                (1.0 - q) / (1.0 - q.powi(n as i32))
+            } else {
+                1.0 / n as f32
+            };
+            let tail = w0 * q.powi(n as i32);
+            // Ring of the last `n` errors; `head` is the oldest.
             let mut ring = vec![0.0f32; n * active];
             let mut head = 0usize;
+            let mut acc = vec![0.0f32; active];
             let mut target = vec![0.0f32; active];
             hilbert_walk(w, h, |x, y| {
-                let px = &mut data[y * row_len + x * ch..][..active];
-                target.fill(0.0);
-                for (k, wgt) in weights.iter().enumerate() {
-                    let slot = ((head + n - k) % n) * active;
-                    for (t, e) in target.iter_mut().zip(&ring[slot..slot + active]) {
-                        *t += e * wgt;
-                    }
+                let px = &mut data[y * row_len + x * ch..][..ch];
+                for ((t, v), a) in target.iter_mut().zip(px.iter()).zip(&acc) {
+                    *t = v + bounded(*a);
                 }
-                for (t, v) in target.iter_mut().zip(px.iter()) {
-                    *t = v + bounded(*t);
-                }
-                px.copy_from_slice(&target);
+                px[..active].copy_from_slice(&target);
                 quant(px);
-                head = (head + 1) % n;
                 let slot = head * active;
-                for ((e, t), q) in ring[slot..slot + active]
+                for (((e, a), t), v) in ring[slot..slot + active]
                     .iter_mut()
+                    .zip(acc.iter_mut())
                     .zip(&target)
                     .zip(px.iter())
                 {
-                    *e = bounded(t - q);
+                    let fresh = bounded(t - v);
+                    *a = q * *a + w0 * fresh - tail * *e;
+                    *e = fresh;
                 }
+                head = (head + 1) % n;
             });
         }
     }
