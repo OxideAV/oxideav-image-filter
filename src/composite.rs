@@ -21,18 +21,24 @@
 //!   [`Composite::with_outside_overlay`]`(false)` the destination is
 //!   left as it is there.
 //!
+//! - `Difference`, `Exclusion`, `PegtopLight`, `Stamp`, `Negate`,
+//!   `SoftBurn`, `SoftDodge` and `Freeze` each fold partial alpha in a
+//!   way of their own, and `LinearDodge` / `LinearLight` clamp their
+//!   blend before folding; these were fitted on a grid of `(Sc, Sa, Dc,
+//!   Da)` probes and are stated beside the code in `Composite::pixel`.
+//!
 //! Not yet matched (the operator runs, `tests/magick_composite.rs`
-//! reports its PSNR without asserting it): `Difference`, `SoftLight`,
-//! `DivideDst` / `DivideSrc`, `ModulusAdd` /
-//! `ModulusSubtract`, `Exclusion`, `LinearDodge`, `LinearLight`,
-//! `HardMix`, `PegtopLight`, `SoftBurn`, `SoftDodge`, `Stamp`, `Freeze`,
-//! `Reflect`, `Negate`, `DarkenIntensity` /
+//! reports its PSNR without asserting it): `SoftLight` (the validator's
+//! curve returns white for mid-grey on mid-grey; the piecewise
+//! soft-light curve it applies under the name `PegtopLight` is kept
+//! here for `SoftLight` too), `DivideDst` / `DivideSrc`, `ModulusAdd` /
+//! `ModulusSubtract`, `HardMix`, `Reflect`, `DarkenIntensity` /
 //! `LightenIntensity`, `Bumpmap`, `Blend` with arguments, and the
 //! colour-component / map / modulate family (`Hue`, `Saturate`,
-//! `Luminize`, `Colorize`, `Rmse`, `Intensity`, `CopyBlack`, `Threshold`,
+//! `Luminize`, `Colorize`, `Rmse`, `CopyBlack`, `Threshold`,
 //! `Displace`, `Distort`, `Blur`, `Modulate`). Their per-channel curves
-//! on opaque pictures were measured and match for most; what differs is
-//! how `magick` folds partial alpha into each one, which the staged
+//! on opaque grey pictures match; what differs is how `magick` folds
+//! partial alpha and colour into each one, which the staged
 //! documentation does not describe.
 
 use crate::deep::{self, FloatImage};
@@ -724,14 +730,18 @@ impl Composite {
             }
             O::Rmse => {
                 let v = ((0..3).map(|c| (s[c] - d[c]).powi(2)).sum::<f32>() / 3.0).sqrt();
-                [v, v, v, over_alpha(sa, da)]
+                // The larger alpha (measured).
+                [v, v, v, sa.max(da)]
             }
             O::DarkenIntensity => {
-                if intensity(s) * sa < intensity(d) * da {
-                    s
+                // The pixel whose coverage-weighted intensity is lower,
+                // stored premultiplied; the smaller alpha (measured).
+                let (c, a) = if intensity(s) * sa < intensity(d) * da {
+                    (s, sa)
                 } else {
-                    d
-                }
+                    (d, da)
+                };
+                [c[0] * a, c[1] * a, c[2] * a, sa.min(da)]
             }
             O::LightenIntensity => {
                 if intensity(s) * sa > intensity(d) * da {
@@ -771,18 +781,18 @@ impl Composite {
                 let i = intensity(s);
                 [i, i, i, da]
             }
-            O::Intensity => {
-                let i = intensity(s);
-                [i, i, i, over_alpha(sa, da)]
-            }
+            // The source's intensity becomes the destination's alpha
+            // (measured).
+            O::Intensity => [d[0], d[1], d[2], intensity(s)],
             O::ChangeMask => {
                 let fuzz = self.arg(0, 0.0);
                 let same = (0..4).all(|c| (s[c] - d[c]).abs() <= fuzz + 1e-6);
                 if same { [d[0], d[1], d[2], 0.0] } else { d }
             }
             O::Bumpmap => {
+                // Colour and alpha alike are scaled (measured).
                 let i = intensity(s);
-                [d[0] * i, d[1] * i, d[2] * i, da]
+                [d[0] * i, d[1] * i, d[2] * i, da * i]
             }
             O::Threshold => {
                 let threshold = self.arg(0, 0.05);
@@ -793,7 +803,10 @@ impl Composite {
                     if delta.abs() >= threshold {
                         o[c] = d[c] + delta * amount;
                     }
+                    // Folded as Da·B + Sa(1 − Da)·Sc, opaque (measured).
+                    o[c] = (da * o[c] + sa * (1.0 - da) * s[c]).clamp(0.0, 1.0);
                 }
+                o[3] = 1.0;
                 o
             }
             O::Modulate => {
@@ -821,6 +834,99 @@ impl Composite {
             //     (Darken);
             //   - `PremultOnly`: B(Sa·Sc, Da·Dc) alone (Interpolate,
             //     ModulusAdd, ModulusSubtract).
+            // Operators whose folding of partial alpha was measured on a
+            // grid of (Sc, Sa, Dc, Da) and fits none of the four shared
+            // conventions. `B` is the operator's blend function, `U` the
+            // union alpha, `Sca = Sa·Sc`, `Dca = Da·Dc`.
+            // Where one of these reads a straight colour, the colour of a
+            // fully transparent pixel counts as zero (measured).
+            //   Difference: B(Sc, Dc) as it is; alpha |Sa − Da|.
+            O::Difference | O::Exclusion | O::PegtopLight | O::Negate
+                if (sa <= 0.0 && s[..3] != [0.0; 3]) || (da <= 0.0 && d[..3] != [0.0; 3]) =>
+            {
+                let clear = |p: [f32; 4]| if p[3] <= 0.0 { [0.0; 4] } else { p };
+                self.pixel(clear(s), clear(d))
+            }
+            // PegtopLight on a transparent destination is the source.
+            O::PegtopLight if da <= 0.0 => s,
+            O::Difference => {
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    o[c] = blend(O::Difference, s[c], d[c], &self.args);
+                }
+                o[3] = (sa - da).abs();
+                o
+            }
+            //   Exclusion: U · B(Sca, Dc).
+            O::Exclusion => {
+                let a = over_alpha(sa, da);
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    o[c] = (a * blend(O::Exclusion, s[c] * sa, d[c], &self.args)).clamp(0.0, 1.0);
+                }
+                o[3] = a;
+                o
+            }
+            //   PegtopLight: (Sa·Da·B(Sca, Dc) + Da(1 − Sa)·Dc) / U.
+            O::PegtopLight => {
+                let a = over_alpha(sa, da);
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    let v = sa * da * blend(O::PegtopLight, s[c] * sa, d[c], &self.args)
+                        + da * (1.0 - sa) * d[c];
+                    o[c] = if a > 0.0 {
+                        (v / a).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                }
+                o[3] = a;
+                o
+            }
+            //   Stamp: B(Sca, Dca); alpha Sa + Da² − 1.
+            O::Stamp => {
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    o[c] = blend(O::Stamp, s[c] * sa, d[c] * da, &self.args);
+                }
+                o[3] = (sa + da * da - 1.0).clamp(0.0, 1.0);
+                o
+            }
+            //   Negate: Da · B(Sc, Dc); alpha 1 − Sa − Da.
+            O::Negate => {
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    o[c] = da * blend(O::Negate, s[c], d[c], &self.args);
+                }
+                o[3] = (1.0 - sa - da).clamp(0.0, 1.0);
+                o
+            }
+            //   SoftBurn, SoftDodge, Freeze: B(Sca, Dca) / U; Freeze runs
+            //   its curve on the alphas too.
+            O::SoftBurn | O::SoftDodge | O::Freeze => {
+                let a = over_alpha(sa, da);
+                let mut o = [0.0; 4];
+                for c in 0..3 {
+                    let v = blend(self.op, s[c] * sa, d[c] * da, &self.args);
+                    o[c] = if a > 0.0 {
+                        (v / a).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                }
+                o[3] = if self.op == O::Freeze {
+                    // (An opaque source on a clear destination stays
+                    // opaque: measured.)
+                    if da <= 0.0 && sa >= 1.0 {
+                        1.0
+                    } else {
+                        blend(O::Freeze, sa, da, &self.args)
+                    }
+                } else {
+                    a
+                };
+                o
+            }
             op => {
                 let a = over_alpha(sa, da);
                 let mut o = [0.0; 4];
@@ -829,7 +935,15 @@ impl Composite {
                     o[c] = match convention(op) {
                         Convention::Premult => sa * da * blend(op, s[c], d[c], &self.args) + terms,
                         Convention::Divided => {
-                            let v = sa * da * blend_raw(op, s[c], d[c], &self.args) + terms;
+                            // LinearDodge and LinearLight clamp their
+                            // blend before the alphas are folded in
+                            // (measured); the others after.
+                            let b = if matches!(op, O::LinearDodge | O::LinearLight) {
+                                blend(op, s[c], d[c], &self.args)
+                            } else {
+                                blend_raw(op, s[c], d[c], &self.args)
+                            };
+                            let v = sa * da * b + terms;
                             if a > 0.0 { v / a } else { 0.0 }
                         }
                         Convention::OnPremult => {
@@ -842,8 +956,9 @@ impl Composite {
                 o[3] = match op {
                     O::ModulusAdd => wrap(sa + da),
                     O::ModulusSubtract => wrap(sa - da),
-                    // Interpolate runs its curve on the alphas too (measured).
-                    O::Interpolate => blend(op, sa, da, &self.args),
+                    // Interpolate and Reflect run their curve on the alphas
+                    // too (measured).
+                    O::Interpolate | O::Reflect => blend(op, sa, da, &self.args),
                     _ => a,
                 };
                 o
@@ -996,11 +1111,21 @@ fn blend_inner(op: CompositeOp, s: f32, d: f32, args: &[f32]) -> f32 {
                 1.0
             }
         }
-        O::PegtopLight => (1.0 - 2.0 * s) * d * d + 2.0 * s * d,
+        // Measured on a 21 × 21 opaque grid: the validator's PegtopLight
+        // is the piecewise soft-light curve (quadratic below a source of
+        // one half, towards the square root above it).
+        O::PegtopLight => soft_light(s, d),
         // `magick` 7.1.2 computes SoftBurn / SoftDodge as ColorBurn /
         // ColorDodge, Stamp as `Sc + Dc − 1`, Freeze as `1 − (1 − Sc)² /
         // Dc` and Reflect as `Sc² / (1 − Dc)` (measured on opaque pictures).
-        O::SoftBurn => color_burn(s, d),
+        // A full source burns any non-zero destination to white (measured).
+        O::SoftBurn => {
+            if s >= 1.0 {
+                if d > 0.0 { 1.0 } else { 0.0 }
+            } else {
+                color_burn(s, d)
+            }
+        }
         O::SoftDodge => color_dodge(s, d),
         O::Stamp => s + d - 1.0,
         O::Freeze => {

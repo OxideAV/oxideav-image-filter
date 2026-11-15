@@ -1221,7 +1221,28 @@ physically-meaningful luminance.
     `tests/depth_two_input.rs` holds `over` and eight blend functions
     to their closed forms to the 16-bit code, and every placement mode
     exactly; `tests/magick_composite.rs` compares all operators with
-    `magick` on partial-alpha pictures.
+    `magick` on partial-alpha pictures and holds 47 of the 70 to
+    PSNR ≥ 45 dB (most are identical) — the Porter–Duff set, the
+    separable blends including `difference`, `exclusion`,
+    `lineardodge`, `linearlight`, `pegtoplight`, `softburn`,
+    `softdodge`, `stamp`, `freeze` and `negate` (each folds partial
+    alpha in its own way, fitted on a grid of colour / coverage probes),
+    the channel copies, `intensity`, `changemask`, `dissolve`,
+    `mathematics` and the placement modes. The rest run and are
+    reported: `softlight` (the validator's own curve is anomalous: grey
+    on grey gives white), `divide*`, `modulus*`, `hardmix`, `reflect`,
+    the intensity-selected and hue / saturation / luminosity operators,
+    `bumpmap`, `threshold`, `blend` with arguments, `modulate` and the
+    three map operators.
+  - `tests/composite_properties.rs` holds the algebra on pseudo-random
+    pictures with every kind of alpha: each Porter–Duff operator's
+    coverage rule, the source / destination forms as each other with
+    the roles exchanged, `over = S + (D out S)`, `atop = (S in D) + (D
+    out S)`, `xor = (S out D) + (D out S)`, associativity of `over`,
+    commutativity of the symmetric blends, the `overlay` / `hardlight`,
+    `minus` and `divide` dualities, neutral and absorbing colours, the
+    channel mask, and agreement of the 8-bit, 16-bit and float paths at
+    every thread budget for all 70 operators.
   - documented-CLI analogue: `-compose <op> -composite`.
 
 All single-input filters listed above share the `ImageFilter` trait — chain them
@@ -1268,7 +1289,7 @@ result, not at the validator's pixels.
 | `-poly` | `poly` | exact |
 | `-combine`, `-separate` | `combine_channels`, `separate` | RGB(A) and grey + alpha; CMYK pictures go through the layout routes |
 | `-channel-fx` | `channel_fx` | exchange, copy, constant, bare channel lists; exact. Lacks the `|` and `;` forms that emit several pictures |
-| `-compose` (70 operators) + placement | `Composite` | see *Two-input compositing* |
+| `-compose` (70 operators) + placement | `Composite` | 47 operators within 45 dB of the validator on partial-alpha pictures (most identical), 23 reported; offset, gravity, tile, outside-overlay, channel mask; see *Two-input compositing* |
 
 ## Distortion and generators
 

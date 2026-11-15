@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Composite` on partial alpha: `Difference`, `Exclusion`,
+  `LinearDodge`, `LinearLight`, `PegtopLight`, `SoftBurn`, `SoftDodge`,
+  `Stamp`, `Freeze`, `Negate` and `Intensity` now fold coverage the way
+  the validator does (fitted black-box on a grid of colour / coverage
+  probes; identical or ≥ 83 dB in the live test, from 6–28 dB), and
+  `PegtopLight` uses the curve measured for it (the piecewise soft-light
+  curve). `Rmse`, `DarkenIntensity`, `Bumpmap` and `Threshold` take
+  their measured alpha rules (closer; not yet at the 45 dB bar).
 - `Rotate` by an angle that is not a multiple of 90° turned the picture
   counter-clockwise, against its documentation and against its own
   exact quarter-turn path (89° and 90° went opposite ways). Positive
@@ -18,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tests/composite_properties.rs`: Porter–Duff coverage rules,
+  role-exchange identities and disjoint decompositions, associativity of
+  `over`, commutativity / duality / neutral colours of the blends, the
+  channel mask, and 8-bit / 16-bit / float agreement at every thread
+  budget for all 70 operators.
 - `tone_auto`: `AutoThreshold` (Otsu / Kapur / Triangle — the level
   chosen on `rose:` is the validator's for all three), `WhiteBalance`
   (grey world in CIE L\*a\*b\*), `LocalContrast`, `Clahe`
