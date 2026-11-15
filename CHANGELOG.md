@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `Rotate` by an angle that is not a multiple of 90° turned the picture
+  counter-clockwise, against its documentation and against its own
+  exact quarter-turn path (89° and 90° went opposite ways). Positive
+  angles now turn clockwise at every angle, on the 8-bit and the float
+  path. `Deskew`, which applies `Rotate` by the negative of the tilt it
+  measures, therefore doubled the tilt; it now removes it.
+
 ### Added
 
 - `with_execution_context(&ExecutionContext, || …)`: a scoped thread

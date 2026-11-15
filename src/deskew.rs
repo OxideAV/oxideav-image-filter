@@ -392,4 +392,29 @@ mod tests {
             .unwrap();
         assert_eq!(est, 0.0);
     }
+
+    #[test]
+    fn deskew_removes_the_tilt_it_measures() {
+        // Ruled lines tilted by about five degrees either way: the
+        // corrected picture measures level.
+        for slope in [0.09f32, -0.09] {
+            let input = gray(96, 96, |x, y| {
+                let line = y as f32 - slope * (x as f32 - 48.0);
+                if (line.round() as i32).rem_euclid(12) == 0 {
+                    0
+                } else {
+                    255
+                }
+            });
+            let filter = Deskew::default().with_background([255, 255, 255, 255]);
+            let before = filter.estimate_angle(&input, p_gray(96, 96)).unwrap();
+            assert!((before.abs() - 5.0).abs() < 1.5, "measured {before}°");
+            assert_eq!(before > 0.0, slope > 0.0);
+            let out = filter.apply(&input, p_gray(96, 96)).unwrap();
+            let w = out.planes[0].stride as u32;
+            let h = (out.planes[0].data.len() / out.planes[0].stride) as u32;
+            let after = filter.estimate_angle(&out, p_gray(w, h)).unwrap();
+            assert!(after.abs() <= 1.0, "slope {slope}: {before}° left {after}°");
+        }
+    }
 }

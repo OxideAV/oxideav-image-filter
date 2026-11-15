@@ -8,10 +8,11 @@
 //! implementation is a clean-room application of the 2-D rotation
 //! matrix combined with bilinear interpolation:
 //!
-//!   x' =  x·cos(θ) + y·sin(θ)
-//!   y' = -x·sin(θ) + y·cos(θ)
+//!   x' = x·cos(θ) − y·sin(θ)
+//!   y' = x·sin(θ) + y·cos(θ)
 //!
-//! We compute the forward-transformed bounding box to size the output,
+//! (with y pointing down this turns the picture clockwise for positive
+//! θ, the same way the exact quarter-turn path does). We compute the forward-transformed bounding box to size the output,
 //! then invert the mapping — for every output pixel we look up the
 //! source coordinate and sample it with bilinear interpolation.
 //! Out-of-bounds samples become the configured background colour.
@@ -96,8 +97,9 @@ impl PixelFilter for Rotate {
                     let dy = y as f32 - dcy;
                     for x in 0..new_w {
                         let dx = x as f32 - dcx;
-                        let sx = dx * cos_t - dy * sin_t + scx;
-                        let sy = dx * sin_t + dy * cos_t + scy;
+                        // Reverse map of a clockwise turn (y down).
+                        let sx = dx * cos_t + dy * sin_t + scx;
+                        let sy = -dx * sin_t + dy * cos_t + scy;
                         if sx < 0.0 || sy < 0.0 || sx > sw - 1.0 || sy > sh - 1.0 {
                             continue;
                         }
@@ -368,12 +370,12 @@ fn rotate_plane(
     let dcx = (dw as f32 - 1.0) * 0.5;
     let dcy = (dh as f32 - 1.0) * 0.5;
 
-    // Inverse rotation: if forward is
+    // Inverse rotation: the forward (clockwise, y down) turn is
     //   [ cos -sin ] [ x ]
     //   [ sin  cos ] [ y ]
-    // then inverse (rotation is orthogonal) is the transpose, i.e.
-    // swap sign of sin.
-    let inv_sin = -sin_t;
+    // and its inverse (a rotation is orthogonal) is the transpose:
+    //   sx =  dx·cos + dy·sin
+    //   sy = −dx·sin + dy·cos
 
     // Every output row reads only the source: rows run under the
     // thread budget.
@@ -381,8 +383,8 @@ fn rotate_plane(
         let dy = y as f32 - dcy;
         for x in 0..dw {
             let dx = x as f32 - dcx;
-            let sx = dx * cos_t + dy * inv_sin + scx;
-            let sy = dx * sin_t + dy * cos_t + scy;
+            let sx = dx * cos_t + dy * sin_t + scx;
+            let sy = -dx * sin_t + dy * cos_t + scy;
 
             if sx < 0.0 || sy < 0.0 || sx > (sw as f32 - 1.0) || sy > (sh as f32 - 1.0) {
                 continue; // background already written
@@ -594,5 +596,67 @@ mod tests {
         // square). Edges might be background, so check middle.
         assert_eq!(out.planes[1].data[1 + 4], 80);
         assert_eq!(out.planes[2].data[1 + 4], 160);
+    }
+
+    /// Column and row of the brightest sample of a `Gray8` / float grey
+    /// plane.
+    fn brightest(plane: &VideoPlane, bytes: usize) -> (usize, usize) {
+        let w = plane.stride / bytes;
+        let value = |i: usize| match bytes {
+            1 => plane.data[i] as f32,
+            _ => f32::from_le_bytes(plane.data[4 * i..4 * i + 4].try_into().unwrap()),
+        };
+        let best = (0..plane.data.len() / bytes)
+            .max_by(|&a, &b| value(a).total_cmp(&value(b)))
+            .unwrap();
+        (best % w, best / w)
+    }
+
+    #[test]
+    fn positive_angles_turn_clockwise_like_the_quarter_turn() {
+        // A bright mark to the right of the centre: a clockwise turn
+        // (y down) carries it downward, at 20° and at 89° as the exact
+        // 90° path does, on the 8-bit and the float path alike.
+        for (fmt, bytes) in [(PixelFormat::Gray8, 1usize), (PixelFormat::GrayF32Le, 4)] {
+            let (w, h) = (41usize, 41usize);
+            let mut data = vec![0u8; w * h * bytes];
+            for (y, x) in [(20usize, 34usize), (20, 35), (19, 34), (21, 34)] {
+                let i = (y * w + x) * bytes;
+                match bytes {
+                    1 => data[i] = 255,
+                    _ => data[i..i + 4].copy_from_slice(&1.0f32.to_le_bytes()),
+                }
+            }
+            let input = VideoFrame {
+                pts: None,
+                planes: vec![VideoPlane {
+                    stride: w * bytes,
+                    data,
+                }],
+            };
+            let params = VideoStreamParams {
+                format: fmt,
+                width: w as u32,
+                height: h as u32,
+            };
+            let mut previous_row = 0.0f32;
+            for degrees in [20.0f32, 60.0, 89.0, 90.0] {
+                let out = Rotate::new(degrees).apply(&input, params).unwrap();
+                let ow = out.planes[0].stride / bytes;
+                let oh = out.planes[0].data.len() / out.planes[0].stride;
+                let (bx, by) = brightest(&out.planes[0], bytes);
+                let (dx, dy) = (
+                    bx as f32 - (ow as f32 - 1.0) / 2.0,
+                    by as f32 - (oh as f32 - 1.0) / 2.0,
+                );
+                let (s, c) = degrees.to_radians().sin_cos();
+                assert!(
+                    (dx - 14.0 * c).abs() < 2.0 && (dy - 14.0 * s).abs() < 2.0,
+                    "{fmt:?} at {degrees}°: mark at ({dx}, {dy})"
+                );
+                assert!(dy > previous_row, "{fmt:?}: the mark keeps descending");
+                previous_row = dy;
+            }
+        }
     }
 }
