@@ -509,7 +509,7 @@ and rounded back once):
   `indexed()` returns the index plane and palette for a palette-format
   writer. On `rose:` the chosen palette's mean squared error without
   dither is 567 / 111 / 31 / 9.8 at 4 / 16 / 64 / 256 colours, against
-  613 / 173 / 54 / 15.1 for `magick +dither -colors n`
+  613 / 173 / 54 / 15.1 for the validator's `+dither -colors n`
   (`tests/dither_quantize.rs`, live). Factories `palette-quantize` /
   `colors` / `remap` (`{"colors": n}` or `{"palette": [[r, g, b], …]}`,
   `"dither"`).
@@ -519,7 +519,8 @@ and rounded back once):
   of two) come from one `W · (H + W) · log₂ W` pass, and the slope whose
   profile has the largest energy of differences wins. Range ±45°
   (`with_max_angle`), resolution `atan(1 / W)`. The angle agrees with
-  `magick -deskew 40%` to within one such step on the live test pages
+  the validator's `-deskew 40%` to within one such step on the live
+  test pages
   (and stays right at 11°, where the validator's does not).
   `SkewEstimator::SteppedVariance` keeps the older fixed-step search.
 
@@ -1250,13 +1251,13 @@ All single-input filters listed above share the `ImageFilter` trait — chain th
 manually with repeated `.apply()` calls, or feed them through
 `oxideav-pipeline` as `video.<name>` filter nodes in a JSON job.
 
-## ImageMagick operation coverage
+## Requested-operation coverage
 
 The operations asked for in the Imagick requests, item by item. "Exact"
-means bit-exact (or within one 8-bit code) against the `magick` binary
-in the live tests; "own" means the operator is defined here by the
-mathematics stated in its module documentation — aimed at the best
-result, not at the validator's pixels.
+means bit-exact (or within one 8-bit code) against the black-box
+validator binary in the live tests; "own" means the operator is defined
+here by the mathematics stated in its module documentation — aimed at
+the best result, not at the validator's pixels.
 
 | operation | here | status |
 |---|---|---|
