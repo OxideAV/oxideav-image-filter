@@ -33,7 +33,7 @@ fn reason(name: &str) -> &'static str {
             "n/a: reads a chroma plane of 8-bit planar YUV; the deep layouts reach filters as packed RGB / grey"
         }
         "Stegano" => "n/a: hides a picture in the low bits of 8-bit codes; defined on that storage",
-        "HoughLines" | "HoughCircles" | "Deskew" => {
+        "HoughLines" | "HoughCircles" => {
             "8-bit only: analysis on an 8-bit luma / edge map; float path not written yet (typed refusal)"
         }
         "FreiChen" | "Gabor" | "Sketch" | "Toon" | "Comic" => {

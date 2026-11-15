@@ -478,7 +478,10 @@ fn register_into(outer: &mut dyn FnMut(&str, oxideav_core::FilterFactory)) {
             Box::new(move |params, inputs| make_composite(op, params, inputs)),
         );
     }
+    ops::register_ops(sink);
 }
+
+mod ops;
 
 oxideav_core::register!("image_filter", register);
 
@@ -3386,6 +3389,17 @@ fn make_deskew(params: &Value, inputs: &[PortSpec]) -> Result<Box<dyn StreamFilt
     }
     if let Some(s) = get_f64("step_degrees").or_else(|| get_f64("step")) {
         f = f.with_step(s as f32);
+    }
+    match p.and_then(|m| m.get("estimator")).and_then(|v| v.as_str()) {
+        None | Some("radon") => {}
+        Some("stepped") | Some("stepped-variance") => {
+            f = f.with_estimator(crate::SkewEstimator::SteppedVariance);
+        }
+        Some(other) => {
+            return Err(Error::invalid(format!(
+                "job: filter 'deskew': estimator must be 'radon' or 'stepped', got '{other}'"
+            )));
+        }
     }
     if let Some(arr) = p
         .and_then(|m| m.get("background"))

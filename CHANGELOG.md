@@ -18,6 +18,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Dither engine (`diffusion`): `DitherMethod` — threshold maps, error
+  diffusion through any `DiffusionStencil` (the tabulated kernels, taps,
+  or rows) in raster or serpentine order, and error diffusion along a
+  Hilbert curve with a fading error memory. `ChannelDither` quantises
+  each channel (alpha on request) to its own level count with any
+  method. 8-bit, 16-bit and float; ordered methods run under the thread
+  budget.
+- Generated threshold maps (`screens`): `ThresholdMap::clustered_dot(
+  period, angle, SpotShape)` (exactly tiling halftone screens at any
+  period and angle; round / diamond / line / square spots) and
+  `ThresholdMap::blue_noise(size)` (void-and-cluster on a torus,
+  deterministic, cached). `ThresholdMap::named` takes `blue-noise`,
+  `blue<size>`, `dot<period>[@<angle>]`, `diamond…`, `line…`, `square…`.
+- Colour quantisation (`palette`): `Palette` (given, read from a
+  picture, or `Palette::adaptive` — variance splitting refined by
+  Lloyd's iteration, alpha-aware) and `PaletteQuantize` (remap to a
+  palette or to `n` chosen colours with any `DitherMethod`, full colour
+  error; `indexed()` for palette writers).
+- `Deskew`: discrete Radon (projection-profile) skew estimate
+  (`SkewEstimator::Radon`, module `radon`), now the default; ±45° range;
+  16-bit and float pictures. `SkewEstimator::SteppedVariance` is the
+  previous estimator.
+- Factories `channel-dither`, `dither-hilbert` / `dither-riemersma`,
+  `dither-blue-noise`, `dither-clustered-dot` / `dither-halftone`,
+  `palette-quantize` / `quantize-colors` / `colors` / `remap`; `deskew`
+  takes `"estimator"`.
 - `Resize::with_cylindrical(true)`: the kernel applied as a function of
   the radial distance in one elliptical gather per output pixel (same
   response in every direction), on every layout and depth; a windowed

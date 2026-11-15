@@ -1,4 +1,10 @@
-//! Auto-deskew via projection-variance scoring (documented `-deskew threshold` CLI).
+//! Auto-deskew (documented `-deskew threshold` CLI): estimate the tilt
+//! of a page from its projection profiles, then rotate it level.
+//!
+//! Two estimators ([`SkewEstimator`]): the default discrete Radon
+//! search of [`crate::radon`] (every slope `s / W` within the search
+//! range, `W` the width rounded up to a power of two), and the older
+//! fixed-step search described below.
 //!
 //! Estimates a small in-plane rotation that aligns text / scanlines with
 //! the horizontal axis, then applies the inverse rotation. Algorithm
@@ -44,6 +50,22 @@ pub struct Deskew {
     pub step_degrees: f32,
     /// Background fill for the rotated output (`[R, G, B, A]`).
     pub background: [u8; 4],
+    /// How the tilt is measured.
+    pub estimator: SkewEstimator,
+}
+
+/// How [`Deskew`] measures the tilt.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SkewEstimator {
+    /// The discrete Radon search of [`crate::radon`]: every slope
+    /// `s / W` whose angle is within the search range (at most ±45°);
+    /// [`Deskew::step_degrees`] is not used.
+    #[default]
+    Radon,
+    /// Candidate angles every [`Deskew::step_degrees`]; the angle whose
+    /// row histogram of rotated ink has the largest variance.
+    SteppedVariance,
 }
 
 impl Deskew {
@@ -71,6 +93,7 @@ impl Default for Deskew {
             max_angle_degrees: 10.0,
             step_degrees: 0.5,
             background: [255, 255, 255, 255],
+            estimator: SkewEstimator::default(),
         }
     }
 }
@@ -102,6 +125,12 @@ impl Deskew {
         self
     }
 
+    /// Select the estimator.
+    pub fn with_estimator(mut self, estimator: SkewEstimator) -> Self {
+        self.estimator = estimator;
+        self
+    }
+
     /// Override the background fill for the rotated output.
     pub fn with_background(mut self, bg: [u8; 4]) -> Self {
         self.background = bg;
@@ -116,32 +145,54 @@ impl Deskew {
         input: &VideoFrame,
         params: VideoStreamParams,
     ) -> Result<f32, Error> {
+        let w = params.width as usize;
+        let h = params.height as usize;
+        if w == 0 || h == 0 {
+            return Ok(0.0);
+        }
+        let max_angle = self.max_angle_degrees.max(0.0);
+        if crate::deep::is_float(params.format) {
+            // A deep picture is thresholded at its own precision.
+            let img = crate::deep::FloatImage::from_frame(input, params)?;
+            let (ch, cc) = (img.channels(), img.color_channels());
+            let limit = self.threshold as f32 / 255.0;
+            let ink: Vec<bool> = img
+                .samples()
+                .chunks_exact(ch)
+                .map(|px| crate::deep::FloatImage::luma(&px[..cc]) <= limit)
+                .collect();
+            return Ok(match self.estimator {
+                SkewEstimator::Radon => {
+                    crate::radon::skew_degrees(&ink, w, h, max_angle as f64) as f32
+                }
+                SkewEstimator::SteppedVariance => {
+                    let luma: Vec<u8> = ink.iter().map(|&b| if b { 0 } else { 255 }).collect();
+                    estimate_skew(&luma, w, h, 0, max_angle, self.step_degrees)
+                }
+            });
+        }
         if !is_supported_format(params.format) {
             return Err(Error::unsupported(format!(
                 "oxideav-image-filter: Deskew does not yet handle {:?}",
                 params.format
             )));
         }
-        let w = params.width as usize;
-        let h = params.height as usize;
-        if w == 0 || h == 0 {
-            return Ok(0.0);
-        }
         let luma = build_luma(input, params)?;
-        Ok(estimate_skew(
-            &luma,
-            w,
-            h,
-            self.threshold,
-            self.max_angle_degrees.max(0.0),
-            self.step_degrees,
-        ))
+        Ok(match self.estimator {
+            SkewEstimator::Radon => {
+                let ink: Vec<bool> = luma.iter().map(|&v| v <= self.threshold).collect();
+                crate::radon::skew_degrees(&ink, w, h, max_angle as f64) as f32
+            }
+            SkewEstimator::SteppedVariance => {
+                estimate_skew(&luma, w, h, self.threshold, max_angle, self.step_degrees)
+            }
+        })
     }
 }
 
 impl PixelFilter for Deskew {
     fn accepted_formats(&self) -> &'static [oxideav_core::PixelFormat] {
-        crate::layout::CLASSIC
+        crate::layout::CLASSIC_DEEP
     }
 
     fn apply_pixels(

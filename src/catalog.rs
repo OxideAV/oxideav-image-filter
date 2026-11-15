@@ -63,6 +63,10 @@ pub fn all_single() -> Vec<Entry> {
             "ColorThreshold",
             ColorThreshold::new([0.2, 0.2, 0.2, 0.0], [0.8, 0.8, 0.8, 1.0]),
         ),
+        e(
+            "ChannelDither",
+            ChannelDither::new(DitherMethod::hilbert()).with_levels(3),
+        ),
         e("ChannelExtract", ChannelExtract::new(Channel::Red)),
         e("ChannelExtract(U)", ChannelExtract::new(Channel::U)),
         e("ChannelMixer", ChannelMixer::identity()),
@@ -185,6 +189,10 @@ pub fn all_single() -> Vec<Entry> {
         e("Implode", Implode::new(0.3)),
         e("InnerShadow", InnerShadow::new(1, 1, 1)),
         e("Kmeans", Kmeans::new(3)),
+        e(
+            "PaletteQuantize",
+            PaletteQuantize::adaptive(4).with_dither(DitherMethod::blue_noise()),
+        ),
         e("Kuwahara", Kuwahara::new(1)),
         e("Laplacian", Laplacian::new()),
         e("LaplacianOfGaussian", LaplacianOfGaussian::new()),

@@ -165,6 +165,37 @@ const MEASURED_MAPS: &[(&str, &str, u32, u32, &[u16])] = &[
     ]),
 ];
 
+/// The generated maps [`ThresholdMap::named`] takes besides the fixed
+/// ones: `blue<size>` (a blue-noise mask, `blue16` … `blue128`) and
+/// `dot<period>[@<angle>]` / `diamond…` / `line…` / `square…` (a
+/// clustered-dot screen, e.g. `dot6@45`, `line4@15`).
+fn generated(name: &str) -> Option<ThresholdMap> {
+    use crate::screens::SpotShape;
+    if let Some(size) = name.strip_prefix("blue") {
+        let size: u32 = size.parse().ok()?;
+        return (8..=128)
+            .contains(&size)
+            .then(|| ThresholdMap::blue_noise(size));
+    }
+    for (prefix, shape) in [
+        ("dot", SpotShape::Round),
+        ("diamond", SpotShape::Diamond),
+        ("line", SpotShape::Line),
+        ("square", SpotShape::Square),
+    ] {
+        if let Some(rest) = name.strip_prefix(prefix) {
+            let (period, angle) = rest.split_once('@').unwrap_or((rest, "0"));
+            let period: f64 = period.parse().ok()?;
+            let angle: f64 = angle.parse().ok()?;
+            if !(1.0..=64.0).contains(&period) || !angle.is_finite() {
+                return None;
+            }
+            return Some(ThresholdMap::clustered_dot(period, angle, shape));
+        }
+    }
+    None
+}
+
 /// A tiled threshold map: cell indices `0 … divisor − 1`, row-major.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -238,7 +269,11 @@ impl ThresholdMap {
 
     /// A built-in map by its `-ordered-dither` name or alias (`1x1`,
     /// `2x1`, `2x2`, `3x3`, `4x4`, `8x8`, `4x1`, `6x1`, `8x1`, `c5x5`,
-    /// `c6x6`, `c7x7`); see [`Self::names`]. `None` for an unknown name.
+    /// `c6x6`, `c7x7`); see [`Self::names`]. Also the generated maps:
+    /// `blue-noise` (64 × 64) / `blue<size>`, and the clustered-dot
+    /// screens `dot<period>[@<angle>]`, `diamond…`, `line…`, `square…`
+    /// ([`Self::blue_noise`], [`Self::clustered_dot`]). `None` for an
+    /// unknown name.
     pub fn named(name: &str) -> Option<Self> {
         Some(match name.to_ascii_lowercase().as_str() {
             "threshold" | "1x1" => Self {
@@ -255,6 +290,8 @@ impl ThresholdMap {
             },
             "o2x2" | "2x2" => Self::bayer(2),
             "o4x4" | "4x4" => Self::bayer(4),
+            "blue-noise" | "bluenoise" | "blue" => Self::blue_noise(64),
+            other if generated(other).is_some() => generated(other)?,
             other => {
                 let (_, _, side, divisor, cells) = MEASURED_MAPS
                     .iter()

@@ -454,6 +454,74 @@ selects the kernel via `"interpolation"`: `nearest` / `bilinear` /
   RGBA. Gray8 / RGB / RGBA + planar YUV (master curve on luma
   only). Cost is `O(W·H)` (per-channel 256-LUT).
 
+### Dithering and colour quantisation
+
+One engine (`diffusion`) serves every dither, on 8-bit, 16-bit and float
+pictures alike (the kernel is binary32; 8-bit pictures are widened to it
+and rounded back once):
+
+- **`DitherMethod`** — how the quantisation error is spread:
+  - `Ordered(ThresholdMap)` — a threshold map. `ThresholdMap` holds the
+    fixed maps of `-ordered-dither` (`threshold`, `checks`, `o2x2` …
+    `o8x8`, `h4x4a` … `h16x16o`, `c5x5b` … `c7x7w`), Bayer maps of any
+    order (`ThresholdMap::bayer`), a supplied map (`ThresholdMap::new`:
+    cells and divisor) and two generated families:
+    - `ThresholdMap::clustered_dot(period, angle, SpotShape)` — a
+      halftone screen at any period (1 … 64 pixels) and angle, with a
+      round, diamond, line or square spot. The cell is an integer vector
+      `(a, b)`, so the screen tiles exactly and every cell has the same
+      dot; the request is snapped to the nearest such screen. Named
+      `dot6@45`, `line4@15`, `diamond8`, `square5@30`.
+    - `ThresholdMap::blue_noise(size)` — a blue-noise mask (8 … 128
+      pixels a side) built by void-and-cluster on a torus, deterministic
+      on every platform, built on first use and cached (64 × 64: about
+      30 ms once). The mean of 8 × 8 blocks of the 64 × 64 mask scatters
+      four times less than white noise's. Named `blue-noise`, `blue32`.
+  - `Diffusion { stencil, scan }` — error diffusion through a
+    `DiffusionStencil`: the seven tabulated kernels
+    (`DiffusionStencil::of`), or any stencil from its taps or drawn as
+    rows (`DiffusionStencil::from_rows(&[&[0., 0., 7.], &[3., 5., 1.]],
+    1, 16.)`), raster or serpentine.
+  - `Hilbert { history, ratio }` — error diffusion along a Hilbert
+    curve with an exponentially fading memory of the last `history`
+    errors (`-dither Riemersma`); the error spreads all round a pixel
+    instead of down and to the right, and there is no scan direction to
+    show.
+  - `None` — nearest value.
+- **`ChannelDither`** — every colour channel (and alpha on request) to
+  its own number of levels with any method. Factories `channel-dither`,
+  `dither-hilbert` / `dither-riemersma`, `dither-blue-noise`,
+  `dither-clustered-dot` (`{"method", "levels": n | [r, g, b],
+  "alpha_levels", "scan", "rows" / "origin" / "divisor", "history",
+  "ratio", "period", "angle", "shape", "size"}`).
+- **`PaletteQuantize`** + **`Palette`** — whole pixels to a palette,
+  with the full colour error diffused (or the threshold deviation
+  applied along the grey diagonal, scaled to the palette's spacing).
+  `PaletteQuantize::adaptive(n)` chooses at most `n` colours for the
+  picture (`-colors n`): variance splitting — the box with the largest
+  squared deviation is cut along its widest axis where the two parts'
+  deviations sum to least — refined by Lloyd's iteration; a picture with
+  no more than `n` colours keeps them exactly. `PaletteQuantize::new(
+  palette)` remaps to a given palette (`-remap`; `Palette::
+  from_image_colors` reads one from a picture). Colours are compared as
+  `(R·A, G·A, B·A, A)`, so a transparent pixel's colour does not count.
+  `indexed()` returns the index plane and palette for a palette-format
+  writer. On `rose:` the chosen palette's mean squared error without
+  dither is 567 / 111 / 31 / 9.8 at 4 / 16 / 64 / 256 colours, against
+  613 / 173 / 54 / 15.1 for `magick +dither -colors n`
+  (`tests/dither_quantize.rs`, live). Factories `palette-quantize` /
+  `colors` / `remap` (`{"colors": n}` or `{"palette": [[r, g, b], …]}`,
+  `"dither"`).
+- **`Deskew`** measures the tilt by the projection-profile (discrete
+  Radon) method by default (`SkewEstimator::Radon`, module `radon`): the
+  profiles of every slope `s / W` (`W` the width rounded up to a power
+  of two) come from one `W · (H + W) · log₂ W` pass, and the slope whose
+  profile has the largest energy of differences wins. Range ±45°
+  (`with_max_angle`), resolution `atan(1 / W)`. The angle agrees with
+  `magick -deskew 40%` to within one such step on the live test pages
+  (and stays right at 11°, where the validator's does not).
+  `SkewEstimator::SteppedVariance` keeps the older fixed-step search.
+
 ### Tone mapping (HDR-style)
 
 Global and local tone-mapping operators for high-contrast scenes; all
@@ -1320,7 +1388,7 @@ a kernel averages colour across pixels of different coverage (`Blur`,
 `Sharpen`, `Unsharp`, `Resize` on the packed layouts, the distortions'
 EWA), the colour is weighted by it.
 
-155 of 170 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
+158 of 172 catalogued filters take 16-bit and float pictures; the rest refuse a deep picture with a typed
 `Unsupported` (never a silent narrowing). `tests/depth_support_table.rs`
 regenerates this table from the filters' own declarations and fails
 when a row here is out of date; `tests/depth_analytic.rs` and
@@ -1361,6 +1429,7 @@ sample directly.
 | `Canny` | yes | yes | yes |  |
 | `Canvas` | yes | yes | yes |  |
 | `ColorThreshold` | yes | yes | yes |  |
+| `ChannelDither` | yes | yes | yes |  |
 | `ChannelExtract` | yes | yes | yes |  |
 | `ChannelExtract(U)` | yes | no | no | n/a: reads a chroma plane of 8-bit planar YUV; the deep layouts reach filters as packed RGB / grey |
 | `ChannelMixer` | yes | yes | yes |  |
@@ -1384,7 +1453,7 @@ sample directly.
 | `Curves` | yes | yes | yes |  |
 | `Cyanotype` | yes | yes | yes |  |
 | `Cycle` | yes | yes | yes |  |
-| `Deskew` | yes | no | no | 8-bit only: analysis on an 8-bit luma / edge map; float path not written yet (typed refusal) |
+| `Deskew` | yes | yes | yes |  |
 | `Despeckle` | yes | yes | yes |  |
 | `DistanceMorphology` | yes | yes | yes |  |
 | `DistanceOutline` | yes | yes | yes |  |
@@ -1431,6 +1500,7 @@ sample directly.
 | `Implode` | yes | yes | yes |  |
 | `InnerShadow` | yes | no | no | 8-bit only: float path not written yet (typed refusal, never narrowed) |
 | `Kmeans` | yes | yes | yes |  |
+| `PaletteQuantize` | yes | yes | yes |  |
 | `Kuwahara` | yes | yes | yes |  |
 | `Laplacian` | yes | yes | yes |  |
 | `LaplacianOfGaussian` | yes | yes | yes |  |

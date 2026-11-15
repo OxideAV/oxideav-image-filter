@@ -342,6 +342,12 @@ fn kernel_table(k: DiffusionKernel) -> KernelTable {
     }
 }
 
+/// The `(dx, dy, weight)` taps and the divisor of a tabulated kernel.
+pub(crate) fn kernel_taps(k: DiffusionKernel) -> (&'static [(i32, i32, i32)], i32) {
+    let t = kernel_table(k);
+    (t.stencil, t.divisor)
+}
+
 // ----------------------------------------------------------------------
 // Filter mode + struct
 // ----------------------------------------------------------------------
