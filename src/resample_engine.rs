@@ -42,7 +42,7 @@ const MAX_RADIUS: f64 = 32.0;
 
 /// A radial kernel tabulated over the squared distance `q ∈ [0, R²)`.
 pub(crate) struct EwaKernel {
-    lut: Vec<f32>,
+    lut: Box<[f32; LUT_SIZE + 2]>,
     radius: f64,
     /// `LUT_SIZE / R²`.
     index_scale: f64,
@@ -52,13 +52,12 @@ impl EwaKernel {
     pub(crate) fn new(k: &RadialKernel) -> Self {
         let radius = (k.radius() as f64).clamp(0.5, MAX_RADIUS);
         let r2 = radius * radius;
-        let lut = (0..=LUT_SIZE + 1)
-            .map(|i| {
-                let q = (i as f64 / LUT_SIZE as f64 * r2).min(r2);
-                // A kernel wider than the cap is compressed onto it.
-                k.weight((q.sqrt() * (k.radius() as f64).max(0.5) / radius) as f32)
-            })
-            .collect();
+        let mut lut = Box::new([0.0f32; LUT_SIZE + 2]);
+        for (i, w) in lut.iter_mut().enumerate() {
+            let q = (i as f64 / LUT_SIZE as f64 * r2).min(r2);
+            // A kernel wider than the cap is compressed onto it.
+            *w = k.weight((q.sqrt() * (k.radius() as f64).max(0.5) / radius) as f32);
+        }
         Self {
             lut,
             radius,
@@ -71,7 +70,9 @@ impl EwaKernel {
     #[inline]
     fn weight(&self, q: f64) -> f32 {
         let t = q * self.index_scale;
-        let i = t as usize;
+        // `q < R²` keeps the index inside the table; the mask lets the
+        // compiler see it.
+        let i = (t as usize) & (LUT_SIZE - 1);
         let f = (t - i as f64) as f32;
         let a = self.lut[i];
         a + (self.lut[i + 1] - a) * f
@@ -161,9 +162,17 @@ impl<'a> Source<'a> {
     }
 
     #[inline]
-    fn load(data: &[f32], ch: usize, i: usize) -> Px {
-        let mut p = [0.0; MAX_CH];
-        p[..ch].copy_from_slice(&data[i..i + ch]);
+    fn load<const N: usize>(data: &[f32], i: usize) -> [f32; N] {
+        let mut p = [0.0; N];
+        p.copy_from_slice(&data[i..i + N]);
+        p
+    }
+
+    /// A constant colour cut to the picture's channel count.
+    #[inline]
+    fn cut<const N: usize>(c: &Px) -> [f32; N] {
+        let mut p = [0.0; N];
+        p.copy_from_slice(&c[..N]);
         p
     }
 
@@ -223,40 +232,67 @@ impl<'a> Source<'a> {
 
     /// The pixel at integer index `(x, y)` of a level, virtual outside.
     #[inline]
-    fn at_level(&self, data: &[f32], w: usize, h: usize, x: i64, y: i64) -> Px {
-        let ch = self.ch;
+    fn at_level<const N: usize>(
+        &self,
+        data: &[f32],
+        w: usize,
+        h: usize,
+        x: i64,
+        y: i64,
+    ) -> [f32; N] {
         if x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h {
-            return Self::load(data, ch, (y as usize * w + x as usize) * ch);
+            return Self::load(data, (y as usize * w + x as usize) * N);
+        }
+        if self.vp == VirtualPixel::Edge {
+            let (sx, sy) = (
+                x.clamp(0, w as i64 - 1) as usize,
+                y.clamp(0, h as i64 - 1) as usize,
+            );
+            return Self::load(data, (sy * w + sx) * N);
         }
         match self.resolve(x, y, w as i64, h as i64) {
-            Ok((sx, sy)) => Self::load(data, ch, (sy as usize * w + sx as usize) * ch),
-            Err(constant) => constant,
+            Ok((sx, sy)) => Self::load(data, (sy as usize * w + sx as usize) * N),
+            Err(constant) => Self::cut(&constant),
         }
     }
 
     /// The pixel at integer index `(x, y)`, virtual outside.
     #[inline]
-    pub(crate) fn at(&self, x: i64, y: i64) -> Px {
+    fn at_n<const N: usize>(&self, x: i64, y: i64) -> [f32; N] {
         self.at_level(self.data, self.w, self.h, x, y)
     }
 
-    /// Normalise a weighted gather: `colour` holds `Σ w·c·a` (or `Σ w·c`
+    /// The pixel at integer index `(x, y)`, virtual outside (any channel
+    /// count; the unused tail is zero).
+    #[cfg(test)]
+    pub(crate) fn at(&self, x: i64, y: i64) -> Px {
+        let mut p = [0.0; MAX_CH];
+        match self.ch {
+            1 => p[..1].copy_from_slice(&self.at_n::<1>(x, y)),
+            2 => p[..2].copy_from_slice(&self.at_n::<2>(x, y)),
+            3 => p[..3].copy_from_slice(&self.at_n::<3>(x, y)),
+            _ => p = self.at_n::<4>(x, y),
+        }
+        p
+    }
+
+    /// Normalise a weighted gather: `acc` holds `Σ w·c·a` (or `Σ w·c`
     /// without alpha), `cover` `Σ w·a`, `wsum` `Σ w`.
     #[inline]
-    fn finish(&self, mut acc: Px, cover: f32, wsum: f32) -> Option<Px> {
+    fn finish<const N: usize>(&self, mut acc: [f32; N], cover: f32, wsum: f32) -> Option<[f32; N]> {
         if wsum.abs() < 1e-9 {
             return None;
         }
         match self.alpha {
             None => {
                 let inv = 1.0 / wsum;
-                for v in &mut acc[..self.ch] {
+                for v in &mut acc {
                     *v *= inv;
                 }
             }
             Some(ai) => {
                 let inv = if cover.abs() > 1e-9 { 1.0 / cover } else { 0.0 };
-                for v in &mut acc[..self.ch] {
+                for v in &mut acc {
                     *v *= inv;
                 }
                 acc[ai] = cover / (wsum * self.inv_full);
@@ -267,51 +303,49 @@ impl<'a> Source<'a> {
 
     /// Add `w · p` to a gather.
     #[inline]
-    fn add(&self, acc: &mut Px, cover: &mut f32, p: &[f32], w: f32) {
-        match self.alpha {
-            None => {
-                for (a, v) in acc[..self.ch].iter_mut().zip(p) {
-                    *a += w * v;
-                }
-            }
+    fn add<const N: usize>(&self, acc: &mut [f32; N], cover: &mut f32, p: &[f32; N], w: f32) {
+        let wa = match self.alpha {
+            None => w,
             Some(ai) => {
                 let wa = w * p[ai] * self.inv_full;
-                for (a, v) in acc[..self.ch].iter_mut().zip(p) {
-                    *a += wa * v;
-                }
                 *cover += wa;
+                wa
             }
+        };
+        for (a, v) in acc.iter_mut().zip(p) {
+            *a += wa * v;
         }
     }
 
     /// Weighted mean of `taps` (coverage-weighted colour).
-    fn blend<const N: usize>(&self, taps: &[(Px, f32); N]) -> Px {
-        let mut acc = [0.0; MAX_CH];
+    #[inline]
+    fn blend<const N: usize, const T: usize>(&self, taps: &[([f32; N], f32); T]) -> [f32; N] {
+        let mut acc = [0.0; N];
         let (mut cover, mut wsum) = (0.0, 0.0);
         for (p, w) in taps {
             self.add(&mut acc, &mut cover, p, *w);
             wsum += w;
         }
-        self.finish(acc, cover, wsum).unwrap_or([0.0; MAX_CH])
+        self.finish(acc, cover, wsum).unwrap_or([0.0; N])
     }
 
-    fn mean(&self, x0: i64, y0: i64, n: i64) -> Px {
-        let mut acc = [0.0; MAX_CH];
+    fn mean<const N: usize>(&self, x0: i64, y0: i64, n: i64) -> [f32; N] {
+        let mut acc = [0.0; N];
         let (mut cover, mut wsum) = (0.0, 0.0);
         for y in y0..y0 + n {
             for x in x0..x0 + n {
-                self.add(&mut acc, &mut cover, &self.at(x, y), 1.0);
+                self.add(&mut acc, &mut cover, &self.at_n(x, y), 1.0);
                 wsum += 1.0;
             }
         }
-        self.finish(acc, cover, wsum).unwrap_or([0.0; MAX_CH])
+        self.finish(acc, cover, wsum).unwrap_or([0.0; N])
     }
 
     /// Point read at continuous index position `(x, y)` (pixel `i`'s
     /// centre is at index `i`).
-    pub(crate) fn interpolate(&self, x: f64, y: f64, interp: PixelInterpolate) -> Px {
+    fn interpolate<const N: usize>(&self, x: f64, y: f64, interp: PixelInterpolate) -> [f32; N] {
         if !(x.is_finite() && y.is_finite()) {
-            return self.colours.background;
+            return Self::cut(&self.colours.background);
         }
         // Positions far outside every representable index read as the
         // nearest representable one (the edge rule decides the value).
@@ -321,11 +355,11 @@ impl<'a> Source<'a> {
         let (ix, iy) = (fx as i64, fy as i64);
         let (tx, ty) = ((x - fx) as f32, (y - fy) as f32);
         match interp {
-            PixelInterpolate::Integer => self.at(ix, iy),
+            PixelInterpolate::Integer => self.at_n(ix, iy),
             PixelInterpolate::Nearest => {
-                self.at((x + 0.5).floor() as i64, (y + 0.5).floor() as i64)
+                self.at_n((x + 0.5).floor() as i64, (y + 0.5).floor() as i64)
             }
-            PixelInterpolate::Background => self.colours.background,
+            PixelInterpolate::Background => Self::cut(&self.colours.background),
             PixelInterpolate::Average => self.mean(ix, iy, 2),
             PixelInterpolate::Average9 => self.mean(
                 (x + 0.5).floor() as i64 - 1,
@@ -335,32 +369,28 @@ impl<'a> Source<'a> {
             PixelInterpolate::Average16 => self.mean(ix - 1, iy - 1, 4),
             PixelInterpolate::Bilinear => {
                 if tx == 0.0 && ty == 0.0 {
-                    return self.at(ix, iy);
+                    return self.at_n(ix, iy);
                 }
                 self.blend(&[
-                    (self.at(ix, iy), (1.0 - tx) * (1.0 - ty)),
-                    (self.at(ix + 1, iy), tx * (1.0 - ty)),
-                    (self.at(ix, iy + 1), (1.0 - tx) * ty),
-                    (self.at(ix + 1, iy + 1), tx * ty),
+                    (self.at_n(ix, iy), (1.0 - tx) * (1.0 - ty)),
+                    (self.at_n(ix + 1, iy), tx * (1.0 - ty)),
+                    (self.at_n(ix, iy + 1), (1.0 - tx) * ty),
+                    (self.at_n(ix + 1, iy + 1), tx * ty),
                 ])
             }
             PixelInterpolate::Mesh => {
                 if tx == 0.0 && ty == 0.0 {
-                    return self.at(ix, iy);
+                    return self.at_n(ix, iy);
                 }
                 // The cell is split along the diagonal whose two ends
                 // differ least and the position is read from the plane
                 // through its triangle's three corners.
-                let p00 = self.at(ix, iy);
-                let p10 = self.at(ix + 1, iy);
-                let p01 = self.at(ix, iy + 1);
-                let p11 = self.at(ix + 1, iy + 1);
-                let diff = |a: &Px, b: &Px| -> f32 {
-                    a[..self.ch]
-                        .iter()
-                        .zip(&b[..self.ch])
-                        .map(|(u, v)| (u - v).abs())
-                        .sum()
+                let p00: [f32; N] = self.at_n(ix, iy);
+                let p10: [f32; N] = self.at_n(ix + 1, iy);
+                let p01: [f32; N] = self.at_n(ix, iy + 1);
+                let p11: [f32; N] = self.at_n(ix + 1, iy + 1);
+                let diff = |a: &[f32; N], b: &[f32; N]| -> f32 {
+                    a.iter().zip(b).map(|(u, v)| (u - v).abs()).sum()
                 };
                 if diff(&p00, &p11) <= diff(&p10, &p01) {
                     // Diagonal (0,0)–(1,1).
@@ -384,21 +414,21 @@ impl<'a> Source<'a> {
                 };
                 if b == 0.0 && tx == 0.0 && ty == 0.0 {
                     // An interpolating cubic at a sample is the sample.
-                    return self.at(ix, iy);
+                    return self.at_n(ix, iy);
                 }
                 let wx = cubic_weights(tx, b, c);
                 let wy = cubic_weights(ty, b, c);
-                let mut acc = [0.0; MAX_CH];
+                let mut acc = [0.0; N];
                 let (mut cover, mut wsum) = (0.0, 0.0);
                 for (m, &wym) in wy.iter().enumerate() {
                     for (n, &wxn) in wx.iter().enumerate() {
                         let w = wxn * wym;
-                        let p = self.at(ix - 1 + n as i64, iy - 1 + m as i64);
+                        let p = self.at_n(ix - 1 + n as i64, iy - 1 + m as i64);
                         self.add(&mut acc, &mut cover, &p, w);
                         wsum += w;
                     }
                 }
-                self.finish(acc, cover, wsum).unwrap_or([0.0; MAX_CH])
+                self.finish(acc, cover, wsum).unwrap_or([0.0; N])
             }
         }
     }
@@ -406,10 +436,9 @@ impl<'a> Source<'a> {
     /// The pyramid: level `l ≥ 1` halves level `l − 1` (level 0 is the
     /// picture), each pixel the coverage-weighted mean of its 2 × 2
     /// block, down to a single pixel.
-    fn pyramid(&self) -> &[Level] {
+    fn pyramid<const N: usize>(&self) -> &[Level] {
         self.pyramid.get_or_init(|| {
             let mut levels: Vec<Level> = Vec::new();
-            let ch = self.ch;
             loop {
                 let (pw, ph, prev): (usize, usize, &[f32]) = match levels.last() {
                     None => (self.w, self.h, self.data),
@@ -419,17 +448,17 @@ impl<'a> Source<'a> {
                     break;
                 }
                 let (w, h) = (pw.div_ceil(2), ph.div_ceil(2));
-                let mut data = vec![0.0f32; w * h * ch];
-                for (y, row) in data.chunks_exact_mut(w * ch).enumerate() {
-                    for (x, out) in row.chunks_exact_mut(ch).enumerate() {
-                        let mut acc = [0.0; MAX_CH];
-                        let mut plain = [0.0; MAX_CH];
+                let mut data = vec![0.0f32; w * h * N];
+                for (y, row) in data.chunks_exact_mut(w * N).enumerate() {
+                    for (x, out) in row.as_chunks_mut::<N>().0.iter_mut().enumerate() {
+                        let mut acc = [0.0; N];
+                        let mut plain = [0.0; N];
                         let (mut cover, mut n) = (0.0f32, 0.0f32);
                         for sy in (2 * y)..(2 * y + 2).min(ph) {
                             for sx in (2 * x)..(2 * x + 2).min(pw) {
-                                let p = &prev[(sy * pw + sx) * ch..(sy * pw + sx) * ch + ch];
-                                self.add(&mut acc, &mut cover, p, 1.0);
-                                for (a, v) in plain.iter_mut().zip(p) {
+                                let p: [f32; N] = Self::load(prev, (sy * pw + sx) * N);
+                                self.add(&mut acc, &mut cover, &p, 1.0);
+                                for (a, v) in plain.iter_mut().zip(&p) {
                                     *a += v;
                                 }
                                 n += 1.0;
@@ -437,11 +466,10 @@ impl<'a> Source<'a> {
                         }
                         // Where nothing is covered the plain mean keeps
                         // the colour.
-                        let px = match self.alpha {
+                        *out = match self.alpha {
                             Some(_) if cover.abs() <= 1e-9 => plain.map(|v| v / n),
-                            _ => self.finish(acc, cover, n).unwrap_or([0.0; MAX_CH]),
+                            _ => self.finish(acc, cover, n).unwrap_or([0.0; N]),
                         };
-                        out.copy_from_slice(&px[..ch]);
                     }
                 }
                 levels.push(Level { w, h, data });
@@ -450,33 +478,31 @@ impl<'a> Source<'a> {
         })
     }
 
-    /// Elliptical weighted average at continuous position `(u, v)`
-    /// (pixel `i` covers `[i, i + 1)`) under the reverse map's Jacobian
-    /// `jac = [[∂u/∂x, ∂u/∂y], [∂v/∂x, ∂v/∂y]]`.
-    pub(crate) fn ewa(&self, u: f64, v: f64, jac: [[f64; 2]; 2], k: &EwaKernel) -> Px {
+    /// The footprint of an output pixel under the reverse map's Jacobian
+    /// `jac = [[∂u/∂x, ∂u/∂y], [∂v/∂x, ∂v/∂y]]`; `None` when the
+    /// Jacobian is not finite.
+    fn footprint<const N: usize>(&self, jac: [[f64; 2]; 2], k: &EwaKernel) -> Option<Footprint> {
         let [[a, b], [c, d]] = jac;
         // G = J Jᵀ: its eigenvalues are the squared semi-axes of the
         // footprint ellipse, its eigenvectors their directions.
         let g00 = a * a + b * b;
         let g01 = a * c + b * d;
         let g11 = c * c + d * d;
-        if !(g00.is_finite()
-            && g01.is_finite()
-            && g11.is_finite()
-            && u.is_finite()
-            && v.is_finite())
-        {
-            return self.interpolate(u - 0.5, v - 0.5, PixelInterpolate::Bilinear);
+        if !(g00.is_finite() && g01.is_finite() && g11.is_finite()) {
+            return None;
         }
-        let (u, v) = (u.clamp(-1e15, 1e15), v.clamp(-1e15, 1e15));
         let mean = 0.5 * (g00 + g11);
         let half = 0.5 * (g00 - g11);
         let spread = (half * half + g01 * g01).sqrt();
-        let theta = if spread > 0.0 {
-            0.5 * g01.atan2(half)
+        // The major axis lies at angle θ with (cos 2θ, sin 2θ) = (half,
+        // g01) / spread; the quadratic form needs cos²θ, sin²θ and
+        // sin θ cos θ only.
+        let (cos2, sin2) = if spread > 0.0 {
+            (half / spread, g01 / spread)
         } else {
-            0.0
+            (1.0, 0.0)
         };
+        let (cc, ss, cs) = (0.5 * (1.0 + cos2), 0.5 * (1.0 - cos2), 0.5 * sin2);
         // Clamp: never thinner than one source pixel, never longer than
         // the picture.
         let cap = (self.w.max(self.h) as f64).max(4.0);
@@ -486,7 +512,8 @@ impl<'a> Source<'a> {
 
         // Pyramid level: exact gathering while the thin axis is under
         // four pixels; beyond that read a level where it spans two to
-        // four, and a coarser one still while the long axis is too long.
+        // four, and a coarser one still while the footprint reaches too
+        // far.
         let mut level = 0usize;
         let minor = minor2.sqrt();
         if minor >= 4.0 {
@@ -496,66 +523,149 @@ impl<'a> Source<'a> {
         while k.radius * major / (1u64 << level.min(40)) as f64 > MAX_REACH && level < 40 {
             level += 1;
         }
-        let (data, w, h): (&[f32], usize, usize) = if level == 0 {
-            (self.data, self.w, self.h)
-        } else {
-            let pyr = self.pyramid();
-            level = level.min(pyr.len());
-            match level {
-                0 => (self.data, self.w, self.h),
-                l => (&pyr[l - 1].data, pyr[l - 1].w, pyr[l - 1].h),
-            }
-        };
+        if level > 0 {
+            level = level.min(self.pyramid::<N>().len());
+        }
         let f = (1u64 << level) as f64;
         major2 = (major2 / (f * f)).max(1.0);
         minor2 = (minor2 / (f * f)).max(1.0);
 
         // Quadratic form Q(Δ) = Δᵀ G'⁻¹ Δ = A dx² + 2B dx dy + C dy².
-        let (sn, cs) = theta.sin_cos();
         let (i1, i2) = (1.0 / major2, 1.0 / minor2);
-        let qa = cs * cs * i1 + sn * sn * i2;
-        let qb = cs * sn * (i1 - i2);
-        let qc = sn * sn * i1 + cs * cs * i2;
-        let r2 = k.radius * k.radius;
+        let qa = cc * i1 + ss * i2;
+        let qb = cs * (i1 - i2);
+        let qc = ss * i1 + cc * i2;
         let det = qa * qc - qb * qb;
-        let (cx, cy) = (u / f - 0.5, v / f - 0.5);
-        let y_reach = k.radius * (qa / det).sqrt();
-        let (y0, y1) = ((cy - y_reach).ceil() as i64, (cy + y_reach).floor() as i64);
+        Some(Footprint {
+            level,
+            inv_scale: 1.0 / f,
+            qa,
+            qb,
+            qc,
+            inv_qa: 1.0 / qa,
+            x_reach: k.radius * (qc / det).sqrt(),
+            y_reach: k.radius * (qa / det).sqrt(),
+        })
+    }
 
-        let ch = self.ch;
-        let mut acc = [0.0; MAX_CH];
+    /// Elliptical weighted average at continuous position `(u, v)`
+    /// (pixel `i` covers `[i, i + 1)`) over footprint `fp`.
+    fn ewa<const N: usize>(&self, u: f64, v: f64, fp: &Footprint, k: &EwaKernel) -> [f32; N] {
+        if !(u.is_finite() && v.is_finite()) {
+            return self.interpolate(u - 0.5, v - 0.5, PixelInterpolate::Bilinear);
+        }
+        let (u, v) = (u.clamp(-1e15, 1e15), v.clamp(-1e15, 1e15));
+        let (data, w, h): (&[f32], usize, usize) = match fp.level {
+            0 => (self.data, self.w, self.h),
+            l => {
+                let level = &self.pyramid::<N>()[l - 1];
+                (&level.data, level.w, level.h)
+            }
+        };
+        let (qa, qb, qc) = (fp.qa, fp.qb, fp.qc);
+        let r2 = k.radius * k.radius;
+        let (cx, cy) = (u * fp.inv_scale - 0.5, v * fp.inv_scale - 0.5);
+        let (y0, y1) = (
+            (cy - fp.y_reach).ceil() as i64,
+            (cy + fp.y_reach).floor() as i64,
+        );
+        // A footprint wholly outside the picture reads one constant
+        // under the constant edge rules.
+        if y1 < 0 || y0 >= h as i64 || cx + fp.x_reach < 0.0 || cx - fp.x_reach > (w - 1) as f64 {
+            let c = &self.colours;
+            let constant = match self.vp {
+                VirtualPixel::Background => Some(&c.background),
+                VirtualPixel::Black => Some(&c.black),
+                VirtualPixel::White => Some(&c.white),
+                VirtualPixel::Gray => Some(&c.gray),
+                VirtualPixel::Transparent => Some(&c.transparent),
+                _ => None,
+            };
+            if let Some(constant) = constant {
+                return Self::cut(constant);
+            }
+        }
+
+        let mut acc = [0.0; N];
         let (mut cover, mut wsum) = (0.0f32, 0.0f32);
         for y in y0..=y1 {
             let dy = y as f64 - cy;
             // Roots of A dx² + 2B dy dx + (C dy² − R²) = 0.
-            let disc = qb * qb * dy * dy - qa * (qc * dy * dy - r2);
+            let lin = 2.0 * qb * dy;
+            let rest = qc * dy * dy;
+            let disc = qb * qb * dy * dy - qa * (rest - r2);
             if disc <= 0.0 {
                 continue;
             }
-            let root = disc.sqrt();
-            let mid = -qb * dy / qa;
-            let x0 = (cx + mid - root / qa).ceil() as i64;
-            let x1 = (cx + mid + root / qa).floor() as i64;
-            let row_inside = y >= 0 && (y as usize) < h && x0 >= 0 && x1 < w as i64;
-            let base = if row_inside { y as usize * w * ch } else { 0 };
-            for x in x0..=x1 {
-                let dx = x as f64 - cx;
-                let q = qa * dx * dx + 2.0 * qb * dx * dy + qc * dy * dy;
-                if q >= r2 {
-                    continue;
+            let half_width = disc.sqrt() * fp.inv_qa;
+            let mid = cx - qb * dy * fp.inv_qa;
+            let x0 = (mid - half_width).ceil() as i64;
+            let x1 = (mid + half_width).floor() as i64;
+            if x1 < x0 {
+                continue;
+            }
+            if y >= 0 && (y as usize) < h && x0 >= 0 && x1 < w as i64 {
+                // The whole run lies inside the picture.
+                let start = (y as usize * w + x0 as usize) * N;
+                let run = data[start..start + (x1 - x0 + 1) as usize * N]
+                    .as_chunks::<N>()
+                    .0;
+                let mut dx = x0 as f64 - cx;
+                match self.alpha {
+                    None => {
+                        for p in run {
+                            let q = ((qa * dx + lin) * dx + rest).max(0.0);
+                            dx += 1.0;
+                            if q < r2 {
+                                let wgt = k.weight(q);
+                                for (a, v) in acc.iter_mut().zip(p) {
+                                    *a += wgt * v;
+                                }
+                                wsum += wgt;
+                            }
+                        }
+                    }
+                    Some(ai) => {
+                        for p in run {
+                            let q = ((qa * dx + lin) * dx + rest).max(0.0);
+                            dx += 1.0;
+                            if q < r2 {
+                                let wgt = k.weight(q);
+                                let wa = wgt * p[ai] * self.inv_full;
+                                for (a, v) in acc.iter_mut().zip(p) {
+                                    *a += wa * v;
+                                }
+                                cover += wa;
+                                wsum += wgt;
+                            }
+                        }
+                    }
                 }
-                let wgt = k.weight(q);
-                if wgt == 0.0 {
-                    continue;
+            } else if self.vp == VirtualPixel::Edge {
+                // Replicated edges: the nearest row, the nearest column.
+                let sy = y.clamp(0, h as i64 - 1) as usize;
+                let row = data[sy * w * N..(sy + 1) * w * N].as_chunks::<N>().0;
+                for x in x0..=x1 {
+                    let dx = x as f64 - cx;
+                    let q = ((qa * dx + lin) * dx + rest).max(0.0);
+                    if q < r2 {
+                        let wgt = k.weight(q);
+                        let p = &row[x.clamp(0, w as i64 - 1) as usize];
+                        self.add(&mut acc, &mut cover, p, wgt);
+                        wsum += wgt;
+                    }
                 }
-                if row_inside {
-                    let i = base + x as usize * ch;
-                    self.add(&mut acc, &mut cover, &data[i..i + ch], wgt);
-                } else {
-                    let p = self.at_level(data, w, h, x, y);
-                    self.add(&mut acc, &mut cover, &p, wgt);
+            } else {
+                for x in x0..=x1 {
+                    let dx = x as f64 - cx;
+                    let q = ((qa * dx + lin) * dx + rest).max(0.0);
+                    if q < r2 {
+                        let wgt = k.weight(q);
+                        let p = self.at_level::<N>(data, w, h, x, y);
+                        self.add(&mut acc, &mut cover, &p, wgt);
+                        wsum += wgt;
+                    }
                 }
-                wsum += wgt;
             }
         }
         match self.finish(acc, cover, wsum) {
@@ -563,6 +673,24 @@ impl<'a> Source<'a> {
             None => self.interpolate(u - 0.5, v - 0.5, PixelInterpolate::Bilinear),
         }
     }
+}
+
+/// An output pixel's footprint in the source: the pyramid level read
+/// and the ellipse's quadratic form in that level's pixels.
+#[derive(Clone, Copy, Debug)]
+struct Footprint {
+    level: usize,
+    /// `1 / 2^level`.
+    inv_scale: f64,
+    qa: f64,
+    qb: f64,
+    qc: f64,
+    /// `1 / qa`.
+    inv_qa: f64,
+    /// Half-width of the scaled ellipse's bounding box.
+    x_reach: f64,
+    /// Half-height of the scaled ellipse's bounding box.
+    y_reach: f64,
 }
 
 /// The four taps of the cubic `BC(b, c)` at fraction `t`.
@@ -607,24 +735,56 @@ pub(crate) fn render<M: ReverseMap + ?Sized>(
     gather: &Gather,
     undefined: Px,
 ) -> Vec<f32> {
-    let ch = src.ch;
-    let mut out = vec![0.0f32; view.width * view.height * ch];
+    match src.ch {
+        1 => render_n::<1, M>(src, map, view, gather, undefined),
+        2 => render_n::<2, M>(src, map, view, gather, undefined),
+        3 => render_n::<3, M>(src, map, view, gather, undefined),
+        _ => render_n::<4, M>(src, map, view, gather, undefined),
+    }
+}
+
+/// [`render`] for a picture of `N` samples per pixel.
+fn render_n<const N: usize, M: ReverseMap + ?Sized>(
+    src: &Source<'_>,
+    map: &M,
+    view: View,
+    gather: &Gather,
+    undefined: Px,
+) -> Vec<f32> {
+    debug_assert_eq!(src.ch, N);
+    let undefined: [f32; N] = Source::cut(&undefined);
+    let mut out = vec![0.0f32; view.width * view.height * N];
     let step = 1.0 / view.scale;
-    crate::exec::par_rows(&mut out, view.width * ch, |j, row| {
+    crate::exec::par_rows(&mut out, view.width * N, |j, row| {
         let y = (j as f64 + 0.5) * step + view.y;
-        for (i, px) in row.chunks_exact_mut(ch).enumerate() {
+        // The footprint of the previous pixel: an affine map has one
+        // Jacobian for the whole picture.
+        let mut last: Option<([[f64; 2]; 2], Option<Footprint>)> = None;
+        for (i, px) in row.as_chunks_mut::<N>().0.iter_mut().enumerate() {
             let x = (i as f64 + 0.5) * step + view.x;
-            let value = match map.source(x, y) {
+            *px = match map.source(x, y) {
                 None => undefined,
                 Some((u, v)) => match gather {
                     Gather::Point(interp) => src.interpolate(u - 0.5, v - 0.5, *interp),
                     Gather::Ewa(k) => {
-                        let [[a, b], [c, d]] = map.jacobian(x, y);
-                        src.ewa(u, v, [[a * step, b * step], [c * step, d * step]], k)
+                        let jac = map.jacobian(x, y);
+                        let fp = match last {
+                            Some((j, fp)) if j == jac => fp,
+                            _ => {
+                                let [[a, b], [c, d]] = jac;
+                                let scaled = [[a * step, b * step], [c * step, d * step]];
+                                let fp = src.footprint::<N>(scaled, k);
+                                last = Some((jac, fp));
+                                fp
+                            }
+                        };
+                        match fp {
+                            Some(fp) => src.ewa(u, v, &fp, k),
+                            None => src.interpolate(u - 0.5, v - 0.5, PixelInterpolate::Bilinear),
+                        }
                     }
                 },
             };
-            px.copy_from_slice(&value[..ch]);
         }
     });
     out

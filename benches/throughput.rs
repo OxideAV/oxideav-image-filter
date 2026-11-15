@@ -10,7 +10,8 @@
 //! IMF_BENCH_ONLY=blur,statistic cargo bench --bench throughput
 //! ```
 //!
-//! Each line is the median of `IMF_BENCH_RUNS` (default 3) runs.
+//! Each line is the median of `IMF_BENCH_RUNS` (default 3) runs, or the
+//! fastest of them with `IMF_BENCH_BEST=1`.
 
 use std::time::Instant;
 
@@ -72,6 +73,9 @@ fn picture(w: u32, h: u32, deep: bool) -> (VideoFrame, VideoStreamParams) {
     )
 }
 
+/// Median of `runs` timings in milliseconds — or the fastest one with
+/// `IMF_BENCH_BEST=1`, the steadier figure on a machine shared with
+/// other work.
 fn median_ms(runs: usize, mut f: impl FnMut()) -> f64 {
     let mut times: Vec<f64> = (0..runs)
         .map(|_| {
@@ -81,7 +85,11 @@ fn median_ms(runs: usize, mut f: impl FnMut()) -> f64 {
         })
         .collect();
     times.sort_by(f64::total_cmp);
-    times[times.len() / 2]
+    if std::env::var("IMF_BENCH_BEST").is_ok_and(|v| v == "1") {
+        times[0]
+    } else {
+        times[times.len() / 2]
+    }
 }
 
 fn main() {
@@ -117,6 +125,22 @@ fn main() {
         (
             "resize 1.5x bicubic",
             Box::new(Resize::new(w * 3 / 2, h * 3 / 2).with_interpolation(Interpolation::Bicubic)),
+        ),
+        (
+            "resize quarter area",
+            Box::new(Resize::new(w / 4, h / 4).with_interpolation(Interpolation::Area)),
+        ),
+        (
+            "resize 2x bilinear",
+            Box::new(Resize::new(w * 2, h * 2).with_interpolation(Interpolation::Bilinear)),
+        ),
+        (
+            "resize half robidoux cyl",
+            Box::new(
+                Resize::new(w / 2, h / 2)
+                    .with_filter(ResampleFilter::Robidoux)
+                    .with_cylindrical(true),
+            ),
         ),
         (
             "resize 0.3x mitchell",
@@ -202,7 +226,12 @@ fn main() {
         ),
     ];
 
-    println!("# {w}x{h} ({mp} MP), threads = {threads}, median of {runs}");
+    let figure = if std::env::var("IMF_BENCH_BEST").is_ok_and(|v| v == "1") {
+        "fastest"
+    } else {
+        "median"
+    };
+    println!("# {w}x{h} ({mp} MP), threads = {threads}, {figure} of {runs}");
     for deep in [false, true] {
         let (frame, params) = picture(w, h, deep);
         let depth = if deep { "16-bit" } else { "8-bit" };

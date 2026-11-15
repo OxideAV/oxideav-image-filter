@@ -653,73 +653,74 @@ fn resample(
     // top-left bias that integer-math resize often shows.
     let scale_x = sw as f32 / dw as f32;
     let scale_y = sh as f32 / dh as f32;
-    let at = |x: usize, y: usize, c: usize| src.data[(y * sw + x) * ch + c];
 
-    // Every output row reads only the source: rows run under the
-    // thread budget.
-    crate::exec::par_rows(&mut out, dw * ch, |y, out| {
-        let sy = (y as f32 + 0.5) * scale_y - 0.5;
-        for x in 0..dw {
-            let sx = (x as f32 + 0.5) * scale_x - 0.5;
-            let dst = x * ch;
-            match interp {
-                Interpolation::Nearest => {
-                    let nx = sx.round().clamp(0.0, (sw - 1) as f32) as usize;
-                    let ny = sy.round().clamp(0.0, (sh - 1) as f32) as usize;
-                    out[dst..dst + ch]
-                        .copy_from_slice(&src.data[(ny * sw + nx) * ch..(ny * sw + nx) * ch + ch]);
+    match interp {
+        Interpolation::Nearest => {
+            // The source column of every output column, once.
+            let cols: Vec<usize> = (0..dw)
+                .map(|x| {
+                    let sx = (x as f32 + 0.5) * scale_x - 0.5;
+                    sx.round().clamp(0.0, (sw - 1) as f32) as usize
+                })
+                .collect();
+            crate::exec::par_rows(&mut out, dw * ch, |y, out| {
+                let sy = (y as f32 + 0.5) * scale_y - 0.5;
+                let ny = sy.round().clamp(0.0, (sh - 1) as f32) as usize;
+                let row = &src.data[ny * sw * ch..(ny + 1) * sw * ch];
+                for (px, &nx) in out.chunks_exact_mut(ch).zip(&cols) {
+                    px.copy_from_slice(&row[nx * ch..nx * ch + ch]);
                 }
-                Interpolation::Bilinear => {
-                    let x0 = sx.floor().clamp(0.0, (sw - 1) as f32) as usize;
-                    let y0 = sy.floor().clamp(0.0, (sh - 1) as f32) as usize;
-                    let x1 = (x0 + 1).min(sw - 1);
-                    let y1 = (y0 + 1).min(sh - 1);
-                    let fx = (sx - x0 as f32).clamp(0.0, 1.0);
-                    let fy = (sy - y0 as f32).clamp(0.0, 1.0);
-                    for c in 0..ch {
-                        out[dst + c] = at(x0, y0, c) * (1.0 - fx) * (1.0 - fy)
-                            + at(x1, y0, c) * fx * (1.0 - fy)
-                            + at(x0, y1, c) * (1.0 - fx) * fy
-                            + at(x1, y1, c) * fx * fy;
-                    }
-                }
-                Interpolation::Bicubic => {
-                    // Separable 4-tap cubic convolution. The horizontal
-                    // weights `wx` and vertical weights `wy` are the
-                    // uniform Catmull-Rom cubic of
-                    // curve-interpolation.md §3.1, evaluated at the
-                    // fractional source position. We sum over the 4×4
-                    // tap neighbourhood `(ix0-1 .. ix0+2, iy0-1 .. iy0+2)`.
-                    let ix0 = sx.floor();
-                    let iy0 = sy.floor();
-                    let wx = catmull_rom_weights(sx - ix0);
-                    let wy = catmull_rom_weights(sy - iy0);
-                    let bx = ix0 as isize;
-                    let by = iy0 as isize;
-                    for c in 0..ch {
-                        let mut acc = 0.0f32;
-                        for (j, &wyj) in wy.iter().enumerate() {
-                            let syy = clamp_coord(by - 1 + j as isize, sh);
-                            let mut rowacc = 0.0f32;
-                            for (i, &wxi) in wx.iter().enumerate() {
-                                let sxx = clamp_coord(bx - 1 + i as isize, sw);
-                                rowacc += wxi * at(sxx, syy, c);
-                            }
-                            acc += wyj * rowacc;
-                        }
-                        out[dst + c] = acc;
-                    }
-                }
-                Interpolation::Area
-                | Interpolation::Lanczos { .. }
-                | Interpolation::Mitchell
-                | Interpolation::BSpline
-                | Interpolation::Filter(_) => {
-                    unreachable!("handled by a dedicated separable driver above")
-                }
-            }
+            });
         }
-    });
+        Interpolation::Bilinear => {
+            // Per output column: the two source columns and the blend.
+            let cols: Vec<(usize, usize, f32)> = (0..dw)
+                .map(|x| {
+                    let sx = (x as f32 + 0.5) * scale_x - 0.5;
+                    let x0 = sx.floor().clamp(0.0, (sw - 1) as f32) as usize;
+                    (x0, (x0 + 1).min(sw - 1), (sx - x0 as f32).clamp(0.0, 1.0))
+                })
+                .collect();
+            crate::exec::par_rows(&mut out, dw * ch, |y, out| {
+                let sy = (y as f32 + 0.5) * scale_y - 0.5;
+                let y0 = sy.floor().clamp(0.0, (sh - 1) as f32) as usize;
+                let y1 = (y0 + 1).min(sh - 1);
+                let fy = (sy - y0 as f32).clamp(0.0, 1.0);
+                let top = &src.data[y0 * sw * ch..(y0 + 1) * sw * ch];
+                let bottom = &src.data[y1 * sw * ch..(y1 + 1) * sw * ch];
+                for (px, &(x0, x1, fx)) in out.chunks_exact_mut(ch).zip(&cols) {
+                    let (a, b) = (&top[x0 * ch..x0 * ch + ch], &top[x1 * ch..x1 * ch + ch]);
+                    let (c, d) = (
+                        &bottom[x0 * ch..x0 * ch + ch],
+                        &bottom[x1 * ch..x1 * ch + ch],
+                    );
+                    for (i, o) in px.iter_mut().enumerate() {
+                        *o = a[i] * (1.0 - fx) * (1.0 - fy)
+                            + b[i] * fx * (1.0 - fy)
+                            + c[i] * (1.0 - fx) * fy
+                            + d[i] * fx * fy;
+                    }
+                }
+            });
+        }
+        Interpolation::Bicubic => {
+            // Separable 4-tap cubic convolution with the uniform
+            // Catmull-Rom weights of curve-interpolation.md §3.1 at the
+            // fractional source position, border taps replicated: the
+            // weights of each axis are tabulated once and the picture
+            // goes through the two separable passes.
+            let cx = catmull_rom_table(dw, sw, scale_x);
+            let cy = catmull_rom_table(dh, sh, scale_y);
+            return separable(src, dw, dh, &cx, &cy);
+        }
+        Interpolation::Area
+        | Interpolation::Lanczos { .. }
+        | Interpolation::Mitchell
+        | Interpolation::BSpline
+        | Interpolation::Filter(_) => {
+            unreachable!("handled by a dedicated separable driver above")
+        }
+    }
 
     Samples {
         w: dw,
@@ -727,6 +728,27 @@ fn resample(
         ch,
         data: out,
     }
+}
+
+/// The four Catmull-Rom taps of every output index of one axis: source
+/// indices `floor(c) − 1 … floor(c) + 2` around the continuous position
+/// `c = (k + ½)·scale − ½`, clamped into the picture.
+fn catmull_rom_table(dst_len: usize, src_len: usize, scale: f32) -> Contribs {
+    let mut table = Contribs {
+        taps: Vec::with_capacity(dst_len * 4),
+        ends: Vec::with_capacity(dst_len),
+    };
+    for k in 0..dst_len {
+        let c = (k as f32 + 0.5) * scale - 0.5;
+        let base = c.floor();
+        let weights = catmull_rom_weights(c - base);
+        for (i, &w) in weights.iter().enumerate() {
+            let index = clamp_coord(base as isize - 1 + i as isize, src_len);
+            table.taps.push((index as u32, w));
+        }
+        table.ends.push(table.taps.len());
+    }
+    table
 }
 
 /// Clamp an integer source coordinate into `[0, extent − 1]` (replicate
@@ -777,30 +799,44 @@ fn resample_area(src: &Samples, dw: usize, dh: usize) -> Samples {
     let (sw, sh, ch) = (src.w, src.h, src.ch);
     let scale_x = sw as f32 / dw as f32;
     let scale_y = sh as f32 / dh as f32;
+    // The overlap of every source pixel with every output footprint,
+    // tabulated once per axis, with each footprint's length.
+    let (cx, len_x) = area_table(dw, sw, scale_x);
+    let (cy, len_y) = area_table(dh, sh, scale_y);
 
     // Pass 1: horizontal — produce a (dw × sh) intermediate.
     let mut mid = vec![0.0f32; dw * sh * ch];
-    for x in 0..dw {
-        let (lo, hi) = footprint(x, scale_x, sw);
-        for sy in 0..sh {
-            for c in 0..ch {
-                let v = integrate_axis(lo, hi, |sx| src.data[(sy * sw + sx) * ch + c]);
-                mid[(sy * dw + x) * ch + c] = v;
+    crate::exec::par_rows(&mut mid, dw * ch, |sy, line| {
+        let row = &src.data[sy * sw * ch..(sy + 1) * sw * ch];
+        for (k, (px, len)) in line.chunks_exact_mut(ch).zip(&len_x).enumerate() {
+            for &(sx, w) in cx.of(k) {
+                let sx = sx as usize;
+                for (o, v) in px.iter_mut().zip(&row[sx * ch..sx * ch + ch]) {
+                    *o += w * *v;
+                }
+            }
+            for o in px.iter_mut() {
+                *o /= len;
             }
         }
-    }
+    });
 
     // Pass 2: vertical — collapse the (dw × sh) intermediate to (dw × dh).
     let mut out = vec![0.0f32; dw * dh * ch];
-    for y in 0..dh {
-        let (lo, hi) = footprint(y, scale_y, sh);
-        for x in 0..dw {
-            for c in 0..ch {
-                out[(y * dw + x) * ch + c] =
-                    integrate_axis(lo, hi, |sy| mid[(sy * dw + x) * ch + c]);
+    let mid = &mid;
+    crate::exec::par_rows(&mut out, dw * ch, |y, line| {
+        for &(sy, w) in cy.of(y) {
+            let sy = sy as usize;
+            let row = &mid[sy * dw * ch..(sy + 1) * dw * ch];
+            for (o, v) in line.iter_mut().zip(row) {
+                *o += w * *v;
             }
         }
-    }
+        let len = len_y[y];
+        for o in line.iter_mut() {
+            *o /= len;
+        }
+    });
 
     Samples {
         w: dw,
@@ -808,6 +844,42 @@ fn resample_area(src: &Samples, dw: usize, dh: usize) -> Samples {
         ch,
         data: out,
     }
+}
+
+/// The area-average taps of one axis: for every output index the source
+/// pixels its footprint overlaps, each weighted by the length of the
+/// overlap, and the footprint's length (the divisor).
+fn area_table(dst_len: usize, src_len: usize, scale: f32) -> (Contribs, Vec<f32>) {
+    let mut table = Contribs {
+        taps: Vec::with_capacity(dst_len * (scale.ceil() as usize + 2).min(src_len.max(1))),
+        ends: Vec::with_capacity(dst_len),
+    };
+    let mut lengths = Vec::with_capacity(dst_len);
+    for k in 0..dst_len {
+        let (lo, hi) = footprint(k, scale, src_len);
+        let total = hi - lo;
+        if total <= 0.0 {
+            table.taps.push((lo.floor() as u32, 1.0));
+            lengths.push(1.0);
+        } else {
+            let first = lo.floor() as usize;
+            // The last source pixel with non-zero overlap is the one
+            // whose left edge is strictly below `hi`: pixel `i` covers
+            // `[i, i + 1)`, so it overlaps `[lo, hi)` iff `i < hi`.
+            // `ceil(hi) − 1` is that index for both integer and
+            // fractional `hi`, and it stays in bounds because
+            // `footprint` clamps `hi ≤ extent`.
+            let last = (hi.ceil() as usize).saturating_sub(1).max(first);
+            for i in first..=last {
+                let pl = (i as f32).max(lo);
+                let pr = ((i + 1) as f32).min(hi);
+                table.taps.push((i as u32, (pr - pl).max(0.0)));
+            }
+            lengths.push(total);
+        }
+        table.ends.push(table.taps.len());
+    }
+    (table, lengths)
 }
 
 /// ImageMagick's resize filter set — the names `-filter` takes. Each
@@ -1637,75 +1709,125 @@ fn axis_contributions(dst_len: usize, src_len: usize, scale: f32, k: &Kernel) ->
     // Filter scale: widen on shrink, native on enlarge.
     let filt = scale.max(1.0);
     let radius = k.radius() * filt;
-    let mut per_out: Vec<Vec<(usize, f32)>> = Vec::with_capacity(dst_len);
+    let mut table = Contribs {
+        taps: Vec::with_capacity(dst_len * ((2.0 * radius).ceil() as usize + 1).min(src_len)),
+        ends: Vec::with_capacity(dst_len),
+    };
     for out in 0..dst_len {
         let centre = (out as f32 + 0.5) * scale - 0.5;
         // A source centre can land exactly on the support edge (65 → 24
         // puts one on the box edge); binary32 rounding must not drop it.
         let lo = ((centre - radius - 1e-4).ceil() as isize).max(0);
         let hi = ((centre + radius + 1e-4).floor() as isize).min(src_len as isize - 1);
-        let mut taps: Vec<(usize, f32)> = Vec::new();
+        let first = table.taps.len();
         let mut wsum = 0.0f32;
         let mut i = lo;
         while i <= hi {
             let w = k.weight((i as f32 - centre) / filt);
             if w != 0.0 {
-                taps.push((i as usize, w));
+                table.taps.push((i as u32, w));
                 wsum += w;
             }
             i += 1;
         }
-        if taps.is_empty() || wsum.abs() < 1e-12 {
+        if table.taps.len() == first || wsum.abs() < 1e-12 {
             // Degenerate (no tap inside the support, or the weights cancel):
             // sample the nearest source pixel with unit weight.
-            let si = centre.round().clamp(0.0, src_len as f32 - 1.0) as usize;
-            taps = vec![(si, 1.0)];
+            let si = centre.round().clamp(0.0, src_len as f32 - 1.0) as u32;
+            table.taps.truncate(first);
+            table.taps.push((si, 1.0));
         } else {
             let inv = 1.0 / wsum;
-            for t in &mut taps {
+            for t in &mut table.taps[first..] {
                 t.1 *= inv;
             }
         }
-        per_out.push(taps);
+        table.ends.push(table.taps.len());
     }
-    Contribs { per_out }
+    table
 }
 
-/// Precomputed per-output-index tap lists for one axis.
+/// Precomputed taps of one axis: for every output index the
+/// `(source index, weight)` pairs it gathers, stored end to end (one
+/// allocation for the axis, none per output position).
 struct Contribs {
-    per_out: Vec<Vec<(usize, f32)>>,
+    taps: Vec<(u32, f32)>,
+    /// `ends[k]` is one past the last tap of output index `k`.
+    ends: Vec<usize>,
+}
+
+impl Contribs {
+    /// The taps of output index `k`.
+    #[inline]
+    fn of(&self, k: usize) -> &[(u32, f32)] {
+        let first = if k == 0 { 0 } else { self.ends[k - 1] };
+        &self.taps[first..self.ends[k]]
+    }
+}
+
+/// One row of the horizontal pass for `N` samples per position: every
+/// output position is the weighted sum of its taps.
+#[inline]
+fn gather_row<const N: usize>(line: &mut [f32], row: &[f32], table: &Contribs) {
+    let row = row.as_chunks::<N>().0;
+    for (k, px) in line.as_chunks_mut::<N>().0.iter_mut().enumerate() {
+        for &(sx, w) in table.of(k) {
+            for (o, v) in px.iter_mut().zip(&row[sx as usize]) {
+                *o += w * *v;
+            }
+        }
+    }
 }
 
 /// General separable weighted-kernel resampler shared by every
 /// [`ResampleFilter`] and the windowed-sinc / parametric-cubic selectors.
 /// A horizontal pass collapses the source columns onto `dw` weighted
-/// columns, then a vertical pass collapses the rows onto `dh`.
+/// columns, then a vertical pass collapses the rows onto `dh`. The
+/// weights of each axis are tabulated once; nothing is allocated per
+/// row or per pixel.
 fn resample_kernel(src: &Samples, dw: usize, dh: usize, kernel: Kernel) -> Samples {
-    let (sw, sh, ch) = (src.w, src.h, src.ch);
+    let (sw, sh) = (src.w, src.h);
     let scale_x = sw as f32 / dw as f32;
     let scale_y = sh as f32 / dh as f32;
     let cx = axis_contributions(dw, sw, scale_x, &kernel);
     let cy = axis_contributions(dh, sh, scale_y, &kernel);
+    separable(src, dw, dh, &cx, &cy)
+}
 
-    // Pass 1: horizontal — (sw × sh) → (dw × sh). Rows are independent.
+/// The two passes over tabulated taps: horizontal `(sw × sh) → (dw ×
+/// sh)`, then vertical `→ (dw × dh)`.
+fn separable(src: &Samples, dw: usize, dh: usize, cx: &Contribs, cy: &Contribs) -> Samples {
+    let (sw, sh, ch) = (src.w, src.h, src.ch);
+
+    // Pass 1: horizontal. Rows are independent.
     let mut mid = vec![0.0f32; dw * sh * ch];
     crate::exec::par_rows(&mut mid, dw * ch, |sy, line| {
         let row = &src.data[sy * sw * ch..(sy + 1) * sw * ch];
-        for (px, taps) in line.chunks_exact_mut(ch).zip(&cx.per_out) {
-            for &(sx, w) in taps {
-                for (o, v) in px.iter_mut().zip(&row[sx * ch..sx * ch + ch]) {
-                    *o += w * *v;
+        match ch {
+            1 => gather_row::<1>(line, row, cx),
+            2 => gather_row::<2>(line, row, cx),
+            3 => gather_row::<3>(line, row, cx),
+            4 => gather_row::<4>(line, row, cx),
+            _ => {
+                for (k, px) in line.chunks_exact_mut(ch).enumerate() {
+                    for &(sx, w) in cx.of(k) {
+                        let sx = sx as usize;
+                        for (o, v) in px.iter_mut().zip(&row[sx * ch..sx * ch + ch]) {
+                            *o += w * *v;
+                        }
+                    }
                 }
             }
         }
     });
 
-    // Pass 2: vertical — (dw × sh) → (dw × dh): each output row is a
-    // weighted sum of whole intermediate rows.
+    // Pass 2: vertical — each output row is a weighted sum of whole
+    // intermediate rows.
     let mut out = vec![0.0f32; dw * dh * ch];
     let mid = &mid;
     crate::exec::par_rows(&mut out, dw * ch, |y, line| {
-        for &(sy, w) in &cy.per_out[y] {
+        for &(sy, w) in cy.of(y) {
+            let sy = sy as usize;
             let row = &mid[sy * dw * ch..(sy + 1) * dw * ch];
             for (o, v) in line.iter_mut().zip(row) {
                 *o += w * *v;
@@ -1738,35 +1860,6 @@ fn footprint(k: usize, scale: f32, extent: usize) -> (f32, f32) {
     let ext = extent as f32;
     (lo.clamp(0.0, ext), hi.clamp(0.0, ext))
 }
-/// Coverage-weighted mean of `sample(i)` over the continuous interval
-/// `[lo, hi)`: each whole source pixel `i` contributes the length of its
-/// overlap with the interval, divided by the total interval length.
-#[inline]
-fn integrate_axis(lo: f32, hi: f32, sample: impl Fn(usize) -> f32) -> f32 {
-    let total = hi - lo;
-    if total <= 0.0 {
-        return sample(lo.floor() as usize);
-    }
-    let first = lo.floor() as usize;
-    // The last source pixel with non-zero overlap is the one whose left
-    // edge is strictly below `hi`: pixel `i` covers `[i, i+1)`, so it
-    // overlaps `[lo, hi)` iff `i < hi`. `ceil(hi) − 1` is that index for
-    // both integer and fractional `hi` — and it stays in-bounds because
-    // `footprint` clamps `hi ≤ extent`, giving `last ≤ extent − 1`. (An
-    // earlier `(hi − 1e-6).floor()` form silently read one pixel past the
-    // end at large scales: near `hi = 64` the `1e-6` is below the f32 ulp,
-    // so the subtraction is a no-op and `floor` returned `64`.)
-    let last = (hi.ceil() as usize).saturating_sub(1).max(first);
-    let mut acc = 0.0f32;
-    for i in first..=last {
-        let pl = (i as f32).max(lo);
-        let pr = ((i + 1) as f32).min(hi);
-        let w = (pr - pl).max(0.0);
-        acc += w * sample(i);
-    }
-    acc / total
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
